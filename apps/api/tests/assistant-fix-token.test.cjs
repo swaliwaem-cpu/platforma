@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -650,7 +651,7 @@ test('FIX-TOKEN semantically incomplete VERIFIED checkpoint entry stops before p
   }
 });
 
-test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized backup before provider work', async () => {
+test('FIX-TOKEN refresh rotates a mismatched fingerprint only after provider accounting passes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-rotate-checkpoint-'));
   const checkpointPath = join(directory, 'checkpoint.json');
   const backupDirectory = join(directory, 'backups');
@@ -673,7 +674,7 @@ test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized bac
       },
     },
   };
-  let providerConstructedAfterBackup = false;
+  let providerConstructedBeforeBackup = false;
   const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
   const application = {
     get() { return prisma; },
@@ -697,17 +698,8 @@ test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized bac
           async reconcileExpiredReservations() { return 0; },
         },
         createDiscovery() {
-          const backupFiles = readdirSync(backupDirectory);
-          assert.equal(backupFiles.length, 1);
-          assert.equal(statSync(backupDirectory).mode & 0o777, 0o700);
-          const backupPath = join(backupDirectory, backupFiles[0]);
-          const backup = readFileSync(backupPath, 'utf8');
-          assert.equal(backup.includes('must-not-survive-backup'), false);
-          assert.equal(backup.includes('rawProviderPayload'), false);
-          assert.equal(backup.includes('password'), false);
-          assert.equal(backup.includes('secret'), false);
-          assert.equal(statSync(backupPath).mode & 0o777, 0o600);
-          providerConstructedAfterBackup = true;
+          assert.equal(existsSync(backupDirectory), false);
+          providerConstructedBeforeBackup = true;
           return {
             async discover() { return fixTokenCheckpointResult(project); },
           };
@@ -715,8 +707,18 @@ test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized bac
       },
     });
 
-    assert.equal(providerConstructedAfterBackup, true);
+    assert.equal(providerConstructedBeforeBackup, true);
     assert.equal(report.summary.verified, 1);
+    const backupFiles = readdirSync(backupDirectory);
+    assert.equal(backupFiles.length, 1);
+    assert.equal(statSync(backupDirectory).mode & 0o777, 0o700);
+    const backupPath = join(backupDirectory, backupFiles[0]);
+    const backup = readFileSync(backupPath, 'utf8');
+    assert.equal(backup.includes('must-not-survive-backup'), false);
+    assert.equal(backup.includes('rawProviderPayload'), false);
+    assert.equal(backup.includes('password'), false);
+    assert.equal(backup.includes('secret'), false);
+    assert.equal(statSync(backupPath).mode & 0o777, 0o600);
     const current = readAssistantSourceDiscoveryCheckpoint(checkpointPath, currentFingerprint);
     assert.equal(current.state, 'VALID');
     assert.equal(current.checkpoint.entries[project.projectKey].status, 'VERIFIED');
@@ -726,14 +728,15 @@ test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized bac
   }
 });
 
-test('FIX-TOKEN refresh stops before provider work when a fingerprint backup cannot be written', async () => {
+test('FIX-TOKEN refresh preserves the original checkpoint when its deferred backup cannot be written', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-backup-failure-'));
   const checkpointPath = join(directory, 'checkpoint.json');
   const blockingBackupPath = join(directory, 'backups');
   const project = fixTokenProject();
   let providerConstructed = false;
+  const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
   const application = {
-    get() { return {}; },
+    get() { return prisma; },
     async close() {},
   };
   try {
@@ -762,16 +765,23 @@ test('FIX-TOKEN refresh stops before provider work when a fingerprint backup can
         silent: true,
         dependencies: {
           async createApplicationContext() { return application; },
+          async selectProjects() { return [project]; },
+          async loadRegistrySources() { return []; },
+          usageBudgets: {
+            async reconcileExpiredReservations() { return 0; },
+          },
           createDiscovery() {
             providerConstructed = true;
-            throw new Error('provider must not be constructed');
+            return {
+              async discover() { return fixTokenCheckpointResult(project); },
+            };
           },
         },
       }),
       (error) => error?.code === 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_BACKUP_FAILED',
     );
 
-    assert.equal(providerConstructed, false);
+    assert.equal(providerConstructed, true);
     assert.equal(readFileSync(checkpointPath, 'utf8'), originalCheckpoint);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -1037,6 +1047,505 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   }
 });
 
+test('ZAEBAL4 tool-call contract violation preserves checkpoint and skips registration and indexing', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-contract-violation-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const backupDirectory = join(directory, 'backups');
+  const project = fixTokenProject();
+  const runId = 'zaebal4-contract-violation';
+  const executionId = randomUUID();
+  const checkpoint = checkpointAssistantSourceDiscoveryResult(
+    createEmptyCheckpoint({
+      ...checkpointFingerprint(),
+      validatorVersion: 'assistant-source-discovery-validator-v2',
+    }),
+    fixTokenCheckpointResult(project),
+  );
+  writeAssistantSourceDiscoveryCheckpoint(checkpointPath, checkpoint);
+  const checkpointBefore = readFileSync(checkpointPath, 'utf8');
+  let actorLookups = 0;
+  let registrations = 0;
+  let indexingCalls = 0;
+  const persistedAttempt = persistedUsageAttempt({
+    id: '77777777-7777-4777-8777-777777777777',
+    runId,
+    attemptOrdinal: 1,
+    outcome: 'PROVIDER_CONTRACT_VIOLATION',
+    errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+    inputTokens: 20n,
+    cachedInputTokens: 0n,
+    cacheWriteInputTokens: 0n,
+    outputTokens: 13n,
+    reasoningTokens: 5n,
+    totalTokens: 33n,
+    webSearchCalls: 2,
+    reservedCostUsd: '0.03000000',
+    estimatedCostUsd: '0.02002000',
+    chargedCostUsd: '0.02002000',
+  });
+  const prisma = {
+    assistantAiUsageAttempt: {
+      async findMany() { return [persistedAttempt]; },
+    },
+    user: {
+      async findFirst() {
+        actorLookups += 1;
+        return { id: '88888888-8888-4888-8888-888888888888' };
+      },
+    },
+  };
+  const registry = {
+    async register() {
+      registrations += 1;
+      throw new Error('registration must not run after a provider contract violation');
+    },
+  };
+  const ingestion = {
+    async ingest() {
+      indexingCalls += 1;
+      throw new Error('indexing must not run after a provider contract violation');
+    },
+  };
+  const application = {
+    get(token) {
+      if (token?.name === 'PrismaService') return prisma;
+      if (token?.name === 'AssistantSourceRegistryService') return registry;
+      if (token?.name === 'AssistantSourceIngestionService') return ingestion;
+      throw new Error(`unexpected application dependency: ${token?.name ?? 'unknown'}`);
+    },
+    async close() {},
+  };
+  const contractError = new AssistantSourceDiscoveryError(
+    'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+    'request-zaebal4-contract',
+    'response-zaebal4-contract',
+    200,
+    {
+      phase: 'PROJECT',
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      requestId: 'request-zaebal4-contract',
+      responseId: 'response-zaebal4-contract',
+      httpStatus: 200,
+      inputTokens: 20,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 13,
+      reasoningTokens: 5,
+      totalTokens: 33,
+      webSearchCalls: 2,
+    },
+  );
+
+  try {
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live', '--apply', '--refresh'],
+      environment: {
+        OPENAI_API_KEY: 'bounded-local-stub',
+        ASSISTANT_AI_MODE: 'openai',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+        ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
+        ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+        DATABASE_URL: 'postgresql://platforma@localhost:5432/platforma_test?schema=public',
+      },
+      silent: true,
+      dependencies: {
+        runId,
+        executionId,
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        async loadRegistrySources() { return []; },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery() {
+          return {
+            async discover() { throw contractError; },
+          };
+        },
+      },
+    });
+
+    assert.equal(
+      report.stopReason,
+      'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+    );
+    assert.equal(report.summary.providerRequests, 1);
+    assert.equal(report.summary.knownTokenUsage.webSearchCalls, 2);
+    assert.equal(readFileSync(checkpointPath, 'utf8'), checkpointBefore);
+    assert.equal(existsSync(backupDirectory), false);
+    assert.equal(actorLookups, 0);
+    assert.equal(registrations, 0);
+    assert.equal(indexingCalls, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('ZAEBAL4 reported usage mismatch stops before checkpoint, registration and indexing', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-usage-mismatch-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = fixTokenProject();
+  const runId = 'zaebal4-reported-usage-mismatch';
+  const executionId = randomUUID();
+  const receipt = persistedUsageAttempt({
+    id: '99999999-9999-4999-8999-999999999999',
+    runId,
+    executionId,
+    attemptOrdinal: 1,
+    outcome: 'PROVIDER_SUCCESS',
+    inputTokens: 20n,
+    cachedInputTokens: 0n,
+    cacheWriteInputTokens: 0n,
+    outputTokens: 13n,
+    reasoningTokens: 5n,
+    totalTokens: 33n,
+    webSearchCalls: 1,
+    reservedCostUsd: '0.03000000',
+    estimatedCostUsd: '0.02001000',
+    chargedCostUsd: '0.02001000',
+  });
+  let actorLookups = 0;
+  let registrations = 0;
+  let indexingCalls = 0;
+  const prisma = {
+    assistantAiUsageAttempt: {
+      async findMany() { return [receipt]; },
+    },
+    user: {
+      async findFirst() {
+        actorLookups += 1;
+        return { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+      },
+    },
+  };
+  const application = {
+    get(token) {
+      if (token?.name === 'PrismaService') return prisma;
+      if (token?.name === 'AssistantSourceRegistryService') return {
+        async register() {
+          registrations += 1;
+          return {
+            source: {
+              id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              canonicalUrl: `https://developer.example/${project.projectKey}`,
+            },
+          };
+        },
+      };
+      if (token?.name === 'AssistantSourceIngestionService') return {
+        async ingest() {
+          indexingCalls += 1;
+          return { outcome: 'INDEXED' };
+        },
+      };
+      throw new Error(`unexpected application dependency: ${token?.name ?? 'unknown'}`);
+    },
+    async close() {},
+  };
+  const result = {
+    ...fixTokenCheckpointResult(project),
+    telemetry: {
+      phases: [{
+        phase: 'PROJECT',
+        provider: 'openai',
+        model: 'gpt-5.6-luna',
+        requestId: 'request-zaebal4-mismatch',
+        responseId: 'response-zaebal4-mismatch',
+        httpStatus: 200,
+        inputTokens: 21,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 13,
+        reasoningTokens: 5,
+        totalTokens: 33,
+        webSearchCalls: 1,
+      }],
+    },
+  };
+
+  try {
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live', '--apply', '--refresh'],
+      environment: {
+        OPENAI_API_KEY: 'bounded-local-stub',
+        ASSISTANT_AI_MODE: 'openai',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+        ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
+        ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+        DATABASE_URL: 'postgresql://platforma@localhost:5432/platforma_test?schema=public',
+      },
+      silent: true,
+      dependencies: {
+        runId,
+        executionId,
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        async loadRegistrySources() { return []; },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery() {
+          return { async discover() { return result; } };
+        },
+      },
+    });
+
+    assert.equal(report.stopReason, 'PROVIDER_BUDGET_CONTRACT_VIOLATION');
+    assert.deepEqual(report.providerBudgetContract.reportedUsageMismatches, [{
+      operationRunId: runId,
+      receiptAttemptCount: 1,
+      reportedAttemptCount: 1,
+      fields: ['inputTokens'],
+    }]);
+    assert.equal(readdirSync(directory).length, 0);
+    assert.equal(actorLookups, 0);
+    assert.equal(registrations, 0);
+    assert.equal(indexingCalls, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('ZAEBAL4 happy stub performs one request, settlement, registration and indexing', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-happy-stub-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = fixTokenProject();
+  const runId = 'zaebal4-happy-stub';
+  const executionId = randomUUID();
+  const canonicalUrl = 'https://developer.example/official/amber-city';
+  const attempts = [];
+  const events = [];
+  const providerBodies = [];
+  let registrations = 0;
+  let indexingCalls = 0;
+  const usageBudgets = {
+    async reconcileExpiredReservations(input) {
+      assert.equal(input.operationRunId, runId);
+      assert.equal(input.executionId, executionId);
+      return 0;
+    },
+    async reserve(input) {
+      events.push('reserve');
+      const attempt = {
+        operationRunId: input.operationRunId,
+        executionId: input.executionId,
+        attemptOrdinal: input.attemptOrdinal,
+        operation: input.operation,
+        requestedModel: input.model,
+        isFallback: input.isFallback,
+        status: 'RESERVED',
+        outcome: null,
+        pricingStatus: 'RESERVED',
+        inputTokens: null,
+        cachedInputTokens: null,
+        cacheWriteInputTokens: null,
+        outputTokens: null,
+        reasoningTokens: null,
+        totalTokens: null,
+        webSearchCalls: null,
+        pricingCatalogVersion: ASSISTANT_AI_PRICING_CATALOG_VERSION,
+        reservedCostUsd: new Prisma.Decimal(input.reservedCostUsd),
+        estimatedCostUsd: null,
+        chargedCostUsd: null,
+      };
+      attempts.push(attempt);
+      return {
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        operationRunId: input.operationRunId,
+        executionId: input.executionId,
+        attemptOrdinal: input.attemptOrdinal,
+        provider: input.provider,
+        model: input.model,
+        serviceTier: input.serviceTier,
+        usageDate: new Date('2026-08-30T00:00:00.000Z'),
+        reservationExpiresAt: new Date('2026-08-30T00:03:00.000Z'),
+        reservedCostUsd: input.reservedCostUsd,
+      };
+    },
+    async settle(input) {
+      events.push('settle');
+      const attempt = attempts.find(({ attemptOrdinal }) => (
+        attemptOrdinal === input.reservation.attemptOrdinal
+      ));
+      assert.ok(attempt);
+      const cost = calculateAssistantAiCost({
+        model: input.actualModel,
+        inputTokens: input.inputTokens,
+        cachedInputTokens: input.cachedInputTokens,
+        cacheWriteInputTokens: input.cacheWriteInputTokens,
+        outputTokens: input.outputTokens,
+        webSearchCalls: input.webSearchCalls,
+      });
+      assert.equal(cost.status, 'PRICED');
+      Object.assign(attempt, {
+        status: 'SETTLED',
+        outcome: input.outcome,
+        pricingStatus: 'PRICED',
+        inputTokens: BigInt(input.inputTokens),
+        cachedInputTokens: BigInt(input.cachedInputTokens),
+        cacheWriteInputTokens: BigInt(input.cacheWriteInputTokens),
+        outputTokens: BigInt(input.outputTokens),
+        reasoningTokens: BigInt(input.reasoningTokens),
+        totalTokens: BigInt(input.totalTokens),
+        webSearchCalls: input.webSearchCalls,
+        estimatedCostUsd: new Prisma.Decimal(cost.estimatedUsd),
+        chargedCostUsd: new Prisma.Decimal(cost.estimatedUsd),
+      });
+      return true;
+    },
+  };
+  const prisma = {
+    assistantAiUsageAttempt: {
+      async findMany() { return attempts; },
+    },
+    user: {
+      async findFirst() { return { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' }; },
+    },
+  };
+  const registry = {
+    async register(_actorId, input) {
+      events.push('register');
+      registrations += 1;
+      assert.equal(input.canonicalUrl, canonicalUrl);
+      assert.deepEqual(input.connectorConfig.allowedHosts, [
+        'developer.example',
+        'www.developer.example',
+      ]);
+      return {
+        source: {
+          id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+          canonicalUrl,
+        },
+      };
+    },
+  };
+  const ingestion = {
+    async ingest(sourceId) {
+      events.push('index');
+      indexingCalls += 1;
+      assert.equal(sourceId, 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
+      return { outcome: 'INDEXED' };
+    },
+  };
+  const application = {
+    get(token) {
+      if (token?.name === 'PrismaService') return prisma;
+      if (token?.name === 'AssistantSourceRegistryService') return registry;
+      if (token?.name === 'AssistantSourceIngestionService') return ingestion;
+      throw new Error(`unexpected application dependency: ${token?.name ?? 'unknown'}`);
+    },
+    async close() {},
+  };
+  const registrySource = {
+    id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    state: 'ACTIVE',
+    type: 'DEVELOPER_PROMOTION',
+    canonicalUrl: 'https://developer.example/',
+    projectKey: null,
+    developerKey: project.developerKey,
+    connectorKey: 'OFFICIAL_HTML',
+    connectorConfig: {
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    },
+    latestRevision: {
+      processingStatus: 'INDEXED',
+      checksum: 'f'.repeat(64),
+    },
+  };
+  const environment = {
+    OPENAI_API_KEY: 'bounded-local-stub',
+    ASSISTANT_AI_MODE: 'openai',
+    ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+    ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
+    ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+    DATABASE_URL: 'postgresql://platforma@localhost:5432/platforma_test?schema=public',
+  };
+
+  try {
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live', '--apply', '--refresh'],
+      environment,
+      silent: true,
+      dependencies: {
+        runId,
+        executionId,
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        async loadRegistrySources() { return [registrySource]; },
+        usageBudgets,
+        createDiscovery(serviceOptions) {
+          return new AssistantSourceDiscoveryService(
+            {
+              ...environment,
+              ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+            },
+            async (_url, init) => {
+              events.push('http');
+              const body = JSON.parse(init.body);
+              providerBodies.push(body);
+              assert.equal(body.text.format.name, 'platforma_official_project_candidate');
+              return sourceDiscoveryResponse({
+                status: 'FOUND',
+                canonicalUrl,
+                officialProjectName: 'Amber City',
+                matchKind: 'EXACT',
+                reason: 'Официальная страница проекта найдена.',
+              }, [canonicalUrl], 'zaebal4-happy-stub');
+            },
+            {
+              async fetch(source) {
+                if (source.canonicalUrl === 'https://developer.example/') {
+                  return fetchedSourcePage(
+                    source.canonicalUrl,
+                    '<html><body>Официальный сайт застройщика ФСК</body></html>',
+                  );
+                }
+                if (source.canonicalUrl === canonicalUrl) {
+                  return fetchedSourcePage(
+                    source.canonicalUrl,
+                    '<html><body>ЖК Amber City — официальный проект ФСК</body></html>',
+                  );
+                }
+                throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
+              },
+            },
+            serviceOptions,
+          );
+        },
+      },
+    });
+
+    assert.equal(report.stopReason, 'ASSISTANT_SOURCE_DISCOVERY_COMPLETED');
+    assert.equal(report.providerBudgetContract.passed, true);
+    assert.equal(report.summary.providerRequests, 1);
+    assert.equal(report.summary.knownTokenUsage.webSearchCalls, 1);
+    assert.equal(report.summary.registered, 1);
+    assert.equal(report.summary.indexed, 1);
+    assert.equal(providerBodies.length, 1);
+    assert.equal(providerBodies[0].max_tool_calls, 1);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0].status, 'SETTLED');
+    assert.ok(attempts[0].reservedCostUsd.gte(attempts[0].chargedCostUsd));
+    assert.deepEqual(events.filter((event) => (
+      ['reserve', 'http', 'settle', 'register', 'index'].includes(event)
+    )), ['reserve', 'http', 'settle', 'register', 'index']);
+    assert.equal(registrations, 1);
+    assert.equal(indexingCalls, 1);
+    const checkpoint = readAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointFingerprint(),
+    );
+    assert.equal(checkpoint.state, 'VALID');
+    assert.equal(checkpoint.checkpoint.entries[project.projectKey].status, 'VERIFIED');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('FIX-TOKEN refresh error removes the stale selected entry instead of masking it as processed', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-refresh-error-'));
   const checkpointPath = join(directory, 'checkpoint.json');
@@ -1169,8 +1678,9 @@ test('FIX-TOKEN live run fails closed and cleans temporary output when checkpoin
   const checkpointPath = join(directory, 'checkpoint.json');
   const project = fixTokenProject();
   let discoveryCalls = 0;
+  const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
   const application = {
-    get() { return {}; },
+    get() { return prisma; },
     async close() {},
   };
   try {
@@ -1862,10 +2372,10 @@ test('FIX-TOKEN discovery report counts a failed paid provider attempt without p
     checkpointHits: 0,
   });
 
-  assert.equal(report.summary.providerRequests, 1);
-  assert.equal(report.summary.lunaCalls, 1);
+  assert.equal(report.summary.providerRequests, 2);
+  assert.equal(report.summary.lunaCalls, 2);
   assert.equal(report.summary.estimatedUsd, null);
-  assert.equal(report.results[0].providerRequests, 1);
+  assert.equal(report.results[0].providerRequests, 2);
 });
 
 test('FIX-TOKEN discovery orchestration passes the persisted registry seed before provider work', async () => {
@@ -2055,7 +2565,7 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
     {
       name: 'missing structured output',
       failureKind: 'MISSING',
-      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_OUTPUT_MISSING',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
     },
     {
       name: 'provider timeout',
@@ -2225,7 +2735,7 @@ function checkpointFingerprint() {
     primaryModel: 'gpt-5.6-luna',
     fallbackModel: 'gpt-5.6-terra',
     promptVersion: 'assistant-source-discovery-v2',
-    validatorVersion: 'assistant-source-discovery-validator-v2',
+    validatorVersion: 'assistant-source-discovery-validator-v3',
   };
 }
 
@@ -2399,6 +2909,7 @@ function emptyAssistantUsageLedger() {
 function persistedUsageAttempt({
   id,
   runId,
+  executionId = '00000000-0000-4000-8000-000000000001',
   attemptOrdinal,
   requestedModel = 'gpt-5.6-luna',
   isFallback = false,
@@ -2420,6 +2931,7 @@ function persistedUsageAttempt({
   return {
     id,
     operationRunId: runId,
+    executionId,
     attemptOrdinal,
     operation: 'SOURCE_DISCOVERY',
     provider: 'openai',

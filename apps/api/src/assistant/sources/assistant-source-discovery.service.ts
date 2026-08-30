@@ -153,7 +153,7 @@ type AlternativeDeveloperPage = {
   canonicalUrl: string | null;
   candidate: ReturnType<typeof parseDeveloperCandidate>;
   citations: string[];
-  phaseTelemetry: AssistantSourceDiscoveryPhaseTelemetry;
+  phaseTelemetries: AssistantSourceDiscoveryPhaseTelemetry[];
 };
 
 export class AssistantSourceDiscoveryService {
@@ -264,33 +264,42 @@ export class AssistantSourceDiscoveryService {
       };
     }
     let projectModel = this.model;
-    let projectProviderResult = await this.providerBoundary.requestCandidate({
-      phase: 'PROJECT',
-      project,
-      developer,
-      projectEvidence: catalogEvidence ?? undefined,
-    });
-    let currentProjectCitations = collectCitationUrls(projectProviderResult.value);
-    let projectCitations = currentProjectCitations;
-    const phaseTelemetries = [
-      ...developerPhaseTelemetries,
-      projectProviderResult.phaseTelemetry,
-    ];
-    const requestTerraFallback = async () => {
+    let projectProviderResult;
+    try {
       projectProviderResult = await this.providerBoundary.requestCandidate({
         phase: 'PROJECT',
         project,
         developer,
         projectEvidence: catalogEvidence ?? undefined,
-        model: ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
       });
+    } catch (error) {
+      rethrowAssistantSourceDiscoveryWithPhases(error, developerPhaseTelemetries);
+    }
+    let currentProjectCitations = collectCitationUrls(projectProviderResult.value);
+    let projectCitations = currentProjectCitations;
+    const phaseTelemetries = [
+      ...developerPhaseTelemetries,
+      ...projectProviderResult.phaseTelemetries,
+    ];
+    const requestTerraFallback = async () => {
+      try {
+        projectProviderResult = await this.providerBoundary.requestCandidate({
+          phase: 'PROJECT',
+          project,
+          developer,
+          projectEvidence: catalogEvidence ?? undefined,
+          model: ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+        });
+      } catch (error) {
+        rethrowAssistantSourceDiscoveryWithPhases(error, phaseTelemetries);
+      }
       projectModel = ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
       currentProjectCitations = collectCitationUrls(projectProviderResult.value);
       projectCitations = uniqueUrls(
         projectCitations,
         currentProjectCitations,
       );
-      phaseTelemetries.push(projectProviderResult.phaseTelemetry);
+      phaseTelemetries.push(...projectProviderResult.phaseTelemetries);
     };
     const transitionProject = async (
       outcome: 'MALFORMED_OUTPUT'
@@ -605,24 +614,28 @@ export class AssistantSourceDiscoveryService {
       project,
     });
     let developerCandidate = parseDeveloperCandidate(developerProviderResult.value);
-    const developerPhaseTelemetries = [developerProviderResult.phaseTelemetry];
+    const developerPhaseTelemetries = [...developerProviderResult.phaseTelemetries];
     let currentDeveloperCitations = collectCitationUrls(developerProviderResult.value);
     let developerCitations = currentDeveloperCitations;
     let developerCandidateUrl: string | null = null;
     let developerAllowedHosts: string[] = [];
     let developerPage: SourceConnectorFetchResult | null = null;
     const requestTerraFallback = async () => {
-      developerProviderResult = await this.providerBoundary.requestCandidate({
-        phase: 'DEVELOPER',
-        project,
-        developerAlternativeHosts: developerAllowedHosts,
-        model: ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
-      });
+      try {
+        developerProviderResult = await this.providerBoundary.requestCandidate({
+          phase: 'DEVELOPER',
+          project,
+          developerAlternativeHosts: developerAllowedHosts,
+          model: ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+        });
+      } catch (error) {
+        rethrowAssistantSourceDiscoveryWithPhases(error, developerPhaseTelemetries);
+      }
       developerModel = ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
       developerCandidate = parseDeveloperCandidate(developerProviderResult.value);
       currentDeveloperCitations = collectCitationUrls(developerProviderResult.value);
       developerCitations = uniqueUrls(developerCitations, currentDeveloperCitations);
-      developerPhaseTelemetries.push(developerProviderResult.phaseTelemetry);
+      developerPhaseTelemetries.push(...developerProviderResult.phaseTelemetries);
     };
     const transitionDeveloper = async () => {
       const decision = decideAssistantSourceDiscoveryTransition({
@@ -708,8 +721,9 @@ export class AssistantSourceDiscoveryService {
             project,
             developerAllowedHosts,
             developerCitations,
+            developerPhaseTelemetries,
           );
-          developerPhaseTelemetries.push(alternative.phaseTelemetry);
+          developerPhaseTelemetries.push(...alternative.phaseTelemetries);
           developerCitations = alternative.citations;
           if (alternative.page && alternative.canonicalUrl) {
             developerPage = alternative.page;
@@ -791,8 +805,9 @@ export class AssistantSourceDiscoveryService {
           project,
           developerAllowedHosts,
           developerCitations,
+          developerPhaseTelemetries,
         );
-        developerPhaseTelemetries.push(alternative.phaseTelemetry);
+        developerPhaseTelemetries.push(...alternative.phaseTelemetries);
         developerCitations = alternative.citations;
         if (alternative.page && alternative.canonicalUrl) {
           developerPage = alternative.page;
@@ -1049,14 +1064,20 @@ export class AssistantSourceDiscoveryService {
     project: AssistantSourceDiscoveryProject,
     allowedHosts: readonly string[],
     existingCitations: string[],
+    previousPhaseTelemetries: AssistantSourceDiscoveryPhaseTelemetry[],
   ): Promise<AlternativeDeveloperPage> {
-    const providerResult = await this.providerBoundary.requestCandidate({
-      phase: 'DEVELOPER',
-      project,
-      developerAlternativeHosts: allowedHosts,
-    });
+    let providerResult;
+    try {
+      providerResult = await this.providerBoundary.requestCandidate({
+        phase: 'DEVELOPER',
+        project,
+        developerAlternativeHosts: allowedHosts,
+      });
+    } catch (error) {
+      rethrowAssistantSourceDiscoveryWithPhases(error, previousPhaseTelemetries);
+    }
     const candidate = parseDeveloperCandidate(providerResult.value);
-    const phaseTelemetry = providerResult.phaseTelemetry;
+    const phaseTelemetries = providerResult.phaseTelemetries;
     const citations = uniqueUrls(existingCitations, collectCitationUrls(providerResult.value));
     let proposedUrl: string | null = null;
     if (candidate.status === 'FOUND') {
@@ -1106,7 +1127,7 @@ export class AssistantSourceDiscoveryService {
       canonicalUrl: selected?.url ?? null,
       candidate,
       citations,
-      phaseTelemetry,
+      phaseTelemetries,
     };
   }
 
@@ -1258,6 +1279,23 @@ function telemetryFromPhases(
     webSearchCalls: 0,
     phases: [],
   };
+}
+
+function rethrowAssistantSourceDiscoveryWithPhases(
+  error: unknown,
+  previousPhases: AssistantSourceDiscoveryPhaseTelemetry[],
+): never {
+  if (!(error instanceof AssistantSourceDiscoveryError) || previousPhases.length === 0) {
+    throw error;
+  }
+  throw new AssistantSourceDiscoveryError(
+    error.code,
+    error.requestId,
+    error.responseId,
+    error.httpStatus,
+    error.phaseTelemetry,
+    [...previousPhases, ...error.phaseTelemetries],
+  );
 }
 
 function inferCatalogMatchKind(

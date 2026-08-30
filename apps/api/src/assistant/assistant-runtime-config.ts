@@ -86,6 +86,7 @@ export function assessAssistantRolloutTransition(input: {
   sourceHealthPassed: boolean;
   budgetsConfigured: boolean;
   criticalErrorCount: number;
+  providerBudgetContractPassed: boolean;
   pilotCohortPassed: boolean;
   observationPassed: boolean;
 }) {
@@ -100,6 +101,9 @@ export function assessAssistantRolloutTransition(input: {
   if (!input.budgetsConfigured) blockers.push('ASSISTANT_ROLLOUT_BUDGETS_NOT_CONFIGURED');
   if (!Number.isInteger(input.criticalErrorCount) || input.criticalErrorCount !== 0) {
     blockers.push('ASSISTANT_ROLLOUT_CRITICAL_ERRORS_PRESENT');
+  }
+  if (input.providerBudgetContractPassed !== true) {
+    blockers.push('PROVIDER_BUDGET_CONTRACT_VIOLATION');
   }
   if (!input.pilotCohortPassed) blockers.push('ASSISTANT_ROLLOUT_PILOT_COHORT_INVALID');
   if (!input.observationPassed) blockers.push('ASSISTANT_ROLLOUT_OBSERVATION_INSUFFICIENT');

@@ -7,8 +7,12 @@ const { test } = require('node:test');
 const {
   AssistantSourceDiscoveryError,
   AssistantSourceDiscoveryProviderBoundary,
+  createDeveloperDiscoveryRequestBody,
   readBoundedJson,
 } = require('../dist/assistant/sources/assistant-source-discovery-provider.js');
+const {
+  estimateAssistantAiCallCost,
+} = require('../dist/assistant/operations/assistant-ai-cost.js');
 
 const project = {
   projectKey: 'zhiloj-kompleks-amber-city',
@@ -79,8 +83,11 @@ test('Assistant source discovery provider boundary owns retry, ledger and phase 
     'settle:2:PROVIDER_SUCCESS',
   ]);
   assert.equal(result.value.model, 'gpt-5.6-luna');
+  assert.equal(result.phaseTelemetries.length, 2);
+  assert.deepEqual(result.phaseTelemetries.map(({ webSearchCalls }) => webSearchCalls), [null, 1]);
   assert.deepEqual(result.phaseTelemetry, {
     phase: 'DEVELOPER',
+    attemptOrdinal: 2,
     provider: 'openai',
     model: 'gpt-5.6-luna',
     requestId: 'request-provider-boundary',
@@ -94,6 +101,87 @@ test('Assistant source discovery provider boundary owns retry, ledger and phase 
     totalTokens: 30,
     webSearchCalls: 1,
   });
+});
+
+test('ZAEBAL4 source discovery settles two returned Web Search calls before rejecting the candidate', async () => {
+  const events = [];
+  const reservations = [];
+  const settlements = [];
+  const providerBodies = [];
+  const executionId = randomUUID();
+  const boundary = new AssistantSourceDiscoveryProviderBoundary({
+    environment: {
+      OPENAI_API_KEY: 'bounded-local-stub',
+      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    },
+    async fetchImplementation(_url, init) {
+      providerBodies.push(JSON.parse(init.body));
+      events.push('http');
+      return developerResponse(2);
+    },
+    serviceOptions: {
+      usageBudgets: {
+        async reserve(input) {
+          reservations.push(input);
+          events.push('reserve');
+          return {
+            id: `reservation-${input.attemptOrdinal}`,
+            operationRunId: input.operationRunId,
+            executionId: input.executionId,
+            attemptOrdinal: input.attemptOrdinal,
+            provider: input.provider,
+            model: input.model,
+            serviceTier: input.serviceTier,
+            usageDate: new Date('2026-08-30T00:00:00.000Z'),
+            reservationExpiresAt: new Date('2026-08-30T00:03:00.000Z'),
+            reservedCostUsd: input.reservedCostUsd,
+          };
+        },
+        async settle(input) {
+          settlements.push(input);
+          events.push('settle');
+          return true;
+        },
+      },
+      dailyBudgetUsd: '1.00000000',
+      maximumRunCostUsd: '1.00000000',
+      operationRunId: 'zaebal4-tool-call-contract',
+      executionId,
+    },
+    validatorVersion: 'assistant-source-discovery-validator-v3',
+  });
+
+  await assert.rejects(
+    boundary.withProject(project.projectKey, () => (
+      boundary.requestCandidate({ phase: 'DEVELOPER', project })
+    )),
+    (error) => error instanceof AssistantSourceDiscoveryError
+      && error.code === 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+  );
+
+  assert.deepEqual(events, ['reserve', 'http', 'settle']);
+  assert.equal(providerBodies.length, 1);
+  assert.equal(providerBodies[0].max_tool_calls, 1);
+  assert.equal(reservations.length, 1);
+  assert.equal(settlements.length, 1);
+  assert.equal(settlements[0].webSearchCalls, 2);
+  assert.equal(settlements[0].outcome, 'PROVIDER_CONTRACT_VIOLATION');
+  assert.equal(
+    settlements[0].errorCode,
+    'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+  );
+  const conservativeReservation = estimateAssistantAiCallCost({
+    model: 'gpt-5.6-luna',
+    requestBytes: Buffer.byteLength(JSON.stringify(createDeveloperDiscoveryRequestBody(
+      'gpt-5.6-luna',
+      project,
+    )), 'utf8'),
+    maxOutputTokens: 1_600,
+    maxWebSearchCalls: 2,
+  });
+  assert.equal(reservations[0].reservedCostUsd, conservativeReservation.estimatedUsd);
 });
 
 test('Assistant source discovery provider reader stops before buffering an oversized body', async () => {
@@ -123,7 +211,7 @@ test('Assistant source discovery provider reader stops before buffering an overs
   assert.equal(cancelled, true);
 });
 
-function developerResponse() {
+function developerResponse(webSearchCallCount = 1) {
   return new Response(JSON.stringify({
     id: 'response-provider-boundary',
     model: 'gpt-5.6-luna',
@@ -140,10 +228,11 @@ function developerResponse() {
           }),
         }],
       },
-      {
+      ...Array.from({ length: webSearchCallCount }, (_, index) => ({
         type: 'web_search_call',
+        id: `search-provider-boundary-${index + 1}`,
         action: { sources: [{ url: 'https://developer.example/' }] },
-      },
+      })),
     ],
     usage: {
       input_tokens: 20,

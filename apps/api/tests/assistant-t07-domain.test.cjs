@@ -44,6 +44,8 @@ const {
   assessAssistantPilotCohort,
   assessAssistantPilotCohortAgainstApproval,
   assessAssistantRolloutObservation,
+  assessAssistantProviderBudgetContract,
+  collectAssistantProviderComparisonRunIds,
   assessAssistantSourceHealth,
   countAssistantRolloutCriticalErrors,
   readAssistantRolloutBudgetReadiness,
@@ -1072,6 +1074,7 @@ test('Assistant T07 rollout transition is sequential and blocked by eval, source
     sourceHealthPassed: true,
     budgetsConfigured: true,
     criticalErrorCount: 0,
+    providerBudgetContractPassed: true,
     pilotCohortPassed: true,
     observationPassed: true,
   };
@@ -1079,6 +1082,13 @@ test('Assistant T07 rollout transition is sequential and blocked by eval, source
   assert.deepEqual(assessAssistantRolloutTransition(ready), {
     passed: true,
     blockers: [],
+  });
+  assert.deepEqual(assessAssistantRolloutTransition({
+    ...ready,
+    providerBudgetContractPassed: undefined,
+  }), {
+    passed: false,
+    blockers: ['PROVIDER_BUDGET_CONTRACT_VIOLATION'],
   });
   assert.deepEqual(assessAssistantRolloutTransition({
     ...ready,
@@ -1101,6 +1111,22 @@ test('Assistant T07 rollout transition is sequential and blocked by eval, source
       'ASSISTANT_ROLLOUT_OBSERVATION_INSUFFICIENT',
     ],
   });
+});
+
+test('ZAEBAL4 rollout reconciles stage-created, observation-completed and stage-attempt runs', () => {
+  assert.deepEqual(collectAssistantProviderComparisonRunIds(
+    [{ id: 'created-during-stage' }],
+    [{ id: 'created-before-stage-completed-during-stage' }],
+    [
+      { operation: 'PLANNER', operationRunId: 'settled-during-stage' },
+      { operation: 'SOURCE_DISCOVERY', operationRunId: 'admin-source-run' },
+      { operation: 'PLANNER', operationRunId: 'created-during-stage' },
+    ],
+  ), [
+    'created-during-stage',
+    'created-before-stage-completed-during-stage',
+    'settled-during-stage',
+  ]);
 });
 
 test('Assistant T07 disabled Geo Provider degrades without a provider call or budget reservation', async () => {
@@ -1338,6 +1364,343 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
   assert.equal(assessAssistantRolloutStageRecord('PILOT', [
     { ...pilotEvent, startedAt: new Date('2026-08-26T13:00:00.000Z') },
   ], now).passed, false);
+});
+
+test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported usage mismatch as critical', () => {
+  const cleanAttempt = {
+    operationRunId: 'zaebal4-rollout-clean',
+    executionId: '11111111-1111-4111-8111-111111111111',
+    attemptOrdinal: 1,
+    operation: 'SOURCE_DISCOVERY',
+    status: 'SETTLED',
+    outcome: 'PROVIDER_SUCCESS',
+    pricingStatus: 'PRICED',
+    reservedCostUsd: '0.03000000',
+    chargedCostUsd: '0.02000000',
+    webSearchCalls: 1,
+  };
+  assert.deepEqual(assessAssistantProviderBudgetContract([cleanAttempt]), {
+    passed: true,
+    condition: null,
+    violationCount: 0,
+    violatingReceipts: [],
+    reportedUsageMismatches: [],
+  });
+  assert.equal(assessAssistantProviderBudgetContract([{
+    ...cleanAttempt,
+    operationRunId: 'zaebal4-rollout-actual-model-alias',
+    operation: 'PLANNER',
+    requestedModel: 'gpt-5.6-luna',
+    actualModel: 'gpt-5.6-luna-2026-08-01',
+    inputTokens: 20n,
+    cachedInputTokens: 4n,
+    cacheWriteInputTokens: 2n,
+    outputTokens: 10n,
+    reasoningTokens: 3n,
+    totalTokens: 30n,
+    webSearchCalls: 0,
+  }], {
+    operationRunIds: ['zaebal4-rollout-actual-model-alias'],
+    operations: ['PLANNER'],
+    reportedUsage: [{
+      operationRunId: 'zaebal4-rollout-actual-model-alias',
+      model: 'gpt-5.6-luna-2026-08-01',
+      inputTokens: 20,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 2,
+      outputTokens: 10,
+      reasoningTokens: 3,
+      totalTokens: 30,
+      webSearchCalls: 0,
+    }],
+  }).passed, true);
+
+  const usageMismatchRunId = 'zaebal4-rollout-usage-mismatch';
+  const assessment = assessAssistantProviderBudgetContract([
+    {
+      ...cleanAttempt,
+      operationRunId: 'zaebal4-rollout-overcharge',
+      chargedCostUsd: '0.04000000',
+      pricingStatus: 'RESERVE_EXCEEDED',
+    },
+    {
+      ...cleanAttempt,
+      operationRunId: 'zaebal4-rollout-reserved',
+      executionId: '22222222-2222-4222-8222-222222222222',
+      status: 'RESERVED',
+      outcome: null,
+      pricingStatus: 'RESERVED',
+      chargedCostUsd: null,
+      webSearchCalls: null,
+    },
+    {
+      ...cleanAttempt,
+      operationRunId: 'zaebal4-rollout-tool-contract',
+      executionId: '33333333-3333-4333-8333-333333333333',
+      webSearchCalls: 2,
+      outcome: 'PROVIDER_CONTRACT_VIOLATION',
+    },
+    {
+      ...cleanAttempt,
+      operationRunId: usageMismatchRunId,
+      executionId: '44444444-4444-4444-8444-444444444443',
+      operation: 'PLANNER',
+      requestedModel: 'gpt-5.6-luna',
+      status: 'SETTLED',
+      outcome: 'UNKNOWN_AFTER_CRASH',
+      pricingStatus: 'USAGE_INCOMPLETE',
+      chargedCostUsd: '0.03000000',
+      inputTokens: null,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+      outputTokens: null,
+      reasoningTokens: null,
+      totalTokens: null,
+      webSearchCalls: null,
+    },
+    {
+      ...cleanAttempt,
+      operationRunId: usageMismatchRunId,
+      executionId: '44444444-4444-4444-8444-444444444444',
+      attemptOrdinal: 2,
+      operation: 'EMBEDDING_RETRIEVAL',
+      requestedModel: 'text-embedding-3-small',
+      inputTokens: 8n,
+      cachedInputTokens: 0n,
+      cacheWriteInputTokens: 0n,
+      outputTokens: 0n,
+      reasoningTokens: 0n,
+      totalTokens: 8n,
+      webSearchCalls: 0,
+      outcome: 'ACCEPTED',
+    },
+    {
+      ...cleanAttempt,
+      operationRunId: usageMismatchRunId,
+      executionId: '44444444-4444-4444-8444-444444444444',
+      operation: 'PLANNER',
+      requestedModel: 'gpt-5.6-luna',
+      inputTokens: 20n,
+      cachedInputTokens: 4n,
+      cacheWriteInputTokens: 2n,
+      outputTokens: 10n,
+      reasoningTokens: 3n,
+      totalTokens: 30n,
+      webSearchCalls: 0,
+      outcome: 'ACCEPTED',
+    },
+  ], {
+    operationRunIds: [usageMismatchRunId],
+    operations: ['PLANNER'],
+    executions: [{
+      operationRunId: usageMismatchRunId,
+      executionId: '44444444-4444-4444-8444-444444444444',
+    }],
+    reportedUsage: [{
+      operationRunId: usageMismatchRunId,
+      model: 'gpt-5.6-luna',
+      inputTokens: 21,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 2,
+      outputTokens: 10,
+      reasoningTokens: 3,
+      totalTokens: 30,
+      webSearchCalls: 0,
+    }],
+  });
+
+  assert.deepEqual(assessment, {
+    passed: false,
+    condition: 'PROVIDER_BUDGET_CONTRACT_VIOLATION',
+    violationCount: 4,
+    violatingReceipts: [
+      {
+        operationRunId: 'zaebal4-rollout-overcharge',
+        executionId: '11111111-1111-4111-8111-111111111111',
+        attemptOrdinal: 1,
+        reasons: ['CHARGE_EXCEEDS_RESERVE'],
+      },
+      {
+        operationRunId: 'zaebal4-rollout-reserved',
+        executionId: '22222222-2222-4222-8222-222222222222',
+        attemptOrdinal: 1,
+        reasons: ['ATTEMPT_RESERVED'],
+      },
+      {
+        operationRunId: 'zaebal4-rollout-tool-contract',
+        executionId: '33333333-3333-4333-8333-333333333333',
+        attemptOrdinal: 1,
+        reasons: ['TOOL_CALL_CONTRACT_VIOLATION'],
+      },
+    ],
+    reportedUsageMismatches: [{
+      operationRunId: usageMismatchRunId,
+      receiptAttemptCount: 1,
+      reportedAttemptCount: 1,
+      fields: ['inputTokens'],
+    }],
+  });
+
+  const aggregateCollisionRunId = 'zaebal4-rollout-aggregate-collision';
+  const aggregateCollision = assessAssistantProviderBudgetContract([
+    {
+      ...cleanAttempt,
+      operationRunId: aggregateCollisionRunId,
+      executionId: '55555555-5555-4555-8555-555555555555',
+      attemptOrdinal: 1,
+      operation: 'PLANNER',
+      requestedModel: 'gpt-5.6-luna',
+      inputTokens: 10n,
+      cachedInputTokens: 0n,
+      cacheWriteInputTokens: 0n,
+      outputTokens: 5n,
+      reasoningTokens: 2n,
+      totalTokens: 15n,
+      webSearchCalls: 0,
+    },
+    {
+      ...cleanAttempt,
+      operationRunId: aggregateCollisionRunId,
+      executionId: '55555555-5555-4555-8555-555555555555',
+      attemptOrdinal: 2,
+      operation: 'PLANNER',
+      requestedModel: 'gpt-5.6-luna',
+      inputTokens: 20n,
+      cachedInputTokens: 0n,
+      cacheWriteInputTokens: 0n,
+      outputTokens: 5n,
+      reasoningTokens: 2n,
+      totalTokens: 25n,
+      webSearchCalls: 0,
+    },
+  ], {
+    operationRunIds: [aggregateCollisionRunId],
+    operations: ['PLANNER'],
+    executions: [{
+      operationRunId: aggregateCollisionRunId,
+      executionId: '55555555-5555-4555-8555-555555555555',
+    }],
+    reportedUsage: [
+      {
+        operationRunId: aggregateCollisionRunId,
+        model: 'gpt-5.6-luna',
+        inputTokens: 11,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 2,
+        totalTokens: 15,
+        webSearchCalls: 0,
+      },
+      {
+        operationRunId: aggregateCollisionRunId,
+        model: 'gpt-5.6-luna',
+        inputTokens: 19,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 2,
+        totalTokens: 25,
+        webSearchCalls: 0,
+      },
+    ],
+  });
+  assert.deepEqual(aggregateCollision.reportedUsageMismatches, [{
+    operationRunId: aggregateCollisionRunId,
+    receiptAttemptCount: 2,
+    reportedAttemptCount: 2,
+    fields: ['inputTokens'],
+  }]);
+
+  const ordinalMismatch = assessAssistantProviderBudgetContract([
+    {
+      ...cleanAttempt,
+      operationRunId: aggregateCollisionRunId,
+      executionId: '55555555-5555-4555-8555-555555555555',
+      attemptOrdinal: 1,
+      operation: 'PLANNER',
+      requestedModel: 'gpt-5.6-luna',
+      inputTokens: 10n,
+      cachedInputTokens: 0n,
+      cacheWriteInputTokens: 0n,
+      outputTokens: 5n,
+      reasoningTokens: 2n,
+      totalTokens: 15n,
+      webSearchCalls: 0,
+    },
+    {
+      ...cleanAttempt,
+      operationRunId: aggregateCollisionRunId,
+      executionId: '55555555-5555-4555-8555-555555555555',
+      attemptOrdinal: 2,
+      operation: 'PLANNER',
+      requestedModel: 'gpt-5.6-luna',
+      inputTokens: 20n,
+      cachedInputTokens: 0n,
+      cacheWriteInputTokens: 0n,
+      outputTokens: 5n,
+      reasoningTokens: 2n,
+      totalTokens: 25n,
+      webSearchCalls: 0,
+    },
+  ], {
+    operationRunIds: [aggregateCollisionRunId],
+    operations: ['PLANNER'],
+    executions: [{
+      operationRunId: aggregateCollisionRunId,
+      executionId: '55555555-5555-4555-8555-555555555555',
+    }],
+    reportedUsage: [
+      {
+        operationRunId: aggregateCollisionRunId,
+        attemptOrdinal: 2,
+        model: 'gpt-5.6-luna',
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 2,
+        totalTokens: 15,
+        webSearchCalls: 0,
+      },
+      {
+        operationRunId: aggregateCollisionRunId,
+        attemptOrdinal: 3,
+        model: 'gpt-5.6-luna',
+        inputTokens: 20,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 2,
+        totalTokens: 25,
+        webSearchCalls: 0,
+      },
+    ],
+  });
+  assert.deepEqual(ordinalMismatch.reportedUsageMismatches, [{
+    operationRunId: aggregateCollisionRunId,
+    receiptAttemptCount: 2,
+    reportedAttemptCount: 2,
+    fields: ['attemptOrdinal'],
+  }]);
+
+  assert.deepEqual(assessAssistantRolloutTransition({
+    currentStage: 'ADMINS',
+    targetStage: 'PILOT',
+    evalPassed: true,
+    sourceHealthPassed: true,
+    budgetsConfigured: true,
+    criticalErrorCount: assessment.violationCount,
+    providerBudgetContractPassed: assessment.passed,
+    pilotCohortPassed: true,
+    observationPassed: true,
+  }), {
+    passed: false,
+    blockers: [
+      'ASSISTANT_ROLLOUT_CRITICAL_ERRORS_PRESENT',
+      'PROVIDER_BUDGET_CONTRACT_VIOLATION',
+    ],
+  });
 });
 
 test('PIDAFIX1 paid readiness is shared, fail-closed and redacts the OpenAI key', () => {

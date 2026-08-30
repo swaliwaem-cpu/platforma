@@ -29,11 +29,13 @@ export const maximumProviderRequestBytes = 32 * 1024;
 export const maximumProviderResponseBytes = 2 * 1024 * 1024;
 export const maximumProviderOutputTokens = 1_600;
 export const maximumProviderWebSearchCalls = 1;
+export const maximumReservedProviderWebSearchCalls = 2;
 
 export type AssistantSourceDiscoveryPhase = 'DEVELOPER' | 'PROJECT';
 
 export type AssistantSourceDiscoveryPhaseTelemetry = {
   phase: AssistantSourceDiscoveryPhase;
+  attemptOrdinal?: number;
   provider: 'openai';
   model: string;
   requestId: string | null;
@@ -109,18 +111,27 @@ type AssistantSourceDiscoveryProviderRequest = {
 
 export type AssistantSourceDiscoveryProviderAttempt = AssistantSourceDiscoveryProviderResult & {
   phaseTelemetry: AssistantSourceDiscoveryPhaseTelemetry;
+  phaseTelemetries: AssistantSourceDiscoveryPhaseTelemetry[];
 };
 
 export class AssistantSourceDiscoveryError extends Error {
+  readonly phaseTelemetries: AssistantSourceDiscoveryPhaseTelemetry[];
+
   constructor(
     readonly code: string,
     readonly requestId: string | null = null,
     readonly responseId: string | null = null,
     readonly httpStatus: number | null = null,
     readonly phaseTelemetry: AssistantSourceDiscoveryPhaseTelemetry | null = null,
+    phaseTelemetries?: readonly AssistantSourceDiscoveryPhaseTelemetry[],
   ) {
     super(code);
     this.name = 'AssistantSourceDiscoveryError';
+    this.phaseTelemetries = phaseTelemetries
+      ? [...phaseTelemetries]
+      : phaseTelemetry
+        ? [phaseTelemetry]
+        : [];
   }
 }
 
@@ -207,10 +218,18 @@ export class AssistantSourceDiscoveryProviderBoundary {
   ): Promise<AssistantSourceDiscoveryProviderAttempt> {
     const model = input.model ?? this.primaryModel;
     let retryCount = 0;
+    const phaseTelemetries: AssistantSourceDiscoveryPhaseTelemetry[] = [];
     for (;;) {
       try {
-        return await this.requestCandidateAttempt(input, model);
+        const attempt = await this.requestCandidateAttempt(input, model);
+        return {
+          ...attempt,
+          phaseTelemetries: [...phaseTelemetries, ...attempt.phaseTelemetries],
+        };
       } catch (error) {
+        if (error instanceof AssistantSourceDiscoveryError) {
+          phaseTelemetries.push(...error.phaseTelemetries);
+        }
         const decision = decideAssistantSourceDiscoveryTransition({
           outcome: 'PROVIDER_ERROR',
           model: assistantSourceDiscoveryModelRole(model, this.primaryModel),
@@ -220,7 +239,17 @@ export class AssistantSourceDiscoveryProviderBoundary {
           ),
           retryCount,
         });
-        if (decision !== 'RETRY_LUNA') throw error;
+        if (decision !== 'RETRY_LUNA') {
+          if (!(error instanceof AssistantSourceDiscoveryError)) throw error;
+          throw new AssistantSourceDiscoveryError(
+            error.code,
+            error.requestId,
+            error.responseId,
+            error.httpStatus,
+            error.phaseTelemetry,
+            phaseTelemetries,
+          );
+        }
         retryCount += 1;
       }
     }
@@ -255,7 +284,7 @@ export class AssistantSourceDiscoveryProviderBoundary {
         serviceTier: ASSISTANT_AI_SERVICE_TIER,
         requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
         maxOutputTokens: maximumProviderOutputTokens,
-        maxWebSearchCalls: maximumProviderWebSearchCalls,
+        maxWebSearchCalls: maximumReservedProviderWebSearchCalls,
       });
       if (estimated.status !== 'PRICED'
         || estimated.estimatedUsd === null
@@ -330,7 +359,12 @@ export class AssistantSourceDiscoveryProviderBoundary {
         : new AssistantSourceDiscoveryError(controller.signal.aborted
           ? 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'
           : 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED');
-      const phaseTelemetry = createFailedPhaseTelemetry(input.phase, model, providerError);
+      const phaseTelemetry = createFailedPhaseTelemetry(
+        input.phase,
+        model,
+        providerError,
+        attemptOrdinal,
+      );
       try {
         await this.settleAiUsage(
           aiReservation,
@@ -361,13 +395,22 @@ export class AssistantSourceDiscoveryProviderBoundary {
       );
     }
 
-    const phaseTelemetry = createPhaseTelemetry(input.phase, model, providerResult);
+    const phaseTelemetry = createPhaseTelemetry(
+      input.phase,
+      model,
+      providerResult,
+      attemptOrdinal,
+    );
+    const toolCallContractViolated = phaseTelemetry.webSearchCalls
+      !== maximumProviderWebSearchCalls;
     try {
       await this.settleAiUsage(
         aiReservation,
         model,
-        'PROVIDER_SUCCESS',
-        null,
+        toolCallContractViolated ? 'PROVIDER_CONTRACT_VIOLATION' : 'PROVIDER_SUCCESS',
+        toolCallContractViolated
+          ? 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED'
+          : null,
         { phase: input.phase, providerResult },
         Date.now() - startedAt,
       );
@@ -382,7 +425,16 @@ export class AssistantSourceDiscoveryProviderBoundary {
     } finally {
       if (timeout) clearTimeout(timeout);
     }
-    return { ...providerResult, phaseTelemetry };
+    if (toolCallContractViolated) {
+      throw new AssistantSourceDiscoveryError(
+        'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+        providerResult.requestId,
+        providerResult.responseId,
+        providerResult.httpStatus,
+        phaseTelemetry,
+      );
+    }
+    return { ...providerResult, phaseTelemetry, phaseTelemetries: [phaseTelemetry] };
   }
 
   private async fetchCandidate(
@@ -702,6 +754,7 @@ export function createPhaseTelemetry(
   phase: AssistantSourceDiscoveryPhase,
   model: string,
   providerResult: AssistantSourceDiscoveryProviderResult,
+  attemptOrdinal?: number,
 ): AssistantSourceDiscoveryPhaseTelemetry {
   const usage = isRecord(providerResult.value.usage) ? providerResult.value.usage : null;
   const inputDetails = usage && isRecord(usage.input_tokens_details)
@@ -712,6 +765,7 @@ export function createPhaseTelemetry(
     : null;
   return {
     phase,
+    ...(attemptOrdinal === undefined ? {} : { attemptOrdinal }),
     provider: 'openai',
     model: readOptionalString(providerResult.value.model, 160) ?? model,
     requestId: providerResult.requestId,
@@ -844,9 +898,11 @@ function createFailedPhaseTelemetry(
   phase: AssistantSourceDiscoveryPhase,
   model: string,
   error: AssistantSourceDiscoveryError,
+  attemptOrdinal: number,
 ): AssistantSourceDiscoveryPhaseTelemetry {
   return {
     phase,
+    attemptOrdinal,
     provider: 'openai',
     model,
     requestId: error.requestId,

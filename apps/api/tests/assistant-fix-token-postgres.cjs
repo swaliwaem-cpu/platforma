@@ -29,6 +29,10 @@ const {
 const {
   createEmptyAssistantSearchFilters,
 } = require('../dist/assistant/assistant-query-planner.js');
+const {
+  AssistantSourceDiscoveryError,
+  AssistantSourceDiscoveryProviderBoundary,
+} = require('../dist/assistant/sources/assistant-source-discovery-provider.js');
 
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 const service = new AssistantAiUsageBudgetService(prisma);
@@ -40,6 +44,7 @@ const reconcileProvider = `openai-reconcile-${suffix}`;
 const planProvider = `openai-plan-${suffix}`;
 const embeddingProvider = `openai-embedding-${suffix}`;
 const requestProvider = `openai-request-${suffix}`;
+const sourceContractProvider = `openai-source-contract-${suffix}`;
 const planUsageDate = new Date('2100-01-01T00:00:00.000Z');
 const firstDay = new Date('2098-08-27T00:00:00.000Z');
 const secondDay = new Date('2098-08-28T00:00:00.000Z');
@@ -52,6 +57,7 @@ const eighthDay = new Date('2098-09-03T00:00:00.000Z');
 const ninthDay = new Date('2098-09-04T00:00:00.000Z');
 const tenthDay = new Date('2098-09-05T00:00:00.000Z');
 const eleventhDay = new Date('2098-09-06T12:00:00.000Z');
+const twelfthDay = new Date('2098-09-07T00:00:00.000Z');
 const assistantFixtures = [];
 
 process.env.ASSISTANT_MODULE_ENABLED = 'true';
@@ -70,6 +76,7 @@ after(async () => {
       reconcileProvider,
       planProvider,
       embeddingProvider,
+      sourceContractProvider,
     ] } },
   });
   await prisma.assistantAiExecutionFence.deleteMany({
@@ -82,6 +89,7 @@ after(async () => {
       reconcileProvider,
       planProvider,
       embeddingProvider,
+      sourceContractProvider,
     ] } },
   });
   for (const fixture of assistantFixtures) {
@@ -850,6 +858,112 @@ test('FIX-TOKEN records an actual charge above reserve without hiding the overag
   assert.equal((await readBudget(thirdDay)).settledCostUsd.toFixed(8), '0.01320000');
 });
 
+test('ZAEBAL4 PostgreSQL settles two returned Web Search calls before rejecting without retry', async () => {
+  const operationRunId = runId('source-tool-contract');
+  const executionId = randomUUID();
+  let providerCalls = 0;
+  let requestBody = null;
+  const boundary = new AssistantSourceDiscoveryProviderBoundary({
+    environment: {
+      OPENAI_API_KEY: 'bounded-local-postgres-stub',
+      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    },
+    async fetchImplementation(_url, init) {
+      providerCalls += 1;
+      requestBody = JSON.parse(init.body);
+      const reserved = await prisma.assistantAiUsageAttempt.findFirstOrThrow({
+        where: { operationRunId, executionId, attemptOrdinal: 1 },
+        select: {
+          operationRunId: true,
+          executionId: true,
+          attemptOrdinal: true,
+          status: true,
+          outcome: true,
+          chargedCostUsd: true,
+        },
+      });
+      assert.deepEqual(reserved, {
+        operationRunId,
+        executionId,
+        attemptOrdinal: 1,
+        status: 'RESERVED',
+        outcome: null,
+        chargedCostUsd: null,
+      });
+      return sourceContractResponse(2);
+    },
+    serviceOptions: {
+      usageBudgets: {
+        reserve(input) {
+          assert.equal(input.provider, 'openai');
+          return service.reserve({ ...input, provider: sourceContractProvider, now: twelfthDay });
+        },
+        settle(input) {
+          return service.settle(input);
+        },
+      },
+      dailyBudgetUsd: '1.00000000',
+      maximumRunCostUsd: '1.00000000',
+      operationRunId,
+      executionId,
+    },
+    validatorVersion: 'assistant-source-discovery-validator-v3',
+  });
+  const project = {
+    projectKey: 'zaebal4-postgres-project',
+    title: 'ZAEBAL4 PostgreSQL project',
+    developerKey: 'zaebal4-developer',
+    developerName: 'ZAEBAL4 developer',
+    address: 'Москва',
+  };
+
+  await assert.rejects(
+    boundary.withProject(project.projectKey, () => (
+      boundary.requestCandidate({ phase: 'DEVELOPER', project })
+    )),
+    (error) => error instanceof AssistantSourceDiscoveryError
+      && error.code === 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+  );
+
+  assert.equal(providerCalls, 1);
+  assert.equal(requestBody.max_tool_calls, 1);
+  const attempt = await prisma.assistantAiUsageAttempt.findFirstOrThrow({
+    where: { operationRunId, executionId, attemptOrdinal: 1 },
+    select: {
+      operationRunId: true,
+      executionId: true,
+      attemptOrdinal: true,
+      status: true,
+      outcome: true,
+      errorCode: true,
+      webSearchCalls: true,
+      reservedCostUsd: true,
+      chargedCostUsd: true,
+    },
+  });
+  assert.equal(attempt.operationRunId, operationRunId);
+  assert.equal(attempt.executionId, executionId);
+  assert.equal(attempt.attemptOrdinal, 1);
+  assert.equal(attempt.status, 'SETTLED');
+  assert.equal(attempt.outcome, 'PROVIDER_CONTRACT_VIOLATION');
+  assert.equal(
+    attempt.errorCode,
+    'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+  );
+  assert.equal(attempt.webSearchCalls, 2);
+  assert.ok(attempt.reservedCostUsd.gte(attempt.chargedCostUsd));
+  const budget = await prisma.assistantAiDailyBudget.findUniqueOrThrow({
+    where: {
+      provider_usageDate: { provider: sourceContractProvider, usageDate: twelfthDay },
+    },
+    select: { reservedCostUsd: true, settledCostUsd: true },
+  });
+  assert.equal(budget.reservedCostUsd.toFixed(8), '0.00000000');
+  assert.equal(budget.settledCostUsd.toFixed(8), attempt.chargedCostUsd.toFixed(8));
+});
+
 test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new execution after reconciling its reserve', async () => {
   const fixture = await createExpiredAssistantRun();
   assistantFixtures.push(fixture);
@@ -1321,4 +1435,43 @@ function explainPlanText(rows) {
   const plan = rows[0]['QUERY PLAN'];
   assert.ok(plan);
   return JSON.stringify(plan);
+}
+
+function sourceContractResponse(webSearchCallCount) {
+  return new Response(JSON.stringify({
+    id: 'response-zaebal4-postgres',
+    model: 'gpt-5.6-luna',
+    output: [
+      {
+        type: 'message',
+        content: [{
+          type: 'output_text',
+          text: JSON.stringify({
+            status: 'FOUND',
+            canonicalUrl: 'https://developer.example/',
+            officialDeveloperName: 'ZAEBAL4 developer',
+            reason: 'Официальный сайт найден.',
+          }),
+        }],
+      },
+      ...Array.from({ length: webSearchCallCount }, (_, index) => ({
+        type: 'web_search_call',
+        id: `search-zaebal4-postgres-${index + 1}`,
+        action: { sources: [{ url: 'https://developer.example/' }] },
+      })),
+    ],
+    usage: {
+      input_tokens: 20,
+      input_tokens_details: { cached_tokens: 4, cache_write_tokens: 2 },
+      output_tokens: 10,
+      output_tokens_details: { reasoning_tokens: 3 },
+      total_tokens: 30,
+    },
+  }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'x-request-id': 'request-zaebal4-postgres',
+    },
+  });
 }

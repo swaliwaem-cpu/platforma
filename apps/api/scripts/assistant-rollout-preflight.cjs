@@ -18,6 +18,8 @@ const {
 const {
   assessAssistantPilotCohort,
   assessAssistantPilotCohortAgainstApproval,
+  assessAssistantProviderBudgetContract,
+  collectAssistantProviderComparisonRunIds,
   assessAssistantRolloutObservation,
   assessAssistantRolloutStageRecord,
   assessAssistantSourceHealth,
@@ -51,6 +53,7 @@ async function run() {
   let evalSummary;
   let sourceHealth;
   let criticalErrorCount;
+  let providerBudgetContract;
   let pilotCohort;
   let observation;
   let stageRecord;
@@ -81,7 +84,12 @@ async function run() {
       }),
       prisma.assistantRun.findMany({
         where: { createdAt: { gte: previousStageStartedAt, lte: now } },
-        select: { ownerUserId: true, status: true, qualityFlags: true },
+        select: {
+          id: true,
+          ownerUserId: true,
+          status: true,
+          qualityFlags: true,
+        },
       }),
       prisma.assistantRun.findMany({
         where: {
@@ -89,6 +97,7 @@ async function run() {
           completedAt: { gte: previousStageStartedAt, lte: now },
         },
         select: {
+          id: true,
           ownerUserId: true,
           status: true,
           qualityFlags: true,
@@ -113,8 +122,72 @@ async function run() {
         })
         : Promise.resolve([]),
     ]);
+    const initialProviderComparisonRunIds = collectAssistantProviderComparisonRunIds(
+      runs,
+      observationRuns,
+      [],
+    );
+    const providerAttempts = await prisma.assistantAiUsageAttempt.findMany({
+      where: {
+        OR: [
+          { createdAt: { gte: previousStageStartedAt, lte: now } },
+          { settledAt: { gte: previousStageStartedAt, lte: now } },
+          { status: 'RESERVED' },
+          ...(initialProviderComparisonRunIds.length === 0 ? [] : [{
+            operation: 'PLANNER',
+            operationRunId: { in: initialProviderComparisonRunIds },
+          }]),
+        ],
+      },
+      select: {
+        operationRunId: true,
+        executionId: true,
+        attemptOrdinal: true,
+        operation: true,
+        requestedModel: true,
+        actualModel: true,
+        status: true,
+        outcome: true,
+        pricingStatus: true,
+        reservedCostUsd: true,
+        chargedCostUsd: true,
+        inputTokens: true,
+        cachedInputTokens: true,
+        cacheWriteInputTokens: true,
+        outputTokens: true,
+        reasoningTokens: true,
+        totalTokens: true,
+        webSearchCalls: true,
+      },
+    });
+    const providerComparisonRunIds = collectAssistantProviderComparisonRunIds(
+      runs,
+      observationRuns,
+      providerAttempts,
+    );
+    const [providerTelemetryRuns, executionFences] = providerComparisonRunIds.length === 0
+      ? [[], []]
+      : await Promise.all([
+        prisma.assistantRun.findMany({
+          where: { id: { in: providerComparisonRunIds } },
+          select: { id: true, telemetryJson: true },
+        }),
+        prisma.assistantAiExecutionFence.findMany({
+          where: { operationRunId: { in: providerComparisonRunIds } },
+          select: { operationRunId: true, executionId: true },
+        }),
+      ]);
     sourceHealth = assessAssistantSourceHealth(sources);
-    criticalErrorCount = countAssistantRolloutCriticalErrors(runs);
+    providerBudgetContract = assessAssistantProviderBudgetContract(providerAttempts, {
+      operationRunIds: providerComparisonRunIds,
+      operations: ['PLANNER'],
+      executions: executionFences,
+      reportedUsage: providerTelemetryRuns.flatMap(({ id, telemetryJson }) => (
+        readAssistantOpenAiReportedUsage(id, telemetryJson)
+      )),
+    });
+    criticalErrorCount = countAssistantRolloutCriticalErrors(runs)
+      + providerBudgetContract.violationCount;
     const mappedPilotUsers = pilotUsers.map((user) => ({
       id: user.id,
       status: user.status,
@@ -147,6 +220,7 @@ async function run() {
     sourceHealthPassed: sourceHealth.passed,
     budgetsConfigured: budgets.passed,
     criticalErrorCount,
+    providerBudgetContractPassed: providerBudgetContract.passed,
     pilotCohortPassed: pilotCohort.passed,
     observationPassed: observation.passed,
   });
@@ -162,6 +236,7 @@ async function run() {
     },
     sourceHealth,
     budgets,
+    providerBudgetContract,
     pilotCohort,
     observation,
     stageRecord: {
@@ -204,4 +279,22 @@ async function run() {
 function readArgument(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+function readAssistantOpenAiReportedUsage(operationRunId, telemetryJson) {
+  if (!Array.isArray(telemetryJson)) return [];
+  return telemetryJson.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || entry.provider !== 'openai') return [];
+    return [{
+      operationRunId,
+      model: entry.model,
+      inputTokens: entry.inputTokens,
+      cachedInputTokens: entry.cachedInputTokens,
+      cacheWriteInputTokens: entry.cacheWriteInputTokens,
+      outputTokens: entry.outputTokens,
+      reasoningTokens: entry.reasoningTokens,
+      totalTokens: entry.totalTokens,
+      webSearchCalls: entry.webSearchCalls,
+    }];
+  });
 }

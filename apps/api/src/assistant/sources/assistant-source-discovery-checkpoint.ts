@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import type { AssistantSourceDiscoveryResult } from './assistant-source-discovery.service';
 
 export const ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_VERSION = 1;
-export const ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION = 'assistant-source-discovery-validator-v2';
+export const ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION = 'assistant-source-discovery-validator-v3';
 
 const assistantSourceDiscoveryCheckpointStatuses = [
   'VERIFIED',

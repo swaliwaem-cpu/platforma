@@ -21,7 +21,7 @@ const {
   aggregateTelemetry,
   maximumProviderOutputTokens,
   maximumProviderRequestBytes,
-  maximumProviderWebSearchCalls,
+  maximumReservedProviderWebSearchCalls,
 } = require('../dist/assistant/sources/assistant-source-discovery-provider.js');
 const {
   ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION,
@@ -43,6 +43,9 @@ const {
   AssistantAiUsageBudgetService,
   readAssistantDailyUsdBudget,
 } = require('../dist/assistant/operations/assistant-ai-usage-budget.service.js');
+const {
+  assessAssistantProviderBudgetContract,
+} = require('../dist/assistant/rollout/assistant-rollout-preflight.js');
 const {
   AssistantSourceIngestionService,
 } = require('../dist/assistant/sources/assistant-source-ingestion.service.js');
@@ -114,6 +117,7 @@ async function runAssistantSourceDiscovery(input = {}) {
       || join(process.cwd(), '.assistant-source-discovery', 'checkpoint-v1.json');
     const fingerprint = createCheckpointFingerprint();
     let checkpointRead;
+    let checkpointBackup = null;
     try {
       checkpointRead = readAssistantSourceDiscoveryCheckpoint(checkpointPath, fingerprint);
     } catch (error) {
@@ -121,7 +125,7 @@ async function runAssistantSourceDiscovery(input = {}) {
         && error?.code === 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_FINGERPRINT_MISMATCH'
         && error.checkpoint) {
         if (options.live) {
-          backupAssistantSourceDiscoveryCheckpoint(checkpointPath, error.checkpoint);
+          checkpointBackup = error.checkpoint;
         }
         checkpointRead = {
           state: 'MISSING',
@@ -254,16 +258,32 @@ async function runAssistantSourceDiscovery(input = {}) {
           includeProjectSources: !options.refresh,
         },
       );
-    rejectDuplicateCanonicalUrls(results);
-
-    for (const result of results) {
-      if (result.status === 'ERROR') continue;
-      checkpoint = checkpointAssistantSourceDiscoveryResult(checkpoint, result);
-    }
-    writeAssistantSourceDiscoveryCheckpoint(checkpointPath, checkpoint);
-
     const persistedAttempts = await loadAssistantUsageAttempts(prisma, runId, executionId);
-    const applyResults = options.apply
+    const reportedUsage = results.flatMap((result) => (
+      result.telemetry?.phases ?? []
+    )).map((phase) => ({ operationRunId: runId, ...phase }));
+    const providerBudgetContract = assessAssistantProviderBudgetContract(
+      persistedAttempts,
+      {
+        operationRunIds: [runId],
+        operations: ['SOURCE_DISCOVERY'],
+        executions: [{ operationRunId: runId, executionId }],
+        reportedUsage,
+      },
+    );
+    if (providerBudgetContract.passed) {
+      if (checkpointBackup) {
+        backupAssistantSourceDiscoveryCheckpoint(checkpointPath, checkpointBackup);
+      }
+      rejectDuplicateCanonicalUrls(results);
+      for (const result of results) {
+        if (result.status === 'ERROR') continue;
+        checkpoint = checkpointAssistantSourceDiscoveryResult(checkpoint, result);
+      }
+      writeAssistantSourceDiscoveryCheckpoint(checkpointPath, checkpoint);
+    }
+
+    const applyResults = options.apply && providerBudgetContract.passed
       ? await applyVerifiedSources(application, prisma, results)
       : [];
     const report = createReport(options, results, applyResults, {
@@ -273,9 +293,11 @@ async function runAssistantSourceDiscovery(input = {}) {
       checkpointHits: reportedCheckpointHits,
       checkpointProjectKeys: reportedCheckpointProjectKeys,
       persistedAttempts,
+      providerBudgetContract,
     });
     if (!input.silent) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    if (report.summary.verified + checkpointHits !== projects.length
+    if (!providerBudgetContract.passed
+      || report.summary.verified + checkpointHits !== projects.length
       || report.summary.ingestionFailed > 0) {
       if (!input.silent) process.exitCode = 2;
     }
@@ -509,8 +531,8 @@ async function discoverProjects(
           contentChecksum: null,
           developerCacheHit: false,
           telemetry: error instanceof AssistantSourceDiscoveryError
-            ? error.phaseTelemetry
-              ? aggregateTelemetry([error.phaseTelemetry])
+            ? error.phaseTelemetries.length > 0
+              ? aggregateTelemetry(error.phaseTelemetries)
               : {
                 provider: 'openai',
                 model: ASSISTANT_SOURCE_DISCOVERY_MODEL,
@@ -618,8 +640,9 @@ function createReport(options, results, applyResults, context) {
   if (options.live && !Array.isArray(context.persistedAttempts)) {
     throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_REQUIRED');
   }
-  if (options.live && context.persistedAttempts.length < phases.length) {
-    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INCOMPLETE');
+  if (options.live && (!context.providerBudgetContract
+    || typeof context.providerBudgetContract.passed !== 'boolean')) {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_ASSESSMENT_REQUIRED');
   }
   const usageSummary = options.live
     ? summarizePersistedAttempts(context.persistedAttempts)
@@ -630,13 +653,20 @@ function createReport(options, results, applyResults, context) {
     runId: context.runId,
     mode: options.live ? (options.apply ? 'LIVE_APPLY' : 'LIVE_PREVIEW') : 'DRY_RUN',
     stopReason: options.live
-      ? readLiveStopReason(results, applyResults)
+      ? readLiveStopReason(results, applyResults, context.providerBudgetContract)
       : costCapMayStopBeforeCompletion
         ? 'ASSISTANT_SOURCE_DISCOVERY_DRY_RUN_COST_CAP_MAY_STOP'
         : 'ASSISTANT_SOURCE_DISCOVERY_DRY_RUN_COMPLETE',
     pricingCatalogVersion: usageSummary.pricingCatalogVersion,
     pricingCatalogVersions: usageSummary.pricingCatalogVersions,
     generatedAt: new Date().toISOString(),
+    providerBudgetContract: options.live ? context.providerBudgetContract : {
+      passed: true,
+      condition: null,
+      violationCount: 0,
+      violatingReceipts: [],
+      reportedUsageMismatches: [],
+    },
     selection: {
       requestedProjects: options.limit,
       maximumBatchProjects: maximumDiscoveryBatchProjects,
@@ -692,11 +722,18 @@ async function loadAssistantUsageAttempts(prisma, operationRunId, executionId) {
   try {
     return await prisma.assistantAiUsageAttempt.findMany({
       where: { operationRunId, executionId, operation: 'SOURCE_DISCOVERY' },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      orderBy: { attemptOrdinal: 'asc' },
       select: {
+        operationRunId: true,
+        executionId: true,
+        attemptOrdinal: true,
+        operation: true,
         requestedModel: true,
+        actualModel: true,
         isFallback: true,
         status: true,
+        outcome: true,
+        pricingStatus: true,
         inputTokens: true,
         cachedInputTokens: true,
         cacheWriteInputTokens: true,
@@ -859,7 +896,7 @@ function estimateMaximumDiscoveryCost(providerEligibleProjectCount) {
       model,
       requestBytes: maximumProviderRequestBytes,
       maxOutputTokens: maximumProviderOutputTokens,
-      maxWebSearchCalls: maximumProviderWebSearchCalls,
+      maxWebSearchCalls: maximumReservedProviderWebSearchCalls,
     });
     if (estimate.status !== 'PRICED' || estimate.estimatedUsd === null) {
       throw new Error('ASSISTANT_SOURCE_DISCOVERY_COST_UNPRICED');
@@ -874,11 +911,12 @@ function estimateMaximumDiscoveryCost(providerEligibleProjectCount) {
   ]);
 }
 
-function readLiveStopReason(results, applyResults) {
+function readLiveStopReason(results, applyResults, providerBudgetContract) {
   const discoveryError = results.find(({ status, errorCode }) => (
     status === 'ERROR' && errorCode
   ))?.errorCode;
   if (discoveryError) return discoveryError;
+  if (!providerBudgetContract.passed) return providerBudgetContract.condition;
   const ingestionError = applyResults.find(({ ingestionErrorCode }) => (
     ingestionErrorCode
   ))?.ingestionErrorCode;

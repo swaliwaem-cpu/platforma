@@ -1552,6 +1552,58 @@ test('Assistant source discovery stops after settlement failure without retry or
   assert.deepEqual(providerBodies.map(({ model }) => model), ['gpt-5.6-luna']);
 });
 
+test('ZAEBAL4 source discovery reports every settled phase when a later tool contract fails', async () => {
+  const providerBodies = [];
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      if (body.text.format.name === 'platforma_official_developer_candidate') {
+        return developerResponse({
+          canonicalUrl: 'https://developer.example/',
+          officialDeveloperName: 'ФСК',
+        }, ['https://developer.example/']);
+      }
+      return openAiResponse({
+        status: 'FOUND',
+        canonicalUrl: 'https://developer.example/official/amber-city',
+        officialProjectName: 'Amber City',
+        matchKind: 'EXACT',
+        reason: 'Проект найден внутри официального контура застройщика.',
+      }, ['https://developer.example/official/amber-city'], 'resp_project_contract', 2);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project),
+    (error) => {
+      assert.equal(error.code, 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED');
+      assert.deepEqual(error.phaseTelemetries.map(({ phase, webSearchCalls }) => ({
+        phase,
+        webSearchCalls,
+      })), [
+        { phase: 'DEVELOPER', webSearchCalls: 1 },
+        { phase: 'PROJECT', webSearchCalls: 2 },
+      ]);
+      return true;
+    },
+  );
+  assert.equal(providerBodies.length, 2);
+  assert.equal(providerBodies.some(({ model }) => model === 'gpt-5.6-terra'), false);
+});
+
 test('Assistant source discovery uses one Terra fallback after Luna fails local project validation', async () => {
   const providerBodies = [];
   const responses = [
@@ -1747,7 +1799,7 @@ test('Assistant source discovery reports run USD exhaustion before retry reserva
     model: 'gpt-5.6-luna',
     requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
     maxOutputTokens: 1_600,
-    maxWebSearchCalls: 1,
+    maxWebSearchCalls: 2,
   }).estimatedUsd;
   let providerCalls = 0;
   let reservations = 0;
@@ -1820,7 +1872,7 @@ test('Assistant source discovery keeps the run USD cap atomic across concurrent 
     model: 'gpt-5.6-luna',
     requestBytes: Buffer.byteLength(JSON.stringify(firstRequest), 'utf8'),
     maxOutputTokens: 1_600,
-    maxWebSearchCalls: 1,
+    maxWebSearchCalls: 2,
   }).estimatedUsd;
   let reservations = 0;
   let providerCalls = 0;
@@ -3049,16 +3101,16 @@ function projectNotFoundResponse(citations) {
   }, citations, 'resp_project');
 }
 
-function openAiResponse(candidate, citations, responseId) {
+function openAiResponse(candidate, citations, responseId, webSearchCallCount = 1) {
   return new Response(JSON.stringify({
     id: responseId,
     output: [
-      {
+      ...Array.from({ length: webSearchCallCount }, () => ({
         type: 'web_search_call',
         action: {
           sources: citations.map((url) => ({ type: 'url', url })),
         },
-      },
+      })),
       {
         type: 'message',
         content: [{

@@ -5,6 +5,7 @@ import {
   isAssistantGeoProviderEnabled,
   type AssistantRolloutStage,
 } from '../assistant-runtime-config';
+import { parseAssistantUsd } from '../operations/assistant-ai-cost';
 import { readAssistantPaidProviderReadiness } from '../operations/assistant-paid-readiness';
 
 type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -20,6 +21,47 @@ type AssistantRolloutRunRecord = {
   ownerUserId: string;
   status: AssistantRunStatus | 'COMPLETED' | 'FAILED';
   qualityFlags: string[];
+};
+
+type AssistantProviderBudgetContractAttempt = {
+  operationRunId: string;
+  executionId: string;
+  attemptOrdinal: number;
+  operation: string;
+  requestedModel?: string;
+  actualModel?: string | null;
+  status: string;
+  outcome: string | null;
+  pricingStatus: string;
+  reservedCostUsd: string | { toFixed(fractionDigits: number): string };
+  chargedCostUsd: string | { toFixed(fractionDigits: number): string } | null;
+  inputTokens?: number | bigint | null;
+  cachedInputTokens?: number | bigint | null;
+  cacheWriteInputTokens?: number | bigint | null;
+  outputTokens?: number | bigint | null;
+  reasoningTokens?: number | bigint | null;
+  totalTokens?: number | bigint | null;
+  webSearchCalls: number | null;
+};
+
+type AssistantProviderReportedUsage = {
+  operationRunId: string;
+  attemptOrdinal?: number | null;
+  model: string;
+  inputTokens: number | bigint | null;
+  cachedInputTokens: number | bigint | null;
+  cacheWriteInputTokens: number | bigint | null;
+  outputTokens: number | bigint | null;
+  reasoningTokens: number | bigint | null;
+  totalTokens: number | bigint | null;
+  webSearchCalls: number | bigint | null;
+};
+
+type AssistantProviderReportedUsageComparison = {
+  operationRunIds: string[];
+  operations?: string[];
+  executions?: Array<{ operationRunId: string; executionId: string }>;
+  reportedUsage: AssistantProviderReportedUsage[];
 };
 
 type AssistantRolloutObservationRunRecord = AssistantRolloutRunRecord & {
@@ -40,6 +82,16 @@ const criticalQualityFlags = new Set([
   'STALE_PRICE_UNLABELED',
   'BROKEN_LINK',
 ]);
+const providerBudgetContractViolation = 'PROVIDER_BUDGET_CONTRACT_VIOLATION';
+const providerUsageFields = [
+  'inputTokens',
+  'cachedInputTokens',
+  'cacheWriteInputTokens',
+  'outputTokens',
+  'reasoningTokens',
+  'totalTokens',
+  'webSearchCalls',
+] as const;
 const pilotMinimumUsers = 8;
 const pilotMaximumUsers = 12;
 const administrativePermissions = new Set([
@@ -247,6 +299,77 @@ export function countAssistantRolloutCriticalErrors(runs: AssistantRolloutRunRec
     || run.qualityFlags.some((flag) => criticalQualityFlags.has(flag))).length;
 }
 
+export function assessAssistantProviderBudgetContract(
+  attempts: AssistantProviderBudgetContractAttempt[],
+  comparison?: AssistantProviderReportedUsageComparison,
+) {
+  const seenReceipts = new Set<string>();
+  const violatingReceipts = attempts.flatMap((attempt) => {
+    const reasons: string[] = [];
+    const receiptKey = `${attempt.operationRunId}\u0000${attempt.executionId}\u0000${attempt.attemptOrdinal}`;
+    if (seenReceipts.has(receiptKey)) reasons.push('RECEIPT_REPORTED_USAGE_MISMATCH');
+    seenReceipts.add(receiptKey);
+
+    if (attempt.status === 'RESERVED') reasons.push('ATTEMPT_RESERVED');
+    try {
+      const reservedCostUnits = parseAssistantUsd(readAssistantProviderUsd(attempt.reservedCostUsd));
+      const chargedCostUnits = attempt.chargedCostUsd === null
+        ? null
+        : parseAssistantUsd(readAssistantProviderUsd(attempt.chargedCostUsd));
+      if (attempt.pricingStatus === 'RESERVE_EXCEEDED'
+        || (chargedCostUnits !== null && chargedCostUnits > reservedCostUnits)) {
+        reasons.push('CHARGE_EXCEEDS_RESERVE');
+      } else if (attempt.status === 'SETTLED' && chargedCostUnits === null) {
+        reasons.push('RECEIPT_REPORTED_USAGE_MISMATCH');
+      }
+    } catch {
+      reasons.push('RECEIPT_REPORTED_USAGE_MISMATCH');
+    }
+
+    if (attempt.operation === 'SOURCE_DISCOVERY'
+      && attempt.status === 'SETTLED'
+      && (attempt.outcome === 'PROVIDER_SUCCESS'
+        || attempt.outcome === 'PROVIDER_CONTRACT_VIOLATION')
+      && attempt.webSearchCalls !== 1) {
+      reasons.push('TOOL_CALL_CONTRACT_VIOLATION');
+    }
+    const uniqueReasons = [...new Set(reasons)];
+    return uniqueReasons.length === 0 ? [] : [{
+      operationRunId: readAssistantProviderReceiptPart(attempt.operationRunId, 160),
+      executionId: readAssistantProviderReceiptPart(attempt.executionId, 36),
+      attemptOrdinal: Number.isSafeInteger(attempt.attemptOrdinal) && attempt.attemptOrdinal > 0
+        ? attempt.attemptOrdinal
+        : -1,
+      reasons: uniqueReasons,
+    }];
+  });
+  const reportedUsageMismatches = comparison
+    ? assessAssistantReportedUsage(attempts, comparison)
+    : [];
+  const violationCount = violatingReceipts.length + reportedUsageMismatches.length;
+  return {
+    passed: violationCount === 0,
+    condition: violationCount === 0 ? null : providerBudgetContractViolation,
+    violationCount,
+    violatingReceipts,
+    reportedUsageMismatches,
+  };
+}
+
+export function collectAssistantProviderComparisonRunIds(
+  createdRuns: readonly { id: string }[],
+  observationRuns: readonly { id: string }[],
+  attempts: readonly { operation: string; operationRunId: string }[],
+) {
+  return [...new Set([
+    ...createdRuns.map(({ id }) => id),
+    ...observationRuns.map(({ id }) => id),
+    ...attempts.flatMap(({ operation, operationRunId }) => (
+      operation === 'PLANNER' ? [operationRunId] : []
+    )),
+  ])];
+}
+
 export function assessAssistantPilotCohort(
   configuredUserIds: string[],
   users: AssistantPilotUserRecord[],
@@ -330,4 +453,101 @@ function isPositiveInteger(value: string | undefined) {
   if (value === undefined || value.trim() === '') return false;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0;
+}
+
+function readAssistantProviderUsd(
+  value: string | { toFixed(fractionDigits: number): string },
+) {
+  return typeof value === 'string' ? value : value.toFixed(8);
+}
+
+function readAssistantProviderReceiptPart(value: string, maximumLength: number) {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximumLength
+    ? value
+    : 'INVALID';
+}
+
+function assessAssistantReportedUsage(
+  attempts: AssistantProviderBudgetContractAttempt[],
+  comparison: AssistantProviderReportedUsageComparison,
+) {
+  const operationRunIds = [...new Set(comparison.operationRunIds)];
+  const comparedOperations = comparison.operations
+    ? new Set(comparison.operations)
+    : null;
+  return operationRunIds.flatMap((operationRunId) => {
+    const executionId = comparison.executions?.find((execution) => (
+      execution.operationRunId === operationRunId
+    ))?.executionId;
+    const receiptAttempts = attempts.filter((attempt) => (
+      attempt.operationRunId === operationRunId
+        && (executionId === undefined || attempt.executionId === executionId)
+        && (comparedOperations === null || comparedOperations.has(attempt.operation))
+    )).sort((left, right) => left.attemptOrdinal - right.attemptOrdinal);
+    const reportedAttempts = orderAssistantProviderReportedUsage(
+      comparison.reportedUsage.filter((attempt) => (
+      attempt.operationRunId === operationRunId
+      )),
+    );
+    const mismatchedFields: string[] = [];
+    if (receiptAttempts.length !== reportedAttempts.length) {
+      mismatchedFields.push('attemptCount');
+    }
+    const comparableAttemptCount = Math.min(receiptAttempts.length, reportedAttempts.length);
+    for (let index = 0; index < comparableAttemptCount; index += 1) {
+      const receipt = receiptAttempts[index]!;
+      const reported = reportedAttempts[index]!;
+      if (reported.attemptOrdinal !== undefined
+        && receipt.attemptOrdinal !== reported.attemptOrdinal) {
+        pushAssistantProviderMismatchField(mismatchedFields, 'attemptOrdinal');
+      }
+      const receiptModel = receipt.actualModel ?? receipt.requestedModel;
+      if (typeof receiptModel !== 'string' || receiptModel !== reported.model) {
+        pushAssistantProviderMismatchField(mismatchedFields, 'model');
+      }
+      for (const field of providerUsageFields) {
+        if (!sameAssistantProviderUsageValue(receipt[field] ?? null, reported[field])) {
+          pushAssistantProviderMismatchField(mismatchedFields, field);
+        }
+      }
+    }
+    return mismatchedFields.length === 0 ? [] : [{
+      operationRunId: readAssistantProviderReceiptPart(operationRunId, 160),
+      receiptAttemptCount: receiptAttempts.length,
+      reportedAttemptCount: reportedAttempts.length,
+      fields: mismatchedFields,
+    }];
+  });
+}
+
+function orderAssistantProviderReportedUsage(
+  reportedUsage: AssistantProviderReportedUsage[],
+) {
+  const canOrderByAttempt = reportedUsage.every(({ attemptOrdinal }) => (
+    Number.isSafeInteger(attemptOrdinal) && attemptOrdinal! > 0
+  )) && new Set(reportedUsage.map(({ attemptOrdinal }) => attemptOrdinal)).size
+    === reportedUsage.length;
+  return canOrderByAttempt
+    ? [...reportedUsage].sort((left, right) => left.attemptOrdinal! - right.attemptOrdinal!)
+    : reportedUsage;
+}
+
+function pushAssistantProviderMismatchField(fields: string[], field: string) {
+  if (!fields.includes(field)) fields.push(field);
+}
+
+function sameAssistantProviderUsageValue(
+  receiptValue: number | bigint | null,
+  reportedValue: number | bigint | null,
+) {
+  const receiptKey = assistantProviderUsageValueKey(receiptValue);
+  const reportedKey = assistantProviderUsageValueKey(reportedValue);
+  return receiptKey !== null && receiptKey === reportedKey;
+}
+
+function assistantProviderUsageValueKey(value: number | bigint | null) {
+  if (value === null) return 'UNKNOWN';
+  if (typeof value === 'bigint' && value >= 0n) return `KNOWN:${value}`;
+  if (Number.isSafeInteger(value) && value >= 0) return `KNOWN:${value}`;
+  return null;
 }
