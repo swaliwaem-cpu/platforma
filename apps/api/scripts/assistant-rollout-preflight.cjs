@@ -16,6 +16,8 @@ const {
 const {
   assessAssistantPilotCohort,
   assessAssistantPilotCohortAgainstApproval,
+  assessAssistantEvalReleaseCompatibility,
+  assessAssistantGeoUsageReceipts,
   assessAssistantProviderBudgetContract,
   collectAssistantProviderComparisonRunIds,
   assessAssistantRolloutObservation,
@@ -23,8 +25,15 @@ const {
   assessAssistantSourceHealth,
   computeAssistantRolloutApprovalDigest,
   countAssistantRolloutCriticalErrors,
+  createAssistantGeoUsageReceiptWhere,
+  createAssistantRolloutTerminalObservationWhere,
+  readAssistantOverpassBudgetLimits,
   readAssistantRolloutBudgetReadiness,
 } = require('../dist/assistant/rollout/assistant-rollout-preflight.js');
+const {
+  computeAssistantReleaseRuntimeConfigSha256,
+  readAssistantReleaseIdentity,
+} = require('../dist/assistant/eval/assistant-eval-runtime-contract.js');
 const {
   readAssistantEvalFinalizedEvidenceBundle,
 } = require('./assistant-eval-runtime.cjs');
@@ -49,10 +58,22 @@ async function run() {
   const prisma = new PrismaClient();
   const evalSummary = validatedEvidence.verdict;
   const evalProviderMode = validatedEvidence.runner.providerMode;
-  const evalGatePassed = evalSummary.passed && evalProviderMode === 'openai';
+  const currentReleaseIdentity = readAssistantReleaseIdentity(process.env);
+  const evalCompatibility = assessAssistantEvalReleaseCompatibility({
+    runtimeConfigSha256: validatedEvidence.runner.runtimeConfigSha256,
+    releaseSha: validatedEvidence.runner.releaseSha,
+    releaseImageIdentity: validatedEvidence.runner.releaseImageIdentity,
+  }, {
+    runtimeConfigSha256: computeAssistantReleaseRuntimeConfigSha256(process.env),
+    ...currentReleaseIdentity,
+  });
+  const evalGatePassed = evalSummary.passed
+    && evalProviderMode === 'openai'
+    && evalCompatibility.passed;
   let sourceHealth;
   let criticalErrorCount;
   let providerBudgetContract;
+  let geoUsageContract;
   let pilotCohort;
   let observation;
   let stageRecord;
@@ -68,7 +89,7 @@ async function run() {
     }
     const previousStageStartedAt = stageRecord.current.startedAt;
     const requiresPilotCohort = runtime.rolloutStage === 'PILOT' || targetStage === 'PILOT';
-    const [sources, runs, observationRuns, pilotUsers] = await Promise.all([
+    const [sources, createdRuns, terminalRuns, pilotUsers, geoUsageAttempts] = await Promise.all([
       prisma.assistantKnowledgeSource.findMany({
         where: { state: 'ACTIVE' },
         select: {
@@ -88,10 +109,7 @@ async function run() {
         },
       }),
       prisma.assistantRun.findMany({
-        where: {
-          status: 'COMPLETED',
-          completedAt: { gte: previousStageStartedAt, lte: now },
-        },
+        where: createAssistantRolloutTerminalObservationWhere(previousStageStartedAt, now),
         select: {
           id: true,
           ownerUserId: true,
@@ -117,10 +135,27 @@ async function run() {
           },
         })
         : Promise.resolve([]),
+      prisma.assistantGeoUsageAttempt.findMany({
+        where: createAssistantGeoUsageReceiptWhere(previousStageStartedAt, now),
+        select: {
+          id: true,
+          operationId: true,
+          attemptOrdinal: true,
+          provider: true,
+          status: true,
+          outcome: true,
+          errorCode: true,
+          durationMs: true,
+          minuteStartedAt: true,
+          dayStartedAt: true,
+          createdAt: true,
+          settledAt: true,
+        },
+      }),
     ]);
     const initialProviderComparisonRunIds = collectAssistantProviderComparisonRunIds(
-      runs,
-      observationRuns,
+      createdRuns,
+      terminalRuns,
       [],
     );
     const providerAttempts = await prisma.assistantAiUsageAttempt.findMany({
@@ -157,8 +192,8 @@ async function run() {
       },
     });
     const providerComparisonRunIds = collectAssistantProviderComparisonRunIds(
-      runs,
-      observationRuns,
+      createdRuns,
+      terminalRuns,
       providerAttempts,
     );
     const [providerTelemetryRuns, executionFences] = providerComparisonRunIds.length === 0
@@ -182,8 +217,16 @@ async function run() {
         readAssistantOpenAiReportedUsage(id, telemetryJson)
       )),
     });
-    criticalErrorCount = countAssistantRolloutCriticalErrors(runs)
-      + providerBudgetContract.violationCount;
+    const overpassLimits = readAssistantOverpassBudgetLimits(process.env);
+    geoUsageContract = assessAssistantGeoUsageReceipts(geoUsageAttempts, {
+      windowStartedAt: previousStageStartedAt,
+      now,
+      overpassRequestsPerMinute: overpassLimits.requestsPerMinute,
+      overpassDailyBudget: overpassLimits.dailyBudget,
+    });
+    criticalErrorCount = countAssistantRolloutCriticalErrors(terminalRuns)
+      + providerBudgetContract.violationCount
+      + geoUsageContract.violationCount;
     const mappedPilotUsers = pilotUsers.map((user) => ({
       id: user.id,
       status: user.status,
@@ -204,7 +247,7 @@ async function run() {
       pilotUserIds: runtime.pilotUserIds,
       previousStageStartedAt,
       now,
-      runs: observationRuns,
+      runs: terminalRuns,
     });
   } finally {
     await prisma.$disconnect();
@@ -233,9 +276,11 @@ async function run() {
       evidenceCoreSha256,
       finalizedEvidenceSha256,
     },
+    evalCompatibility,
     sourceHealth,
     budgets,
     providerBudgetContract,
+    geoUsageContract,
     pilotCohort,
     observation,
     stageRecord: {

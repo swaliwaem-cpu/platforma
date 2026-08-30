@@ -12,12 +12,14 @@ const {
   parseTestCount,
   redact,
   runTaskDiffCheck,
+  verifyT07CurrentFactFixtureEvidence,
 } = require('../scripts/assistant-pidafix3-baseline.cjs');
 const {
   assertLocalDockerEndpoint,
   createT07OwnershipFilters,
   createUnverifiedProviderEvidence,
   installTerminationHandlers,
+  isExpectedT07ApiNavigationAbort,
   removeT07OwnedDockerResources,
   runBoundedOperation,
   runCommand,
@@ -56,6 +58,7 @@ test('PIDAFIX3 plan keeps all external boundaries fake or disabled', () => {
   assert.equal(environment.ASSISTANT_QUERY_PLANNER_LIVE, 'false');
   assert.equal(environment.ASSISTANT_GEO_PROVIDER_MODE, 'fake');
   assert.equal(environment.ASSISTANT_OVERPASS_ENABLED, 'false');
+  assert.equal(environment.ASSISTANT_CURRENT_FACT_REFRESH_MODE, 'disabled');
   assert.equal(environment.TELEGRAM_TRANSPORT_MODE, 'fake');
   assert.equal(environment.TRAINING_MODULE_ENABLED, 'false');
   assert.equal(environment.PROJECT_PRESENTATIONS_WORKER_ENABLED, 'false');
@@ -70,6 +73,7 @@ test('PIDAFIX3 plan keeps all external boundaries fake or disabled', () => {
 
 test('PIDAFIX3 gate plan includes connected, PostgreSQL, browser and full gates in order', () => {
   assert.deepEqual(createGatePlan().map(({ id }) => id), [
+    'zaebal6-unit',
     't07-domain',
     't07-targeted',
     't07-connected-e2e',
@@ -100,6 +104,12 @@ test('PIDAFIX3 task diff check covers tracked and untracked task files without m
   assert.deepEqual(plan.trackedArgs.slice(0, 4), ['diff', '--check', 'HEAD', '--']);
   assert.deepEqual(plan.listTrackedArgs.slice(0, 3), ['ls-files', '--cached', '--']);
   assert.equal(plan.paths.includes('apps/api/scripts/assistant-pidafix3-geo-live.cjs'), true);
+  assert.equal(plan.paths.includes('apps/api/scripts/assistant-eval-runner.cjs'), true);
+  assert.equal(plan.paths.includes('apps/api/src/assistant/rollout/assistant-rollout-preflight.ts'), true);
+  assert.equal(plan.paths.includes('apps/api/tests/assistant-t02-domain.test.cjs'), true);
+  assert.equal(plan.paths.includes('apps/api/tests/assistant-t03-postgres.cjs'), true);
+  assert.equal(plan.paths.includes('apps/api/tests/assistant-t07-domain.test.cjs'), true);
+  assert.equal(plan.paths.includes('docker-compose.yml'), true);
   assert.equal(plan.paths.includes('docs/helpar/t07-manual-qa.md'), true);
   assert.deepEqual(plan.untrackedArgs('apps/api/scripts/assistant-pidafix3-geo-live.cjs'), [
     'diff', '--no-index', '--check', '--', '/dev/null',
@@ -125,6 +135,29 @@ test('PIDAFIX3 report helpers redact credentials and count TAP tests', () => {
   assert.equal(parseTestCount('ASSISTANT_T07_E2E_OK\n'), null);
 });
 
+test('PIDAFIX3 baseline requires exact 20-case offline current-fact evidence', () => {
+  assert.deepEqual(verifyT07CurrentFactFixtureEvidence([
+    'ASSISTANT_T07_MORTGAGE_FIXTURE_OK:20',
+    'ASSISTANT_T07_E2E_OK',
+  ].join('\n')), {
+    status: 'verified',
+    scope: 't07-connected-e2e',
+    caseCount: 20,
+    mode: 'fixture',
+    externalConnectorsEnabled: false,
+  });
+  for (const output of [
+    'ASSISTANT_T07_E2E_OK',
+    'ASSISTANT_T07_MORTGAGE_FIXTURE_OK:19\nASSISTANT_T07_E2E_OK',
+    'ASSISTANT_T07_MORTGAGE_FIXTURE_OK:20',
+  ]) {
+    assert.throws(
+      () => verifyT07CurrentFactFixtureEvidence(output),
+      /PIDAFIX3_CURRENT_FACT_FIXTURE_EVIDENCE_INVALID/u,
+    );
+  }
+});
+
 test('PIDAFIX3 Compose file contains only postgres, api and web services', async () => {
   const source = await readFile(resolve(root, 'docker-compose.assistant-pidafix3.yml'), 'utf8');
   const services = source.slice(source.indexOf('services:\n') + 'services:\n'.length, source.indexOf('\nvolumes:'));
@@ -138,6 +171,13 @@ test('PIDAFIX3 Compose file contains only postgres, api and web services', async
   assert.doesNotMatch(source, /^  (?:redis|minio|.*worker):$/mu);
   assert.doesNotMatch(source, /OPENAI_API_KEY:/u);
   assert.doesNotMatch(source, /LOCATIONIQ_API_KEY:/u);
+});
+
+test('PIDAFIX3 T03 PostgreSQL fixture explicitly opts into its local HTTP connector', async () => {
+  const source = await readFile(resolve(root, 'apps/api/tests/assistant-t03-postgres.cjs'), 'utf8');
+  assert.match(source, /ASSISTANT_SOURCE_ALLOW_PRIVATE_TEST_URLS = 'true'/u);
+  assert.match(source, /ASSISTANT_EXTERNAL_CONNECTORS_ENABLED = 'true'/u);
+  assert.match(source, /ASSISTANT_CURRENT_FACT_REFRESH_MODE = 'live'/u);
 });
 
 test('PIDAFIX3 Docker guard accepts a local unix socket and rejects remote endpoints', async () => {
@@ -255,6 +295,44 @@ test('PIDAFIX3 T07 ownership filters select only one exact run', () => {
     ],
   });
   assert.throws(() => createT07OwnershipFilters('not-exact'), /did not match/u);
+});
+
+test('PIDAFIX3 T07 only tolerates navigation-aborted assistant reads', () => {
+  const apiOrigin = 'http://127.0.0.1:61013';
+  for (const url of [
+    `${apiOrigin}/assistant/config`,
+    `${apiOrigin}/assistant/conversations`,
+  ]) {
+    assert.equal(isExpectedT07ApiNavigationAbort({
+      method: 'GET',
+      url,
+      errorText: 'net::ERR_ABORTED',
+    }, apiOrigin), true);
+  }
+  for (const failure of [
+    {
+      method: 'POST',
+      url: `${apiOrigin}/assistant/conversations`,
+      errorText: 'net::ERR_ABORTED',
+    },
+    {
+      method: 'GET',
+      url: `${apiOrigin}/assistant/conversations`,
+      errorText: 'net::ERR_CONNECTION_RESET',
+    },
+    {
+      method: 'GET',
+      url: `${apiOrigin}/assistant/messages`,
+      errorText: 'net::ERR_ABORTED',
+    },
+    {
+      method: 'GET',
+      url: 'http://127.0.0.1:61014/assistant/conversations',
+      errorText: 'net::ERR_ABORTED',
+    },
+  ]) {
+    assert.equal(isExpectedT07ApiNavigationAbort(failure, apiOrigin), false);
+  }
 });
 
 test('PIDAFIX3 T07 ownership cleanup removes every exact-label container and verifies absence', async () => {

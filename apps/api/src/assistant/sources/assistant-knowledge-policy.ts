@@ -21,7 +21,7 @@ const knowledgeProjectReferenceQualifierPrepositionPattern = /^(?:без|для|
 const knowledgeProjectReferenceQualifierLeadPattern = /^(?:лишь|только)$/u;
 const knowledgeProjectReferenceStrictQualifierNounByPreposition: Readonly<Record<string, RegExp>> = {
   без: /^(?:взнос|доход|комисс|переплат|подтвержден|процент|страхов)\p{L}*$/u,
-  для: /^(?:it|ит|военнослужащ|врач|граждан|дет|заемщик|инвест|ипотек|молод|многодет|пенсионер|покупател|работник|рф|самозанят|сем|специалист|сотрудник|учител)\p{L}*$/u,
+  для: /^(?:it|ит|военнослужащ|взнос|врач|граждан|дет|заемщик|инвест|ипотек|молод|многодет|пенсионер|покупател|работник|рф|самозанят|сем|специалист|сотрудник|учител)\p{L}*$/u,
   до: /^(?:дат|дн|конц|квартал|месяц|начал|срок|год)\p{L}*$/u,
   на: /^(?:год|дн|квартир|лот|месяц|оплат|платеж|покупк|срок)\p{L}*$/u,
   от: /^(?:банк|девелопер|застройщик)\p{L}*$/u,
@@ -239,7 +239,7 @@ export function assistantKnowledgePromotionTopics(value: string): AssistantKnowl
   const normalized = normalizeKnowledgeText(value);
   const topics: AssistantKnowledgePromotionTopic[] = [];
   if (/рассроч|первоначальн\S*\s+взнос|ежемесячн\S*\s+платеж/iu.test(normalized)) topics.push('INSTALLMENT');
-  if (/ипотек|кредитн\S*\s+ставк/iu.test(normalized)) topics.push('MORTGAGE');
+  if (/ипотек|ипотеч|кредитн\S*\s+ставк/iu.test(normalized)) topics.push('MORTGAGE');
   if (/скидк|акци|услови\S*\s+(?:покупк|оплат)/iu.test(normalized)) topics.push('PURCHASE');
   return topics;
 }

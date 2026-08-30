@@ -1214,44 +1214,40 @@ test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates 
 });
 
 test('Assistant T02 OpenAI gateway keeps its timeout active while reading the response body', async () => {
-  await withHttpStub(async (_request, response) => {
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.flushHeaders();
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    response.end(JSON.stringify({ output: [] }));
-  }, async (baseUrl) => {
-    const gateway = new AssistantOpenAiPlannerGateway('stub-key', fetch, baseUrl, 25);
-    await assert.rejects(
-      gateway.plan({
-        model: 'gpt-5.6-luna',
-        reasoningEffort: 'medium',
-        messages: ['Нужна квартира'],
-        context: null,
-      }),
-      (error) => error.code === 'ASSISTANT_OPENAI_TIMEOUT',
-    );
-  });
+  const gateway = new AssistantOpenAiPlannerGateway(
+    'stub-key',
+    createAbortableDelayedJsonFetch(),
+    'http://openai.test',
+    25,
+  );
+  await assert.rejects(
+    gateway.plan({
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'medium',
+      messages: ['Нужна квартира'],
+      context: null,
+    }),
+    (error) => error.code === 'ASSISTANT_OPENAI_TIMEOUT',
+  );
 });
 
 test('Assistant T02 planner preserves OpenAI provider failure classification in private telemetry', async () => {
-  await withHttpStub(async (_request, response) => {
-    response.writeHead(200, { 'content-type': 'application/json', 'x-request-id': 'timeout-request-id' });
-    response.flushHeaders();
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    response.end(JSON.stringify({ output: [] }));
-  }, async (baseUrl) => {
-    const planner = new AssistantQueryPlanner(new AssistantOpenAiPlannerGateway('stub-key', fetch, baseUrl, 25));
-    await assert.rejects(
-      planner.plan({ messages: ['Нужна квартира'], context: null }),
-      (error) => {
-        assert.equal(error.code, 'ASSISTANT_OPENAI_TIMEOUT');
-        assert.equal(error.telemetry[0].provider, 'openai');
-        assert.equal(error.telemetry[0].errorCode, 'ASSISTANT_OPENAI_TIMEOUT');
-        assert.equal(error.telemetry[0].requestId, 'timeout-request-id');
-        return true;
-      },
-    );
-  });
+  const planner = new AssistantQueryPlanner(new AssistantOpenAiPlannerGateway(
+    'stub-key',
+    createAbortableDelayedJsonFetch({ 'x-request-id': 'timeout-request-id' }),
+    'http://openai.test',
+    25,
+  ));
+  await assert.rejects(
+    planner.plan({ messages: ['Нужна квартира'], context: null }),
+    (error) => {
+      assert.equal(error.code, 'ASSISTANT_OPENAI_TIMEOUT');
+      assert.equal(error.telemetry[0].provider, 'openai');
+      assert.equal(error.telemetry[0].errorCode, 'ASSISTANT_OPENAI_TIMEOUT');
+      assert.equal(error.telemetry[0].requestId, 'timeout-request-id');
+      return true;
+    },
+  );
 });
 
 test('Assistant T02 answer service skips search for clarification and legal boundaries', async () => {
@@ -1623,6 +1619,23 @@ async function withHttpStub(handler, run) {
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+}
+
+function createAbortableDelayedJsonFetch(headers = {}) {
+  return async (_url, init = {}) => {
+    const signal = init.signal;
+    const stream = new ReadableStream({
+      start(controller) {
+        const abort = () => controller.error(new DOMException('Aborted', 'AbortError'));
+        if (signal?.aborted) abort();
+        else signal?.addEventListener('abort', abort, { once: true });
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'application/json', ...headers },
+    });
+  };
 }
 
 async function readRequestBody(request) {

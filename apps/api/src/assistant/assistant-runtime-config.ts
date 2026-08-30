@@ -11,6 +11,8 @@ type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefine
 
 export const assistantRolloutStages = ['ADMINS', 'PILOT', 'ALL'] as const;
 export type AssistantRolloutStage = (typeof assistantRolloutStages)[number];
+export const assistantCurrentFactRefreshModes = ['disabled', 'fixture', 'live'] as const;
+export type AssistantCurrentFactRefreshMode = (typeof assistantCurrentFactRefreshModes)[number];
 
 export type AssistantRuntimeConfig = {
   assistantEnabled: boolean;
@@ -51,6 +53,30 @@ export function areAssistantExternalConnectorsEnabled(
     false,
     'ASSISTANT_EXTERNAL_CONNECTORS_ENABLED_INVALID',
   );
+}
+
+export function readAssistantCurrentFactRefreshMode(
+  environment: AssistantEnvironment = process.env,
+): AssistantCurrentFactRefreshMode {
+  const externalConnectorsEnabled = areAssistantExternalConnectorsEnabled(environment);
+  const fallback = externalConnectorsEnabled ? 'live' : 'disabled';
+  const normalized = (environment.ASSISTANT_CURRENT_FACT_REFRESH_MODE ?? fallback)
+    .trim()
+    .toLocaleLowerCase('en-US');
+  if (!assistantCurrentFactRefreshModes.includes(normalized as AssistantCurrentFactRefreshMode)) {
+    throw new AssistantRuntimeConfigError('ASSISTANT_CURRENT_FACT_REFRESH_MODE_INVALID');
+  }
+  if (normalized === 'live' && !externalConnectorsEnabled
+    || normalized === 'fixture' && externalConnectorsEnabled) {
+    throw new AssistantRuntimeConfigError('ASSISTANT_CURRENT_FACT_REFRESH_MODE_CONFLICT');
+  }
+  const deploymentModes = [environment.NODE_ENV, environment.DEPLOYMENT_ENV]
+    .map((value) => value?.trim().toLocaleLowerCase('en-US'));
+  if (normalized === 'fixture'
+    && deploymentModes.some((value) => value === 'production' || value === 'staging')) {
+    throw new AssistantRuntimeConfigError('ASSISTANT_CURRENT_FACT_REFRESH_FIXTURE_FORBIDDEN');
+  }
+  return normalized as AssistantCurrentFactRefreshMode;
 }
 
 export function getAssistantRuntimeConfig(
@@ -129,7 +155,8 @@ export class AssistantFeatureGuard implements CanActivate {
 @Injectable()
 export class AssistantExternalConnectorsGuard implements CanActivate {
   canActivate() {
-    if (areAssistantExternalConnectorsEnabled()) return true;
+    if (areAssistantExternalConnectorsEnabled()
+      || readAssistantCurrentFactRefreshMode() === 'fixture') return true;
 
     throw new ServiceUnavailableException({
       statusCode: 503,

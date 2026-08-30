@@ -9,7 +9,7 @@ import {
 import type { AssistantPageContext } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { areAssistantExternalConnectorsEnabled } from '../assistant-runtime-config';
+import { readAssistantCurrentFactRefreshMode } from '../assistant-runtime-config';
 import { AssistantSourceWorker } from './assistant-source.worker';
 import { assistantKnowledgeAuthorityTier } from './assistant-knowledge-policy';
 
@@ -55,7 +55,9 @@ export class AssistantCurrentFactRefreshCoordinator {
       }
     }
     if (!source) return { status: 'SOURCE_NOT_CONNECTED' };
-    if (!areAssistantExternalConnectorsEnabled(this.environment)) return { status: 'FAILED' };
+    if (readAssistantCurrentFactRefreshMode(this.environment) === 'disabled') {
+      return { status: 'FAILED' };
+    }
 
     const job = await this.prisma.assistantSourceJob.upsert({
       where: {

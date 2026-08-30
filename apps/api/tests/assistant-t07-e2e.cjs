@@ -13,6 +13,7 @@ const { deflateSync } = require('node:zlib');
 const { hash } = require('argon2');
 const { NestFactory } = require('@nestjs/core');
 const { PrismaClient } = require('@prisma/client');
+const { mapAssistantProductSubmission } = require('@platforma/shared/assistant-product-submission');
 const { chromium } = require('playwright-core');
 const {
   computeAssistantRolloutApprovalDigest,
@@ -23,6 +24,7 @@ const {
 const {
   createT07OwnershipFilters,
   installTerminationHandlers,
+  isExpectedT07ApiNavigationAbort,
   removeT07OwnedDockerResources,
   runCommand: runRuntimeCommand,
 } = require('../scripts/assistant-pidafix3-runtime.cjs');
@@ -137,7 +139,9 @@ async function main() {
       }),
       /ASSISTANT_ROLLOUT_EVENTS_ARE_IMMUTABLE/u,
     );
-    await ingestSource(fixtures.admin.user.id, sourceOrigin);
+    const initialSource = await ingestSource(fixtures.admin.user.id, sourceOrigin);
+    fixtures.currentFactSources = await seedCurrentFactFixtureSources(fixtures, initialSource);
+    await currentFactFixtureJourney(fixtures);
     await startWeb(webPort, sourceOrigin);
     browser = await chromium.launch({ headless: true });
 
@@ -286,9 +290,11 @@ function configureSafeEnvironment(url) {
     ASSISTANT_GEO_PROVIDER_ENABLED: 'true', ASSISTANT_GEO_PROVIDER_MODE: 'fake',
     ASSISTANT_GEO_PROVIDER_RPS: '20', ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE: '100',
     ASSISTANT_GEO_PROVIDER_DAILY_BUDGET: '1000', ASSISTANT_GEO_CACHE_TTL_SECONDS: '3600',
-    ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'true', ASSISTANT_SOURCE_WORKER_ENABLED: 'false',
+    ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false', ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
+    ASSISTANT_SOURCE_WORKER_ENABLED: 'false',
     ASSISTANT_SOURCE_ALLOW_PRIVATE_TEST_URLS: 'true', ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '100',
     ASSISTANT_MODEL_REQUESTS_PER_DAY: '1000', JWT_ACCESS_SECRET: 'assistant-t07-local-access-secret',
+    ASSISTANT_RELEASE_SHA: '1'.repeat(40), ASSISTANT_RELEASE_IMAGE_IDENTITY: 'none',
     JWT_REFRESH_SECRET: 'assistant-t07-local-refresh-secret', S3_ENDPOINT: 'http://127.0.0.1:1',
     S3_PUBLIC_ENDPOINT: 'http://127.0.0.1:1', S3_REGION: 'us-east-1',
     S3_ACCESS_KEY_ID: 'test-only', S3_SECRET_ACCESS_KEY: 'test-only', MINIO_BUCKET: 'assistant-t07',
@@ -602,6 +608,12 @@ async function seed(sourceOrigin) {
     units,
     studio: { object: studioObject, source: studioSource },
     connectedGeoSeed,
+    currentFactScope: {
+      developerId: developer.id,
+      districtId: district.id,
+      areaId: area.id,
+      metroStationId: metro.id,
+    },
   };
 }
 
@@ -872,11 +884,19 @@ async function ingestSource(actorId, origin) {
   const { OfficialHtmlSourceConnector } = require('../dist/assistant/sources/official-html-source.connector.js');
   const { OfficialSourceExtractor } = require('../dist/assistant/sources/official-source.extractor.js');
   const { AssistantEmbeddingGateway } = require('../dist/assistant/sources/assistant-embedding.gateway.js');
-  const connectorRegistry = new AssistantSourceConnectorRegistry(new OfficialHtmlSourceConnector({
-    allowHttp: true,
-    allowPrivateNetwork: true,
-    resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
-  }));
+  const connectorRegistry = new AssistantSourceConnectorRegistry(
+    new OfficialHtmlSourceConnector({
+      allowHttp: true,
+      allowPrivateNetwork: true,
+      resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
+    }),
+    {
+      NODE_ENV: 'test',
+      DEPLOYMENT_ENV: 'local',
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'true',
+      ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'live',
+    },
+  );
   const registry = new AssistantSourceRegistryService(prisma, connectorRegistry);
   const ingestion = new AssistantSourceIngestionService(
     prisma,
@@ -897,6 +917,240 @@ async function ingestSource(actorId, origin) {
     where: { sourceId: registered.source.id, kind: { not: 'EXTERNAL_LOT' } },
     data: { canonicalUrl: 'https://developer.example/projects/severny-sad' },
   });
+  return prisma.assistantKnowledgeSource.update({
+    where: { id: registered.source.id },
+    data: {
+      canonicalUrl: 'https://developer.example/projects/severny-sad',
+      connectorConfigJson: currentFactFixtureConfig('severny-sad'),
+    },
+  });
+}
+
+async function seedCurrentFactFixtureSources(fixtures, severnySource) {
+  const definitions = [
+    { projectKey: 'ostrov', title: 'ЖК Остров', latitude: 55.755, longitude: 37.54 },
+    { projectKey: 'zilart', title: 'ЖК Зиларт', latitude: 55.71, longitude: 37.66 },
+    {
+      projectKey: 'paveletskaya-city',
+      title: 'ЖК Павелецкая Сити',
+      latitude: 55.72,
+      longitude: 37.64,
+    },
+  ];
+  const sources = [severnySource];
+  for (const definition of definitions) {
+    await prisma.realEstateObject.create({
+      data: {
+        title: definition.title,
+        slug: definition.projectKey,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+        address: `Москва, fixture ${definition.projectKey}`,
+        developerId: fixtures.currentFactScope.developerId,
+        primaryLocationId: fixtures.currentFactScope.districtId,
+        feedUpdatedAt: oldDate(),
+        latitude: definition.latitude,
+        longitude: definition.longitude,
+        publishedAt: new Date(),
+        locations: { create: { locationId: fixtures.currentFactScope.areaId } },
+        metroStations: { create: { metroStationId: fixtures.currentFactScope.metroStationId } },
+      },
+    });
+    sources.push(await prisma.assistantKnowledgeSource.create({
+      data: {
+        canonicalUrl: `https://developer.example/projects/${definition.projectKey}`,
+        type: 'DEVELOPMENT_PAGE',
+        state: 'ACTIVE',
+        priority: 100,
+        scheduleMinutes: 1_440,
+        connectorKey: 'OFFICIAL_HTML',
+        connectorConfigJson: currentFactFixtureConfig(definition.projectKey),
+        projectKey: definition.projectKey,
+        developerKey: 'test-development',
+        createdByUserId: fixtures.admin.user.id,
+      },
+    }));
+  }
+  return sources;
+}
+
+function currentFactFixtureConfig(projectKey) {
+  const fixtures = {
+    ostrov: {
+      title: 'ЖК Остров',
+      promotions: [{
+        label: 'Ипотечная программа',
+        value: 'Первоначальный взнос 21%, 25%, 29%, 33% или 37%.',
+      }],
+    },
+    zilart: {
+      title: 'ЖК Зиларт',
+      promotions: [{
+        label: 'Рассрочка',
+        value: 'Первоначальный взнос 22%, 26%, 30%, 34% или 38%.',
+      }],
+    },
+    'severny-sad': {
+      title: 'ЖК Северный сад',
+      sections: [
+        {
+          label: 'Архитектура',
+          value: 'Кирпичные фасады, панорамные окна и лобби с камином.',
+        },
+        {
+          label: 'Инфраструктура',
+          value: 'Закрытый двор, детский сад и фитнес-клуб для резидентов.',
+        },
+      ],
+      promotions: [
+        {
+          label: 'Ипотечная программа',
+          value: 'Первоначальный взнос 23%, 27%, 31%, 35% или 39%.',
+        },
+        {
+          label: 'Ступенчатая рассрочка',
+          value: 'Первоначальный взнос 30%. 12 ежемесячных платежей. До 15 декабря 2027 года.',
+        },
+      ],
+      externalLots: [{
+        title: '2-комнатная квартира 67 м²',
+        priceRub: 23_900_000,
+        rooms: 2,
+        area: 67,
+        floor: 8,
+        href: 'https://developer.example/apartments/lot-42',
+      }],
+    },
+    'paveletskaya-city': {
+      title: 'ЖК Павелецкая Сити',
+      promotions: [{
+        label: 'Рассрочка',
+        value: 'Первоначальный взнос 24%, 28%, 32%, 36% или 40%.',
+      }],
+    },
+  };
+  const fixture = fixtures[projectKey];
+  assert.ok(fixture, `ASSISTANT_T07_CURRENT_FACT_FIXTURE_UNKNOWN:${projectKey}`);
+  return {
+    allowedHosts: ['developer.example'],
+    offlineFixture: {
+      version: 'assistant-current-fact-fixture-v1',
+      ...fixture,
+    },
+  };
+}
+
+async function currentFactFixtureJourney(fixtures) {
+  const dataset = JSON.parse(await readFile(resolve(
+    __dirname,
+    'fixtures/assistant/assistant-eval-v1.json',
+  ), 'utf8'));
+  const cases = dataset.cases.filter(({ category }) => category === 'MORTGAGE_INSTALLMENT');
+  assert.equal(cases.length, 20);
+  const session = await loginApi(fixtures.regular.user);
+  const sourceRequestsBefore = sourceRequests.length;
+  const acceptedRunIds = [];
+
+  for (const item of cases) {
+    const resolved = await httpJson('/assistant/geo/resolve', {
+      method: 'POST',
+      token: session.accessToken,
+      body: { content: item.query, locale: 'ru', country: null },
+    });
+    assert.equal([200, 201].includes(resolved.status), true, `${item.id}:${JSON.stringify(resolved.body)}`);
+    const submission = mapAssistantProductSubmission(item.query, resolved.body, null);
+    assert.equal(submission.status, 'READY', item.id);
+    const created = await httpJson('/assistant/conversations', {
+      method: 'POST',
+      token: session.accessToken,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(created.status, 201, `${item.id}:${JSON.stringify(created.body)}`);
+    const conversationId = created.body?.conversation?.id;
+    assert.match(conversationId ?? '', /^[0-9a-f-]{36}$/u, item.id);
+    const started = await httpJson(`/assistant/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      token: session.accessToken,
+      idempotencyKey: randomUUID(),
+      body: { ...submission.body, context: null },
+    });
+    assert.equal(started.status, 202, `${item.id}:${JSON.stringify(started.body)}`);
+    const runId = started.body?.run?.id;
+    assert.match(runId ?? '', /^[0-9a-f-]{36}$/u, item.id);
+    const terminal = await waitForAssistantRun(runId, session.accessToken);
+    assert.equal(terminal.status, 'COMPLETED', `${item.id}:${terminal.errorCode ?? 'no-error-code'}`);
+
+    const persisted = await prisma.assistantRun.findUniqueOrThrow({
+      where: { id: runId },
+      include: { assistantMessage: true },
+    });
+    assert.equal(persisted.intentJson?.taskType, 'FACT', item.id);
+    const currentFactJobs = await prisma.assistantSourceJob.findMany({
+      where: { idempotencyKey: `current-fact:${runId}` },
+      select: { status: true, errorCode: true, source: { select: { projectKey: true } } },
+    });
+    const currentFactDebug = JSON.stringify({
+      caseId: item.id,
+      answer: persisted.assistantMessage?.answerJson,
+      evidence: persisted.evidenceJson,
+      jobs: currentFactJobs,
+    });
+    assert.equal(
+      item.expected.answerKinds.includes(persisted.assistantMessage?.answerJson?.kind),
+      true,
+      currentFactDebug,
+    );
+    assert.equal(persisted.assistantMessage?.answerJson?.kind, 'KNOWLEDGE_RESULTS', item.id);
+    assert.equal(Array.isArray(persisted.evidenceJson) && persisted.evidenceJson.length > 0, true, item.id);
+    const expectedKnowledge = item.expected.expectedKnowledge;
+    const matchingEvidence = persisted.evidenceJson.find((evidence) => (
+      evidence?.kind === 'PROMOTION'
+      && evidence?.projectKey === expectedKnowledge.projectKey
+      && typeof evidence?.sourceRevisionId === 'string'
+    ));
+    assert.ok(matchingEvidence, item.id);
+    const searchable = JSON.stringify({
+      answer: persisted.assistantMessage.answerJson,
+      evidence: matchingEvidence,
+    }).toLocaleLowerCase('ru-RU');
+    for (const fragment of expectedKnowledge.requiredTextFragments) {
+      assert.equal(searchable.includes(fragment.toLocaleLowerCase('ru-RU')), true, `${item.id}:${fragment}`);
+    }
+    const job = await prisma.assistantSourceJob.findFirstOrThrow({
+      where: { idempotencyKey: `current-fact:${runId}` },
+    });
+    assert.equal(job.status, 'COMPLETED', item.id);
+    assert.ok(job.completedAt, item.id);
+    acceptedRunIds.push(runId);
+  }
+
+  assert.equal(acceptedRunIds.length, 20);
+  assert.equal(sourceRequests.length, sourceRequestsBefore);
+  assert.equal(await prisma.assistantSourceJob.count({
+    where: {
+      idempotencyKey: { in: acceptedRunIds.map((runId) => `current-fact:${runId}`) },
+      status: 'COMPLETED',
+    },
+  }), 20);
+  assert.equal(await prisma.assistantAiUsageAttempt.count({
+    where: { operationRunId: { in: acceptedRunIds } },
+  }), 0);
+  assert.equal(await prisma.assistantGeoUsageAttempt.count({
+    where: { operationId: { in: acceptedRunIds } },
+  }), 0);
+  process.stdout.write('ASSISTANT_T07_MORTGAGE_FIXTURE_OK:20\n');
+}
+
+async function waitForAssistantRun(runId, accessToken) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const response = await httpJson(`/assistant/runs/${runId}`, { token: accessToken });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    if (response.body?.run?.status === 'COMPLETED' || response.body?.run?.status === 'FAILED') {
+      return response.body.run;
+    }
+    await delay(25);
+  }
+  throw new Error(`ASSISTANT_T07_RUN_TIMEOUT:${runId}`);
 }
 
 async function startWeb(port, sourceOrigin) {
@@ -965,6 +1219,7 @@ async function userJourney(fixtures) {
   const runtimeErrorDetailPromises = [];
   page.on('request', (request) => requestedUrls.push(request.url()));
   page.on('requestfailed', (request) => failedRequestUrls.push({
+    method: request.method(),
     url: request.url(),
     errorText: request.failure()?.errorText ?? null,
   }));
@@ -1184,7 +1439,7 @@ async function userJourney(fixtures) {
     assert.match(String(installmentFact.valueJson), /Первоначальный взнос 30%/u);
     assert.match(String(installmentFact.valueJson), /12 ежемесячных платежей/u);
     assert.match(String(installmentFact.valueJson), /15 декабря 2027 года/u);
-    assert.equal(sourceRequests.length, sourceRequestsBeforeInstallment + 1);
+    assert.equal(sourceRequests.length, sourceRequestsBeforeInstallment);
     await startNewConversation(page);
     const externalQuery = 'Найди двушку от 66 м² до 24 млн в Северном саду';
     await submit(page, input, externalQuery);
@@ -1324,13 +1579,13 @@ async function userJourney(fixtures) {
       url.startsWith('https://map-fixtures.test/tiles/')
       || url.includes('/__map_fixture__/tiles/')
     )), true);
-    assert.deepEqual(failedRequestUrls.filter(({ url, errorText }) => (
-      !/\.(?:woff2?|ttf)(?:\?.*)?$/u.test(url)
-      && !(url === `${apiOrigin}/assistant/config` && errorText === 'net::ERR_ABORTED')
+    assert.deepEqual(failedRequestUrls.filter((failure) => (
+      !isExpectedT07ApiNavigationAbort(failure, apiOrigin)
+      && !/\.(?:woff2?|ttf)(?:\?.*)?$/u.test(failure.url)
       && !((
-        url.startsWith('https://map-fixtures.test/tiles/')
-        || url.includes('/__map_fixture__/tiles/')
-      ) && errorText === 'net::ERR_ABORTED')
+        failure.url.startsWith('https://map-fixtures.test/tiles/')
+        || failure.url.includes('/__map_fixture__/tiles/')
+      ) && failure.errorText === 'net::ERR_ABORTED')
     )), []);
     assert.equal(unauthorizedUrls.length >= 1, true);
     assert.deepEqual(unauthorizedUrls.filter((url) => url !== `${apiOrigin}/auth/refresh`), []);
@@ -2045,7 +2300,7 @@ async function adminJourney(fixtures, journey) {
     token: adminSession.accessToken,
   });
   assert.equal(evalRuntime.status, 200);
-  assert.equal(evalRuntime.body.version, 'assistant-eval-runtime-v1');
+  assert.equal(evalRuntime.body.version, 'assistant-eval-runtime-v2');
   assert.match(evalRuntime.body.databaseFingerprint, /^[a-f0-9]{64}$/u);
   assert.doesNotMatch(JSON.stringify(evalRuntime.body), /secret|password|token/iu);
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
@@ -2066,10 +2321,11 @@ async function adminJourney(fixtures, journey) {
     }
     await page.getByRole('button', { name: 'К списку' }).click();
     await page.getByRole('tab', { name: 'Источники' }).click();
-    await page.getByText('severny-sad', { exact: true }).waitFor();
-    await page.getByText(/Индексация:.*Успех:/u).waitFor();
+    const severnySourceCard = page.getByRole('article').filter({ hasText: 'severny-sad' }).first();
+    await severnySourceCard.getByText('severny-sad', { exact: true }).waitFor();
+    await severnySourceCard.getByText(/Индексация:.*Успех:/u).waitFor();
     await captureQaScreenshot(page, 'desktop-admin-source-health.png');
-    await page.getByRole('button', { name: 'Refresh источника' }).click();
+    await severnySourceCard.getByRole('button', { name: 'Refresh источника' }).click();
     await page.getByText('Refresh источника поставлен в очередь.').waitFor();
     await page.getByRole('tab', { name: 'Geo' }).click();
     await page.getByRole('heading', { name: 'Geo operations' }).waitFor();
@@ -2402,6 +2658,7 @@ async function waitForCount(read, expected) {
 async function httpJson(pathname, options = {}) {
   const headers = { accept: 'application/json' };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
+  if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
   if (options.body !== undefined) headers['content-type'] = 'application/json';
   const response = await fetch(`${apiOrigin}${pathname}`, {
     method: options.method ?? 'GET', headers,

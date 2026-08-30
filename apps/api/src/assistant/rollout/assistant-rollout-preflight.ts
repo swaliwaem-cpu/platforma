@@ -64,6 +64,21 @@ type AssistantProviderReportedUsageComparison = {
   reportedUsage: AssistantProviderReportedUsage[];
 };
 
+type AssistantGeoUsageAttemptRecord = {
+  id: string;
+  operationId: string;
+  attemptOrdinal: number;
+  provider: string;
+  status: string;
+  outcome: string | null;
+  errorCode: string | null;
+  durationMs: number | null;
+  minuteStartedAt: Date;
+  dayStartedAt: Date;
+  createdAt: Date;
+  settledAt: Date | null;
+};
+
 type AssistantRolloutObservationRunRecord = AssistantRolloutRunRecord & {
   completedAt: Date | null;
 };
@@ -296,23 +311,121 @@ export function readAssistantRolloutBudgetReadiness(
   environment: AssistantEnvironment = process.env,
 ) {
   const providerReadiness = readAssistantPaidProviderReadiness(environment);
-  const required = isAssistantGeoProviderEnabled(environment) ? [
+  const geoRequired = isAssistantGeoProviderEnabled(environment) ? [
       { name: 'ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE', minimum: 1, maximum: 1_000_000 },
       { name: 'ASSISTANT_GEO_PROVIDER_DAILY_BUDGET', minimum: 1, maximum: 1_000_000 },
       { name: 'ASSISTANT_GEO_CACHE_TTL_SECONDS', minimum: 60, maximum: 31_536_000 },
     ] : [];
+  const overpassLimits = readAssistantOverpassBudgetLimits(environment);
+  const overpassRequired = overpassLimits.enabled === true ? [
+    { name: 'ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE', value: overpassLimits.requestsPerMinute },
+    { name: 'ASSISTANT_OVERPASS_DAILY_BUDGET', value: overpassLimits.dailyBudget },
+  ] : [];
   const missing = [
     ...providerReadiness.missing,
-    ...required.filter(({ name, minimum, maximum }) => (
+    ...(overpassLimits.enabled === null ? ['ASSISTANT_OVERPASS_ENABLED'] : []),
+    ...geoRequired.filter(({ name, minimum, maximum }) => (
       !isBoundedInteger(environment[name], minimum, maximum)
     )).map(({ name }) => name),
+    ...overpassRequired.filter(({ value }) => value === null).map(({ name }) => name),
   ];
   return { passed: missing.length === 0, missing };
+}
+
+export function readAssistantOverpassBudgetLimits(
+  environment: AssistantEnvironment = process.env,
+) {
+  const enabled = readOptionalBoolean(environment.ASSISTANT_OVERPASS_ENABLED, false);
+  return {
+    enabled,
+    requestsPerMinute: enabled === true && isBoundedInteger(
+      environment.ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE,
+      1,
+      1_000_000,
+    ) ? Number(environment.ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE) : null,
+    dailyBudget: enabled === true && isBoundedInteger(
+      environment.ASSISTANT_OVERPASS_DAILY_BUDGET,
+      1,
+      1_000_000,
+    ) ? Number(environment.ASSISTANT_OVERPASS_DAILY_BUDGET) : null,
+  };
 }
 
 export function countAssistantRolloutCriticalErrors(runs: AssistantRolloutRunRecord[]) {
   return runs.filter((run) => run.status === AssistantRunStatus.FAILED
     || run.qualityFlags.some((flag) => criticalQualityFlags.has(flag))).length;
+}
+
+export function createAssistantRolloutTerminalObservationWhere(
+  previousStageStartedAt: Date,
+  now: Date,
+) {
+  return {
+    status: { in: [AssistantRunStatus.COMPLETED, AssistantRunStatus.FAILED] },
+    completedAt: { gte: previousStageStartedAt, lte: now },
+  };
+}
+
+export function createAssistantGeoUsageReceiptWhere(
+  windowStartedAt: Date,
+  now: Date,
+) {
+  const dayStartedAt = startOfUtcDay(windowStartedAt);
+  return {
+    OR: [
+      { createdAt: { gte: windowStartedAt, lte: now } },
+      { settledAt: { gte: windowStartedAt, lte: now } },
+      { status: { not: 'SETTLED' } },
+      { outcome: null },
+      { outcome: { notIn: ['SUCCESS', 'ERROR'] } },
+      { settledAt: null },
+      { provider: 'overpass', createdAt: { gte: dayStartedAt, lte: now } },
+    ],
+  };
+}
+
+export function assessAssistantEvalReleaseCompatibility(
+  evidence: {
+    runtimeConfigSha256: unknown;
+    releaseSha: unknown;
+    releaseImageIdentity: unknown;
+  },
+  current: {
+    runtimeConfigSha256: unknown;
+    releaseSha: unknown;
+    releaseImageIdentity: unknown;
+  },
+) {
+  const blockers: string[] = [];
+  if (!isDigest(evidence.runtimeConfigSha256) || !isDigest(current.runtimeConfigSha256)) {
+    blockers.push('ASSISTANT_EVAL_RUNTIME_CONFIG_BINDING_INVALID');
+  } else if (evidence.runtimeConfigSha256 !== current.runtimeConfigSha256) {
+    blockers.push('ASSISTANT_EVAL_RUNTIME_CONFIG_MISMATCH');
+  }
+  if (!isReleaseSha(evidence.releaseSha) || !isReleaseSha(current.releaseSha)) {
+    blockers.push('ASSISTANT_EVAL_RELEASE_SHA_INVALID');
+  } else if (evidence.releaseSha !== current.releaseSha) {
+    blockers.push('ASSISTANT_EVAL_RELEASE_SHA_MISMATCH');
+  }
+  if (!isReleaseImageIdentity(evidence.releaseImageIdentity)
+    || !isReleaseImageIdentity(current.releaseImageIdentity)) {
+    blockers.push('ASSISTANT_EVAL_RELEASE_IMAGE_IDENTITY_INVALID');
+  } else if (evidence.releaseImageIdentity !== current.releaseImageIdentity) {
+    blockers.push('ASSISTANT_EVAL_RELEASE_IMAGE_IDENTITY_MISMATCH');
+  }
+  return { passed: blockers.length === 0, blockers };
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value);
+}
+
+function isReleaseSha(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{40}$/u.test(value);
+}
+
+function isReleaseImageIdentity(value: unknown): value is string | null {
+  return value === null || typeof value === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value);
 }
 
 export function assessAssistantProviderBudgetContract(
@@ -370,6 +483,133 @@ export function assessAssistantProviderBudgetContract(
     violatingReceipts,
     reportedUsageMismatches,
   };
+}
+
+export function assessAssistantGeoUsageReceipts(
+  attempts: AssistantGeoUsageAttemptRecord[],
+  limits: {
+    windowStartedAt: Date;
+    now: Date;
+    overpassRequestsPerMinute: number | null;
+    overpassDailyBudget: number | null;
+  },
+) {
+  const seenReceipts = new Set<string>();
+  const violatingReceipts = attempts.flatMap((attempt) => {
+    const reasons: string[] = [];
+    const receiptKey = `${attempt.operationId}\u0000${attempt.attemptOrdinal}`;
+    if (seenReceipts.has(receiptKey)) reasons.push('RECEIPT_DUPLICATED');
+    seenReceipts.add(receiptKey);
+    if (!uuidPattern.test(attempt.id) || !uuidPattern.test(attempt.operationId)
+      || !Number.isSafeInteger(attempt.attemptOrdinal) || attempt.attemptOrdinal < 1) {
+      reasons.push('RECEIPT_IDENTITY_INVALID');
+    }
+    if (!['locationiq', 'overpass'].includes(attempt.provider)) reasons.push('PROVIDER_UNKNOWN');
+    if (attempt.status === 'RESERVED') reasons.push('ATTEMPT_RESERVED');
+    else if (attempt.status !== 'SETTLED') reasons.push('ATTEMPT_UNSETTLED');
+    if (!['SUCCESS', 'ERROR'].includes(attempt.outcome ?? '')) reasons.push('OUTCOME_UNKNOWN');
+    if (!isValidDate(attempt.settledAt)
+      || attempt.settledAt.getTime() > limits.now.getTime()
+      || !isValidDate(attempt.createdAt)
+      || attempt.createdAt.getTime() > attempt.settledAt.getTime()) {
+      reasons.push('SETTLEMENT_MISSING');
+    }
+    if (!Number.isSafeInteger(attempt.durationMs) || attempt.durationMs! < 0) {
+      reasons.push('USAGE_METRIC_UNKNOWN');
+    }
+    if (attempt.outcome === 'SUCCESS' && attempt.errorCode !== null
+      || attempt.outcome === 'ERROR' && (typeof attempt.errorCode !== 'string'
+        || !/^[A-Z0-9_]{3,120}$/u.test(attempt.errorCode))) {
+      reasons.push('OUTCOME_METADATA_INVALID');
+    }
+    const uniqueReasons = [...new Set(reasons)];
+    return uniqueReasons.length === 0 ? [] : [{
+      id: uuidPattern.test(attempt.id) ? attempt.id : 'INVALID',
+      operationId: uuidPattern.test(attempt.operationId) ? attempt.operationId : 'INVALID',
+      attemptOrdinal: Number.isSafeInteger(attempt.attemptOrdinal) && attempt.attemptOrdinal > 0
+        ? attempt.attemptOrdinal
+        : -1,
+      provider: ['locationiq', 'overpass'].includes(attempt.provider)
+        ? attempt.provider
+        : 'UNKNOWN',
+      reasons: uniqueReasons,
+    }];
+  });
+  const dayStartedAt = startOfUtcDay(limits.windowStartedAt);
+  const minuteStartedAt = startOfUtcMinute(limits.windowStartedAt);
+  const overpassAttempts = attempts.filter((attempt) => attempt.provider === 'overpass'
+    && isValidDate(attempt.createdAt)
+    && attempt.createdAt.getTime() >= dayStartedAt.getTime()
+    && attempt.createdAt.getTime() <= limits.now.getTime());
+  const exceededBuckets = [
+    ...readExceededGeoUsageBuckets(
+      overpassAttempts,
+      'MINUTE',
+      limits.overpassRequestsPerMinute,
+      (attempt) => attempt.minuteStartedAt,
+      minuteStartedAt,
+      limits.now,
+    ),
+    ...readExceededGeoUsageBuckets(
+      overpassAttempts,
+      'DAY',
+      limits.overpassDailyBudget,
+      (attempt) => attempt.dayStartedAt,
+      dayStartedAt,
+      limits.now,
+    ),
+  ];
+  const violationCount = violatingReceipts.length + exceededBuckets.length;
+  return {
+    passed: violationCount === 0,
+    condition: violationCount === 0 ? null : 'GEO_USAGE_CONTRACT_VIOLATION',
+    violationCount,
+    violatingReceipts,
+    exceededBuckets,
+  };
+}
+
+function readExceededGeoUsageBuckets(
+  attempts: AssistantGeoUsageAttemptRecord[],
+  window: 'MINUTE' | 'DAY',
+  limit: number | null,
+  readStartedAt: (attempt: AssistantGeoUsageAttemptRecord) => Date,
+  minimumStartedAt: Date,
+  maximumStartedAt: Date,
+) {
+  if (!Number.isSafeInteger(limit) || limit! < 1) return [];
+  const counts = new Map<string, number>();
+  for (const attempt of attempts) {
+    const startedAt = readStartedAt(attempt);
+    if (!isValidDate(startedAt)
+      || startedAt.getTime() < minimumStartedAt.getTime()
+      || startedAt.getTime() > maximumStartedAt.getTime()) continue;
+    const key = startedAt.toISOString();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].flatMap(([startedAt, count]) => count > limit! ? [{
+    provider: 'overpass',
+    window,
+    startedAt,
+    count,
+    limit: limit!,
+  }] : []);
+}
+
+function isValidDate(value: Date | null): value is Date {
+  return value instanceof Date && Number.isFinite(value.getTime());
+}
+
+function startOfUtcMinute(value: Date) {
+  const startedAt = new Date(value);
+  startedAt.setUTCSeconds(0, 0);
+  return startedAt;
+}
+
+function startOfUtcDay(value: Date) {
+  const startedAt = new Date(value);
+  startedAt.setUTCHours(0, 0, 0, 0);
+  return startedAt;
 }
 
 export function collectAssistantProviderComparisonRunIds(
@@ -475,6 +715,13 @@ function isBoundedInteger(value: string | undefined, minimum: number, maximum: n
   if (!isPositiveInteger(value)) return false;
   const parsed = Number(value);
   return parsed >= minimum && parsed <= maximum;
+}
+
+function readOptionalBoolean(value: string | undefined, fallback: boolean) {
+  if (value === undefined || value.trim() === '') return fallback;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return null;
 }
 
 function readAssistantProviderUsd(

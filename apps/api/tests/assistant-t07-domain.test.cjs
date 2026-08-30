@@ -21,6 +21,7 @@ const {
   AssistantFeatureGuard,
   getAssistantRuntimeConfig,
   isAssistantEnabledForActor,
+  readAssistantCurrentFactRefreshMode,
 } = require('../dist/assistant/assistant-runtime-config.js');
 const {
   AssistantController,
@@ -39,6 +40,10 @@ const {
   AssistantGeoProviderPolicyService,
 } = require('../dist/assistant/geo/assistant-geo-provider-policy.service.js');
 const {
+  parseResolveInputs,
+  stripAssistantGeoClauses,
+} = require('../dist/assistant/geo/assistant-place-resolver.service.js');
+const {
   AssistantSourcesController,
 } = require('../dist/assistant/sources/assistant-sources.controller.js');
 const {
@@ -49,8 +54,12 @@ const {
   assessAssistantPilotCohort,
   assessAssistantPilotCohortAgainstApproval,
   assessAssistantRolloutObservation,
+  assessAssistantGeoUsageReceipts,
+  assessAssistantEvalReleaseCompatibility,
   assessAssistantProviderBudgetContract,
   collectAssistantProviderComparisonRunIds,
+  createAssistantGeoUsageReceiptWhere,
+  createAssistantRolloutTerminalObservationWhere,
   assessAssistantSourceHealth,
   countAssistantRolloutCriticalErrors,
   readAssistantRolloutBudgetReadiness,
@@ -61,7 +70,12 @@ const {
 } = require('../dist/assistant/operations/assistant-paid-readiness.js');
 const {
   createAssistantEvalRuntimeContract,
+  readAssistantReleaseIdentity,
 } = require('../dist/assistant/eval/assistant-eval-runtime-contract.js');
+const {
+  extractAssistantKnowledgeProjectReferenceClause,
+  resolveAssistantKnowledgeProjectIdentity,
+} = require('../dist/assistant/sources/assistant-knowledge-policy.js');
 
 const datasetPath = resolve(
   __dirname,
@@ -172,6 +186,53 @@ test('Assistant T07 eval v1 freezes 200 unique cases, coverage and quality/laten
     () => loadAssistantEvalDataset(rawDataset),
     /ASSISTANT_EVAL_DATASET_SHA256_INVALID/u,
   );
+});
+
+test('Assistant T07 fake planner routes every frozen mortgage current-fact case through FACT', async () => {
+  const dataset = loadAssistantEvalDataset(JSON.parse(readFileSync(datasetPath, 'utf8')));
+  const mortgageCases = dataset.cases.filter(({ category }) => category === 'MORTGAGE_INSTALLMENT');
+  const planner = new AssistantFakePlannerGateway();
+
+  assert.equal(mortgageCases.length, 20);
+  for (const item of mortgageCases) {
+    const result = await planner.plan({
+      messages: [item.query],
+      context: item.context,
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'medium',
+    });
+    assert.equal(result.output.taskType, 'FACT', item.id);
+  }
+});
+
+test('Assistant T07 frozen project references after "у ЖК" are not stripped as geo landmarks', () => {
+  const dataset = loadAssistantEvalDataset(JSON.parse(readFileSync(datasetPath, 'utf8')));
+  const mortgageCases = dataset.cases.filter(({ category }) => category === 'MORTGAGE_INSTALLMENT');
+
+  for (const item of mortgageCases) {
+    assert.deepEqual(parseResolveInputs({ content: item.query }).constraints, [], item.id);
+    assert.equal(stripAssistantGeoClauses(item.query), item.query, item.id);
+  }
+});
+
+test('Assistant T07 resolves every frozen project reference before the contribution qualifier', () => {
+  const dataset = loadAssistantEvalDataset(JSON.parse(readFileSync(datasetPath, 'utf8')));
+  const mortgageCases = dataset.cases.filter(({ category }) => category === 'MORTGAGE_INSTALLMENT');
+  const identities = [
+    { projectKey: 'ostrov', objectTitle: 'ЖК Остров' },
+    { projectKey: 'zilart', objectTitle: 'ЖК Зиларт' },
+    { projectKey: 'severny-sad', objectTitle: 'ЖК Северный сад' },
+    { projectKey: 'paveletskaya-city', objectTitle: 'ЖК Павелецкая Сити' },
+  ];
+
+  for (const item of mortgageCases) {
+    const reference = extractAssistantKnowledgeProjectReferenceClause(item.query);
+    assert.ok(reference, item.id);
+    assert.equal(resolveAssistantKnowledgeProjectIdentity(reference, identities, {
+      allowReferenceTail: true,
+      referenceQuery: item.query,
+    })?.projectKey, item.expected.expectedKnowledge.projectKey, item.id);
+  }
 });
 
 test('Assistant T07 frozen standalone queries reproduce their canonical persisted intents', async () => {
@@ -994,15 +1055,23 @@ test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider 
     ASSISTANT_MODEL_REQUESTS_PER_DAY: '220',
     ASSISTANT_GEO_PROVIDER_ENABLED: 'false',
     ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+    ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
     ASSISTANT_SOURCE_DISCOVERY_LIVE: 'false',
     ASSISTANT_EMBEDDING_MODE: 'fake',
+    ASSISTANT_RELEASE_SHA: '1'.repeat(40),
+    ASSISTANT_RELEASE_IMAGE_IDENTITY: 'none',
     OPENAI_API_KEY: 'must-not-leak',
   };
 
   const contract = createAssistantEvalRuntimeContract(databaseIdentity, environment);
 
-  assert.equal(contract.version, 'assistant-eval-runtime-v1');
+  assert.equal(contract.version, 'assistant-eval-runtime-v2');
   assert.match(contract.databaseFingerprint, /^[a-f0-9]{64}$/u);
+  assert.match(contract.runtimeConfigSha256, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(contract.releaseIdentity, {
+    releaseSha: '1'.repeat(40),
+    releaseImageIdentity: null,
+  });
   assert.deepEqual(contract.provider, {
     readinessPassed: true,
     missing: [],
@@ -1019,6 +1088,7 @@ test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider 
     deploymentEnvironment: 'local',
     geoProviderEnabled: false,
     externalConnectorsEnabled: false,
+    currentFactRefreshMode: 'fixture',
     sourceDiscoveryLive: false,
     embeddingMode: 'fake',
     embeddingLive: false,
@@ -1030,6 +1100,44 @@ test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider 
       .databaseFingerprint,
     contract.databaseFingerprint,
   );
+  assert.notEqual(
+    createAssistantEvalRuntimeContract(databaseIdentity, {
+      ...environment,
+      ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '11',
+    }).runtimeConfigSha256,
+    contract.runtimeConfigSha256,
+  );
+  assert.notEqual(
+    createAssistantEvalRuntimeContract(databaseIdentity, {
+      ...environment,
+      ASSISTANT_EMBEDDING_MODE: 'disabled',
+    }).runtimeConfigSha256,
+    contract.runtimeConfigSha256,
+  );
+  assert.notEqual(
+    createAssistantEvalRuntimeContract(databaseIdentity, {
+      ...environment,
+      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_MODEL_DAILY_BUDGET_USD: '1.00',
+      ASSISTANT_QUERY_PLANNER_LIVE: 'true',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    }).runtimeConfigSha256,
+    contract.runtimeConfigSha256,
+  );
+  for (const invalidIdentity of [
+    { ASSISTANT_RELEASE_IMAGE_IDENTITY: 'none' },
+    { ASSISTANT_RELEASE_SHA: '1'.repeat(12), ASSISTANT_RELEASE_IMAGE_IDENTITY: 'none' },
+    { ASSISTANT_RELEASE_SHA: '1'.repeat(40) },
+    {
+      ASSISTANT_RELEASE_SHA: '1'.repeat(40),
+      ASSISTANT_RELEASE_IMAGE_IDENTITY: `sha256:${'c'.repeat(63)}`,
+    },
+  ]) {
+    assert.throws(
+      () => readAssistantReleaseIdentity(invalidIdentity),
+      /ASSISTANT_RELEASE_(?:SHA|IMAGE_IDENTITY)_INVALID/u,
+    );
+  }
 
   const controller = new AssistantController({
     getEvalRuntimeContract: () => contract,
@@ -1142,6 +1250,49 @@ test('Assistant T07 rollout config keeps assistant, geo and connector flags inde
   );
 });
 
+test('Assistant T07 current-fact refresh modes keep fixture explicit, offline and outside deployed runtimes', () => {
+  assert.equal(readAssistantCurrentFactRefreshMode({
+    NODE_ENV: 'test',
+    DEPLOYMENT_ENV: 'local',
+    ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+    ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
+  }), 'fixture');
+  assert.equal(readAssistantCurrentFactRefreshMode({
+    ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+  }), 'disabled');
+  assert.equal(readAssistantCurrentFactRefreshMode({
+    ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'true',
+  }), 'live');
+
+  for (const environment of [
+    {
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+      ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'live',
+    },
+    {
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'true',
+      ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
+    },
+    {
+      NODE_ENV: 'production',
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+      ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
+    },
+    {
+      DEPLOYMENT_ENV: 'staging',
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+      ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
+    },
+    {
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+      ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'unknown',
+    },
+  ]) {
+    assert.throws(() => readAssistantCurrentFactRefreshMode(environment),
+      /ASSISTANT_CURRENT_FACT_REFRESH_/u);
+  }
+});
+
 test('Assistant T07 rollout transition is sequential and blocked by eval, source health, budgets and critical errors', () => {
   const ready = {
     currentStage: 'ADMINS',
@@ -1203,6 +1354,64 @@ test('ZAEBAL4 rollout reconciles stage-created, observation-completed and stage-
     'created-before-stage-completed-during-stage',
     'settled-during-stage',
   ]);
+});
+
+test('Assistant T07 critical observation window selects terminal runs by completedAt only', () => {
+  const startedAt = new Date('2026-08-26T10:00:00.000Z');
+  const now = new Date('2026-08-26T12:00:00.000Z');
+  assert.deepEqual(createAssistantRolloutTerminalObservationWhere(startedAt, now), {
+    status: { in: ['COMPLETED', 'FAILED'] },
+    completedAt: { gte: startedAt, lte: now },
+  });
+  assert.equal(countAssistantRolloutCriticalErrors([{
+    ownerUserId: '00000000-0000-4000-8000-000000000801',
+    status: 'FAILED',
+    qualityFlags: [],
+    createdAt: new Date('2026-08-25T09:00:00.000Z'),
+    completedAt: new Date('2026-08-26T11:00:00.000Z'),
+  }]), 1);
+});
+
+test('Assistant T07 eval evidence is bound to the exact current runtime config digest', () => {
+  const identity = {
+    runtimeConfigSha256: 'a'.repeat(64),
+    releaseSha: '1'.repeat(40),
+    releaseImageIdentity: null,
+  };
+  assert.deepEqual(assessAssistantEvalReleaseCompatibility(identity, identity), {
+    passed: true,
+    blockers: [],
+  });
+  assert.deepEqual(assessAssistantEvalReleaseCompatibility(identity, {
+    ...identity,
+    runtimeConfigSha256: 'b'.repeat(64),
+  }), {
+    passed: false,
+    blockers: ['ASSISTANT_EVAL_RUNTIME_CONFIG_MISMATCH'],
+  });
+  assert.equal(assessAssistantEvalReleaseCompatibility({
+    ...identity,
+    runtimeConfigSha256: null,
+  }, identity).passed, false);
+});
+
+test('Assistant T07 eval evidence requires exact full release SHA and explicit image identity', () => {
+  const imageIdentity = `sha256:${'c'.repeat(64)}`;
+  const evidence = {
+    runtimeConfigSha256: 'a'.repeat(64),
+    releaseSha: '1'.repeat(40),
+    releaseImageIdentity: imageIdentity,
+  };
+  assert.equal(assessAssistantEvalReleaseCompatibility(evidence, evidence).passed, true);
+  for (const current of [
+    { ...evidence, releaseSha: '1'.repeat(12) },
+    { ...evidence, releaseSha: '2'.repeat(40) },
+    { ...evidence, releaseSha: null },
+    { ...evidence, releaseImageIdentity: null },
+    { ...evidence, releaseImageIdentity: `sha256:${'d'.repeat(64)}` },
+  ]) {
+    assert.equal(assessAssistantEvalReleaseCompatibility(evidence, current).passed, false);
+  }
 });
 
 test('Assistant T07 disabled Geo Provider degrades without a provider call or budget reservation', async () => {
@@ -1312,6 +1521,45 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
     passed: true,
     missing: [],
   });
+  assert.deepEqual(readAssistantRolloutBudgetReadiness({
+    ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '60',
+    ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
+    ASSISTANT_OVERPASS_ENABLED: 'true',
+  }), {
+    passed: false,
+    missing: [
+      'ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE',
+      'ASSISTANT_OVERPASS_DAILY_BUDGET',
+    ],
+  });
+  assert.deepEqual(readAssistantRolloutBudgetReadiness({
+    ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '60',
+    ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
+    ASSISTANT_OVERPASS_ENABLED: 'true',
+    ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE: '60',
+    ASSISTANT_OVERPASS_DAILY_BUDGET: '1000',
+  }), { passed: true, missing: [] });
+  for (const invalid of ['0', 'not-a-number', '1000001']) {
+    assert.deepEqual(readAssistantRolloutBudgetReadiness({
+      ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '60',
+      ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
+      ASSISTANT_OVERPASS_ENABLED: 'true',
+      ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE: invalid,
+      ASSISTANT_OVERPASS_DAILY_BUDGET: '1000',
+    }).missing, ['ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE']);
+    assert.deepEqual(readAssistantRolloutBudgetReadiness({
+      ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '60',
+      ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
+      ASSISTANT_OVERPASS_ENABLED: 'true',
+      ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE: '60',
+      ASSISTANT_OVERPASS_DAILY_BUDGET: invalid,
+    }).missing, ['ASSISTANT_OVERPASS_DAILY_BUDGET']);
+  }
+  assert.deepEqual(readAssistantRolloutBudgetReadiness({
+    ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '60',
+    ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
+    ASSISTANT_OVERPASS_ENABLED: 'invalid',
+  }).missing, ['ASSISTANT_OVERPASS_ENABLED']);
   assert.deepEqual(readAssistantRolloutBudgetReadiness({
     ASSISTANT_GEO_PROVIDER_ENABLED: 'true',
   }), {
@@ -1806,6 +2054,99 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
   });
 });
 
+test('Assistant T07 rollout geo receipts fail closed on reserved, unknown, unclosed and over-budget usage', () => {
+  const minuteStartedAt = new Date('2026-08-26T10:05:00.000Z');
+  const settledAt = new Date('2026-08-26T10:05:01.000Z');
+  const base = {
+    id: '00000000-0000-4000-8000-000000000501',
+    operationId: '00000000-0000-4000-8000-000000000502',
+    attemptOrdinal: 1,
+    provider: 'overpass',
+    status: 'SETTLED',
+    outcome: 'SUCCESS',
+    errorCode: null,
+    durationMs: 100,
+    minuteStartedAt,
+    dayStartedAt: new Date('2026-08-26T00:00:00.000Z'),
+    createdAt: minuteStartedAt,
+    settledAt,
+  };
+  const limits = {
+    windowStartedAt: new Date('2026-08-26T10:00:00.000Z'),
+    now: new Date('2026-08-26T11:00:00.000Z'),
+    overpassRequestsPerMinute: 2,
+    overpassDailyBudget: 10,
+  };
+
+  assert.equal(assessAssistantGeoUsageReceipts([base], limits).passed, true);
+  for (const invalid of [
+    { status: 'RESERVED', outcome: null, settledAt: null },
+    { outcome: 'UNKNOWN' },
+    { settledAt: null },
+  ]) {
+    const assessment = assessAssistantGeoUsageReceipts([{ ...base, ...invalid }], limits);
+    assert.equal(assessment.passed, false);
+    assert.equal(assessment.violationCount > 0, true);
+  }
+  const overBudget = assessAssistantGeoUsageReceipts([
+    base,
+    { ...base, id: '00000000-0000-4000-8000-000000000503', attemptOrdinal: 2 },
+    { ...base, id: '00000000-0000-4000-8000-000000000504', attemptOrdinal: 3 },
+  ], limits);
+  assert.equal(overBudget.passed, false);
+  assert.equal(overBudget.exceededBuckets.some(({ window }) => window === 'MINUTE'), true);
+
+  const stageStartedAt = new Date('2026-08-26T10:05:30.000Z');
+  assert.deepEqual(createAssistantGeoUsageReceiptWhere(stageStartedAt, limits.now), {
+    OR: [
+      { createdAt: { gte: stageStartedAt, lte: limits.now } },
+      { settledAt: { gte: stageStartedAt, lte: limits.now } },
+      { status: { not: 'SETTLED' } },
+      { outcome: null },
+      { outcome: { notIn: ['SUCCESS', 'ERROR'] } },
+      { settledAt: null },
+      {
+        provider: 'overpass',
+        createdAt: {
+          gte: new Date('2026-08-26T00:00:00.000Z'),
+          lte: limits.now,
+        },
+      },
+    ],
+  });
+  const crossingBucketLimits = { ...limits, windowStartedAt: stageStartedAt };
+  const crossingBucket = assessAssistantGeoUsageReceipts([
+    {
+      ...base,
+      createdAt: new Date('2026-08-26T10:05:20.000Z'),
+      settledAt: new Date('2026-08-26T10:05:21.000Z'),
+    },
+    { ...base, id: '00000000-0000-4000-8000-000000000503', attemptOrdinal: 2 },
+    { ...base, id: '00000000-0000-4000-8000-000000000504', attemptOrdinal: 3 },
+  ], crossingBucketLimits);
+  assert.equal(crossingBucket.exceededBuckets.some(({ window }) => window === 'MINUTE'), true);
+  const attemptsBeforeStage = [
+    ...Array.from({ length: 3 }, (_, index) => ({
+      ...base,
+      id: `00000000-0000-4000-8000-${String(510 + index).padStart(12, '0')}`,
+      operationId: `00000000-0000-4000-8000-${String(520 + index).padStart(12, '0')}`,
+      minuteStartedAt: new Date('2026-08-26T09:00:00.000Z'),
+      createdAt: new Date('2026-08-26T09:00:10.000Z'),
+      settledAt: new Date('2026-08-26T09:00:11.000Z'),
+    })),
+    base,
+  ];
+  const earlierMinute = assessAssistantGeoUsageReceipts(attemptsBeforeStage, crossingBucketLimits);
+  assert.equal(earlierMinute.exceededBuckets.some(({ window }) => window === 'MINUTE'), false);
+  assert.equal(earlierMinute.exceededBuckets.some(({ window }) => window === 'DAY'), false);
+  const crossingDay = assessAssistantGeoUsageReceipts(attemptsBeforeStage, {
+    ...crossingBucketLimits,
+    overpassDailyBudget: 3,
+  });
+  assert.equal(crossingDay.exceededBuckets.some(({ window }) => window === 'MINUTE'), false);
+  assert.equal(crossingDay.exceededBuckets.some(({ window }) => window === 'DAY'), true);
+});
+
 test('PIDAFIX1 paid readiness is shared, fail-closed and redacts the OpenAI key', () => {
   const blocked = readAssistantPaidProviderReadiness({ ASSISTANT_AI_MODE: 'openai' });
   assert.equal(blocked.passed, false);
@@ -1855,13 +2196,19 @@ test('Assistant T07 rollout flags and explicit budgets are documented in env and
     'ASSISTANT_PILOT_USER_IDS',
     'ASSISTANT_GEO_PROVIDER_ENABLED',
     'ASSISTANT_EXTERNAL_CONNECTORS_ENABLED',
+    'ASSISTANT_CURRENT_FACT_REFRESH_MODE',
+    'ASSISTANT_RELEASE_SHA',
+    'ASSISTANT_RELEASE_IMAGE_IDENTITY',
     'ASSISTANT_MODEL_REQUESTS_PER_MINUTE',
     'ASSISTANT_MODEL_REQUESTS_PER_DAY',
     'ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE',
+    'ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE',
+    'ASSISTANT_OVERPASS_DAILY_BUDGET',
   ]) {
     assert.match(configuration, new RegExp(`${name}=`));
   }
   assert.match(compose, /MAP_PROVIDER_ENABLED: \$\{MAP_PROVIDER_ENABLED:-true\}/u);
+  assert.match(compose, /ASSISTANT_CURRENT_FACT_REFRESH_MODE: \$\{ASSISTANT_CURRENT_FACT_REFRESH_MODE:-disabled\}/u);
   assert.match(compose, /assistant-source-worker:[\s\S]*?profiles: \["assistant-external"\]/u);
   assert.doesNotMatch(configuration, /VITE_(?:LOCATIONIQ|OPENAI|ASSISTANT_GEO_PROVIDER|ASSISTANT_EXTERNAL_CONNECTORS)/u);
 });

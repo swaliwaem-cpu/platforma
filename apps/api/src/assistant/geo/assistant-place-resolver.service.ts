@@ -782,7 +782,7 @@ export class AssistantPlaceResolverService {
 const geoClauseMarkerPattern = /(?:^|[\s,;])(?:(?<distance>(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше|в\s+пределах|на\s+расстоянии(?:\s+не\s+более)?|до|в)\s*(?<amount>\d+(?:[.,]\d+)?)\s*(?<unit>км|километр(?:а|ов)?|метр(?:а|ов)?|м)(?!\p{L})\s+от)|(?<inside>внутри)|(?<near>рядом\s+с|возле|около|вокруг)|(?<at>у))\s+/giu;
 const trailingGeoDistancePattern = /\s+(?:(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше|в\s+пределах|на\s+расстоянии(?:\s+не\s+более)?|до)\s*)(?<amount>\d+(?:[.,]\d+)?)\s*(?<unit>км|километр(?:а|ов)?|метр(?:а|ов)?|м)(?!\p{L})\s*$/iu;
 const genericGeoPlaceholderSequencePattern = /^(?:(?:(?:так|как)\p{L}*(?:-|\s+)(?:то|нибудь)|ближайш\p{L}*|люб\p{L}*)(?:\s+|$))+$/iu;
-const nonGeoAtSubjectPattern = /^(?:метро|застройщик\p{L}*|собственник\p{L}*|владелец\p{L}*|ри[еэ]лтор\p{L}*|агент\p{L}*|девелопер\p{L}*|брокер\p{L}*|меня|нас|вас|него|нее|неё|них|кого|чего|котор\p{L}*)(?=$|[^\p{L}\p{N}_])/iu;
+const nonGeoAtSubjectPattern = /^(?:жк|метро|застройщик\p{L}*|собственник\p{L}*|владелец\p{L}*|ри[еэ]лтор\p{L}*|агент\p{L}*|девелопер\p{L}*|брокер\p{L}*|меня|нас|вас|него|нее|неё|них|кого|чего|котор\p{L}*)(?=$|[^\p{L}\p{N}_])/iu;
 const genericGeoCategories: Array<{ category: AssistantGeoCategory; pattern: RegExp; canonical: string }> = [
   { category: 'WATER', pattern: /^(?:вода|воды|водоем\p{L}*|водоём\p{L}*)$/iu, canonical: 'вода' },
   { category: 'RIVER', pattern: /^(?:река|реки|реке|реку|рекой|рекою)$/iu, canonical: 'река' },

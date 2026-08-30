@@ -77,6 +77,9 @@ test('ZAEBAL6 runner creates exactly one fresh completed run per frozen case thr
   assert.equal(report.passed, true);
   assert.equal(report.caseCount, 200);
   assert.equal(report.completedRunCount, 200);
+  assert.equal(report.runtimeConfigSha256, 'b'.repeat(64));
+  assert.equal(report.releaseSha, '1'.repeat(40));
+  assert.equal(report.releaseImageIdentity, null);
   assert.equal(events.filter((event) => event.startsWith('resolve:')).length, 200);
   assert.equal(events.filter((event) => event.startsWith('create:')).length, 200);
   assert.equal(events.filter((event) => event.startsWith('message:')).length, 200);
@@ -389,11 +392,23 @@ test('ZAEBAL6 execute runtime accepts only a local disposable database and forbi
     'a'.repeat(64),
     validLimits(),
   ));
+  assert.throws(() => assertAssistantEvalRuntimeHandshake({
+    ...fakeRuntimeContract(),
+    runtime: { ...fakeRuntimeContract().runtime, currentFactRefreshMode: 'disabled' },
+  }, 'a'.repeat(64), validLimits()), /ASSISTANT_EVAL_CURRENT_FACT_FIXTURE_REQUIRED/u);
   assert.throws(() => assertAssistantEvalRuntimeHandshake(
     { ...fakeRuntimeContract(), databaseFingerprint: 'b'.repeat(64) },
     'a'.repeat(64),
     validLimits(),
   ), /ASSISTANT_EVAL_RUNTIME_HANDSHAKE_INVALID/u);
+  assert.throws(() => assertAssistantEvalRuntimeHandshake({
+    ...fakeRuntimeContract(),
+    runtimeConfigSha256: null,
+  }, 'a'.repeat(64), validLimits()), /ASSISTANT_EVAL_RUNTIME_BINDING_INVALID/u);
+  assert.throws(() => assertAssistantEvalRuntimeHandshake({
+    ...fakeRuntimeContract(),
+    releaseIdentity: { releaseSha: '1'.repeat(12), releaseImageIdentity: null },
+  }, 'a'.repeat(64), validLimits()), /ASSISTANT_EVAL_RELEASE_IDENTITY_INVALID/u);
   assert.throws(() => assertAssistantEvalRuntimeHandshake({
     ...fakeRuntimeContract(),
     provider: { ...fakeRuntimeContract().provider, requestsPerDay: 1_001 },
@@ -1159,6 +1174,9 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
     modelRequestCount: 200,
     effectiveCostUsd: '0.00000000',
     providerMode: 'openai',
+    runtimeConfigSha256: 'b'.repeat(64),
+    releaseSha: '1'.repeat(40),
+    releaseImageIdentity: `sha256:${'c'.repeat(64)}`,
     databaseFingerprint: 'a'.repeat(64),
     manifestRunMappingSha256: sha256(JSON.stringify(artifact.runs)),
     limits: validLimits(),
@@ -1208,6 +1226,9 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
   ]);
   assert.equal(bundle.cases.length, 200);
   assert.equal(bundle.runner.datasetSha256, artifact.datasetSha256);
+  assert.equal(bundle.runner.runtimeConfigSha256, 'b'.repeat(64));
+  assert.equal(bundle.runner.releaseSha, '1'.repeat(40));
+  assert.equal(bundle.runner.releaseImageIdentity, `sha256:${'c'.repeat(64)}`);
   assert.deepEqual(bundle.cases[0], {
     caseId: dataset.cases[0].id,
     runId: artifact.runs[0].runId,
@@ -1280,6 +1301,25 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
     databaseFingerprint: 'a'.repeat(64),
     generatedAt: evaluatedAt,
   }), /ASSISTANT_EVAL_EVIDENCE_RUNNER_COST_MISMATCH/u);
+  for (const missingField of [
+    'runtimeConfigSha256',
+    'releaseSha',
+    'releaseImageIdentity',
+  ]) {
+    const legacyRunnerReport = { ...runnerReport };
+    delete legacyRunnerReport[missingField];
+    assert.throws(() => createAssistantEvalEvidenceBundle({
+      dataset,
+      artifact,
+      evaluation,
+      summary,
+      records,
+      providerReceiptsByRun,
+      runnerReport: legacyRunnerReport,
+      databaseFingerprint: 'a'.repeat(64),
+      generatedAt: evaluatedAt,
+    }), /ASSISTANT_EVAL_EVIDENCE_RUNNER_REPORT_INVALID/u);
+  }
 
   const cleanupAttestation = {
     schemaVersion: 1,
@@ -1317,6 +1357,8 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
     new Date('2026-08-30T08:02:00.000Z'),
   );
   assert.equal(validatedFinal.verdict.passed, summary.passed);
+  assert.equal(validatedFinal.runner.runtimeConfigSha256, 'b'.repeat(64));
+  assert.equal(validatedFinal.runner.releaseSha, '1'.repeat(40));
   assert.equal(validatedFinal.evidenceCoreSha256, cleanupAttestation.evidenceCoreSha256);
   assert.equal(
     validatedFinal.finalizedEvidenceSha256,
@@ -1680,8 +1722,13 @@ function validLimits() {
 
 function fakeRuntimeContract() {
   return {
-    version: 'assistant-eval-runtime-v1',
+    version: 'assistant-eval-runtime-v2',
     databaseFingerprint: 'a'.repeat(64),
+    runtimeConfigSha256: 'b'.repeat(64),
+    releaseIdentity: {
+      releaseSha: '1'.repeat(40),
+      releaseImageIdentity: null,
+    },
     provider: {
       readinessPassed: true,
       missing: [],
@@ -1698,6 +1745,7 @@ function fakeRuntimeContract() {
       deploymentEnvironment: 'local',
       geoProviderEnabled: false,
       externalConnectorsEnabled: false,
+      currentFactRefreshMode: 'fixture',
       sourceDiscoveryLive: false,
       embeddingMode: 'fake',
       embeddingLive: false,

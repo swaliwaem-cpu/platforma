@@ -18,6 +18,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
   process.env.ASSISTANT_EMBEDDING_MODE = 'fake';
   process.env.ASSISTANT_SOURCE_WORKER_ENABLED = 'false';
   process.env.ASSISTANT_EXTERNAL_CONNECTORS_ENABLED = 'true';
+  process.env.ASSISTANT_CURRENT_FACT_REFRESH_MODE = 'live';
   process.env.DATABASE_URL = databaseUrl;
   process.env.JWT_ACCESS_SECRET = 'assistant-t03-http-access-secret';
 

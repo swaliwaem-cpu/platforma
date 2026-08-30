@@ -1019,6 +1019,12 @@ function readRunnerReport(value, expected) {
     || value.caseCount !== expected.caseCount
     || value.completedRunCount !== expected.caseCount
     || !['fake', 'openai'].includes(value.providerMode)
+    || !digestPattern.test(value.runtimeConfigSha256)
+    || typeof value.releaseSha !== 'string'
+    || !/^[0-9a-f]{40}$/u.test(value.releaseSha)
+    || value.releaseImageIdentity !== null
+      && (typeof value.releaseImageIdentity !== 'string'
+        || !/^sha256:[0-9a-f]{64}$/u.test(value.releaseImageIdentity))
     || !digestPattern.test(value.databaseFingerprint)
     || value.manifestRunMappingSha256 !== expected.manifestRunMappingSha256) {
     throw new Error('ASSISTANT_EVAL_EVIDENCE_RUNNER_REPORT_INVALID');
@@ -1061,6 +1067,9 @@ function readRunnerReport(value, expected) {
     ),
     effectiveCostUsd,
     providerMode: value.providerMode,
+    runtimeConfigSha256: value.runtimeConfigSha256,
+    releaseSha: value.releaseSha,
+    releaseImageIdentity: value.releaseImageIdentity,
     databaseFingerprint: value.databaseFingerprint,
     manifestRunMappingSha256: value.manifestRunMappingSha256,
     limits: {

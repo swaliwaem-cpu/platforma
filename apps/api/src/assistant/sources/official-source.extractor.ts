@@ -4,7 +4,7 @@ import { load, type CheerioAPI } from 'cheerio';
 import { Injectable } from '@nestjs/common';
 
 const maximumChunkCharacters = 1_200;
-const promotionPattern = /(?:ипотек|рассроч|скидк|бонус|акци)/iu;
+const promotionPattern = /(?:ипотек|ипотеч|рассроч|скидк|бонус|акци)/iu;
 
 export type ExtractableKnowledgeSource = {
   id: string;

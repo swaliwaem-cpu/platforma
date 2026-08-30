@@ -380,6 +380,61 @@ test('Assistant T03 connector registry exposes aggregator entry points but keeps
   );
 });
 
+test('Assistant T03 connector registry serves deterministic current-fact fixtures without live fetches', async () => {
+  let liveFetchCalls = 0;
+  const registry = new AssistantSourceConnectorRegistry({
+    async fetch() {
+      liveFetchCalls += 1;
+      throw new Error('live connector must not run');
+    },
+  }, {
+    NODE_ENV: 'test',
+    DEPLOYMENT_ENV: 'local',
+    ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+    ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
+  });
+  const source = {
+    id: '00000000-0000-4000-8000-000000000011',
+    canonicalUrl: 'https://developer.example/projects/severny-sad',
+    connectorKey: 'OFFICIAL_HTML',
+    connectorConfig: {
+      allowedHosts: ['developer.example'],
+      offlineFixture: {
+        version: 'assistant-current-fact-fixture-v1',
+        title: 'ЖК Северный сад',
+        promotions: [{
+          label: 'Ипотечная программа',
+          value: 'Первоначальный взнос 23%.',
+        }],
+      },
+    },
+  };
+
+  const fetched = await registry.get('OFFICIAL_HTML').fetch(source);
+
+  assert.equal(liveFetchCalls, 0);
+  assert.equal(fetched.finalUrl, source.canonicalUrl);
+  assert.equal(fetched.statusCode, 200);
+  assert.equal(fetched.contentType, 'text/html; charset=utf-8');
+  assert.match(fetched.payload.toString('utf8'), /Ипотечная программа/u);
+  assert.match(fetched.checksum, /^[0-9a-f]{64}$/u);
+
+  const extracted = new OfficialSourceExtractor().extract({
+    source: {
+      ...source,
+      type: 'DEVELOPMENT_PAGE',
+      projectKey: 'severny-sad',
+      developerKey: 'developer-example',
+      priority: 100,
+    },
+    revisionId: '00000000-0000-4000-8000-000000000012',
+    fetchedAt: new Date('2026-08-30T10:00:00.000Z'),
+    contentType: fetched.contentType,
+    payload: fetched.payload,
+  });
+  assert.equal(extracted.facts.some(({ kind }) => kind === 'PROMOTION'), true);
+});
+
 function createTestConnector(overrides = {}) {
   return new OfficialHtmlSourceConnector({
     allowHttp: true,

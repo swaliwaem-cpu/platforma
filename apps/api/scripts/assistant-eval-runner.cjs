@@ -234,6 +234,9 @@ async function runAssistantEvalRunner(input = {}) {
       modelRequestCount,
       effectiveCostUsd,
       providerMode: runtimeContract.provider.aiMode,
+      runtimeConfigSha256: runtimeContract.runtimeConfigSha256,
+      releaseSha: runtimeContract.releaseIdentity.releaseSha,
+      releaseImageIdentity: runtimeContract.releaseIdentity.releaseImageIdentity,
       databaseFingerprint,
       manifestRunMappingSha256: digestJson(manifest.runs),
       limits,
@@ -518,6 +521,7 @@ function assertAssistantEvalRuntimeSafety(environment) {
 function assertAssistantEvalRuntimeHandshake(value, databaseFingerprint, limits) {
   const provider = value?.provider;
   const runtime = value?.runtime;
+  const releaseIdentity = value?.releaseIdentity;
   if (value?.version !== assistantEvalRuntimeContractVersion
     || typeof value.databaseFingerprint !== 'string'
     || !/^[a-f0-9]{64}$/u.test(value.databaseFingerprint)
@@ -536,6 +540,20 @@ function assertAssistantEvalRuntimeHandshake(value, databaseFingerprint, limits)
     || !['disabled', 'fake'].includes(runtime.embeddingMode)) {
     throw new Error('ASSISTANT_EVAL_RUNTIME_HANDSHAKE_INVALID');
   }
+  if (typeof value.runtimeConfigSha256 !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.runtimeConfigSha256)) {
+    throw new Error('ASSISTANT_EVAL_RUNTIME_BINDING_INVALID');
+  }
+  if (!releaseIdentity || typeof releaseIdentity !== 'object'
+    || Array.isArray(releaseIdentity)
+    || Object.keys(releaseIdentity).sort().join(',') !== 'releaseImageIdentity,releaseSha'
+    || typeof releaseIdentity.releaseSha !== 'string'
+    || !/^[a-f0-9]{40}$/u.test(releaseIdentity.releaseSha)
+    || releaseIdentity.releaseImageIdentity !== null
+      && (typeof releaseIdentity.releaseImageIdentity !== 'string'
+        || !/^sha256:[a-f0-9]{64}$/u.test(releaseIdentity.releaseImageIdentity))) {
+    throw new Error('ASSISTANT_EVAL_RELEASE_IDENTITY_INVALID');
+  }
   const nodeEnvironment = runtime.nodeEnvironment?.trim().toLocaleLowerCase('en-US') ?? null;
   const deploymentEnvironment = runtime.deploymentEnvironment
     ?.trim().toLocaleLowerCase('en-US') ?? null;
@@ -546,6 +564,9 @@ function assertAssistantEvalRuntimeHandshake(value, databaseFingerprint, limits)
     || runtime.sourceDiscoveryLive !== false
     || runtime.embeddingLive !== false) {
     throw new Error('ASSISTANT_EVAL_UNBOUNDED_PROVIDER_ENABLED');
+  }
+  if (runtime.currentFactRefreshMode !== 'fixture') {
+    throw new Error('ASSISTANT_EVAL_CURRENT_FACT_FIXTURE_REQUIRED');
   }
   if (provider.requestsPerMinute > limits.requestsPerMinute
     || provider.requestsPerDay > limits.dailyRequestCap) {

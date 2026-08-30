@@ -1550,6 +1550,56 @@ test('Assistant T03 current refresh keeps a valid low-priority preferred source 
   assert.equal(selectedSourceId, preferred.id);
 });
 
+test('Assistant T03 current refresh fixture mode runs the persisted job with external connectors disabled', async () => {
+  let upsertCalls = 0;
+  let workerCalls = 0;
+  const source = currentFactSource();
+  const coordinator = new AssistantCurrentFactRefreshCoordinator(
+    {
+      assistantKnowledgeSource: {
+        async findMany() { return [source]; },
+      },
+      assistantSourceJob: {
+        async upsert(input) {
+          upsertCalls += 1;
+          assert.equal(input.create.sourceId, source.id);
+          assert.equal(
+            input.create.idempotencyKey,
+            'current-fact:10000000-0000-4000-8000-000000000008',
+          );
+          return {
+            id: '00000000-0000-4000-8000-000000000092',
+            sourceId: source.id,
+            status: 'PENDING',
+            errorCode: null,
+          };
+        },
+      },
+    },
+    {
+      async runTargetedJob() {
+        workerCalls += 1;
+        return { status: 'COMPLETED', errorCode: null };
+      },
+    },
+    {
+      NODE_ENV: 'test',
+      DEPLOYMENT_ENV: 'local',
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+      ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'fixture',
+    },
+  );
+
+  assert.deepEqual(await coordinator.refreshForRun({
+    operationRunId: '10000000-0000-4000-8000-000000000008',
+    context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
+    preferredSourceId: source.id,
+    deadlineAt: new Date(Date.now() + 1_000),
+  }), { status: 'COMPLETED' });
+  assert.equal(upsertCalls, 1);
+  assert.equal(workerCalls, 1);
+});
+
 test('Assistant T03 current refresh accepts only a developer source linked to the object registry', async () => {
   const preferredSource = currentFactSource({
     id: '00000000-0000-4000-8000-000000000054',

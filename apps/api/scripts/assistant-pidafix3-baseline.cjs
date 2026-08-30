@@ -20,12 +20,32 @@ const {
 const root = resolve(__dirname, '../../..');
 const composeFile = resolve(root, 'docker-compose.assistant-pidafix3.yml');
 const taskPaths = [
+  '.env.example',
+  'apps/api/.env.example',
+  'apps/api/scripts/assistant-eval-runner.cjs',
+  'apps/api/scripts/assistant-eval-runtime.cjs',
   'apps/api/scripts/assistant-pidafix3-baseline.cjs',
   'apps/api/scripts/assistant-pidafix3-geo-live.cjs',
   'apps/api/scripts/assistant-pidafix3-runtime.cjs',
+  'apps/api/scripts/assistant-rollout-preflight.cjs',
+  'apps/api/src/assistant/assistant-planner-gateway.ts',
+  'apps/api/src/assistant/assistant-runtime-config.ts',
+  'apps/api/src/assistant/eval/assistant-eval-runtime-contract.ts',
+  'apps/api/src/assistant/geo/assistant-place-resolver.service.ts',
+  'apps/api/src/assistant/rollout/assistant-rollout-preflight.ts',
+  'apps/api/src/assistant/sources/assistant-current-fact-refresh.service.ts',
+  'apps/api/src/assistant/sources/assistant-knowledge-policy.ts',
+  'apps/api/src/assistant/sources/assistant-source-connector.registry.ts',
+  'apps/api/src/assistant/sources/official-source.extractor.ts',
   'apps/api/src/project-presentations/project-presentations-worker.service.ts',
+  'apps/api/tests/assistant-eval-runner.test.cjs',
   'apps/api/tests/assistant-pidafix3-baseline.test.cjs',
   'apps/api/tests/assistant-pidafix3-geo-live.test.cjs',
+  'apps/api/tests/assistant-t02-domain.test.cjs',
+  'apps/api/tests/assistant-t03-connector.test.cjs',
+  'apps/api/tests/assistant-t03-domain.test.cjs',
+  'apps/api/tests/assistant-t03-postgres.cjs',
+  'apps/api/tests/assistant-t07-domain.test.cjs',
   'apps/api/tests/assistant-t07-e2e.cjs',
   'apps/api/tests/project-presentations-worker-config.test.cjs',
   'apps/web/src/assistant/AssistantChat.tsx',
@@ -35,6 +55,7 @@ const taskPaths = [
   'apps/web/tests/assistant-t05.browser.mjs',
   'docker-compose.assistant-pidafix3.yml',
   'docker-compose.assistant-pidafix3-geo-live.yml',
+  'docker-compose.yml',
   'package.json',
 ];
 const taskCheckPaths = [...taskPaths, 'docs/helpar/t07-manual-qa.md'];
@@ -59,6 +80,7 @@ if (require.main === module) {
 
 function createGatePlan() {
   return [
+    gate('zaebal6-unit', 'pnpm', ['test:assistant:zaebal6:unit']),
     gate('t07-domain', 'pnpm', ['test:assistant:t07:domain']),
     gate('t07-targeted', 'pnpm', ['test:assistant:t07:targeted']),
     gate('t07-connected-e2e', 'pnpm', ['test:assistant:t07:e2e'], 12 * 60_000),
@@ -117,6 +139,7 @@ function createSafeEnvironment(baseEnvironment, overrides = {}) {
     ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
     ASSISTANT_OVERPASS_ENABLED: 'false',
     ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+    ASSISTANT_CURRENT_FACT_REFRESH_MODE: 'disabled',
     ASSISTANT_SOURCE_WORKER_ENABLED: 'false',
     ASSISTANT_SOURCE_BROWSER_FALLBACK_ENABLED: 'false',
     LOCATIONIQ_API_URL: 'http://127.0.0.1:9/locationiq',
@@ -209,6 +232,11 @@ async function runBaseline(options = {}) {
     gates: [],
     screenshots: { directory: qaDirectory, files: [] },
     externalProviderEvidence: createUnverifiedProviderEvidence(),
+    currentFactFixtureEvidence: {
+      status: 'not-measured',
+      scope: 't07-connected-e2e',
+      caseCount: null,
+    },
     costUsd: null,
     costBasis: 'not-calculated',
     skippedExternalGates: [
@@ -318,6 +346,9 @@ async function runBaseline(options = {}) {
         } : {}),
       });
       if (plannedGate.id === 't07-connected-e2e') {
+        report.currentFactFixtureEvidence = verifyT07CurrentFactFixtureEvidence(
+          gateResult.stdout,
+        );
         report.manualQa.runtimeReady = gateResult.stdout.includes('ASSISTANT_T07_MANUAL_QA_READY ');
         report.manualQa.completed = report.manualQa.requested && report.manualQa.runtimeReady;
         if (report.manualQa.requested && !report.manualQa.completed) {
@@ -730,6 +761,21 @@ function parseTestCount(output) {
   return counts.length > 0 ? counts.reduce((total, count) => total + count, 0) : null;
 }
 
+function verifyT07CurrentFactFixtureEvidence(stdout) {
+  const matches = [...String(stdout).matchAll(/^ASSISTANT_T07_MORTGAGE_FIXTURE_OK:(\d+)$/gmu)];
+  if (matches.length !== 1 || Number(matches[0][1]) !== 20
+    || !String(stdout).includes('ASSISTANT_T07_E2E_OK')) {
+    throw new Error('PIDAFIX3_CURRENT_FACT_FIXTURE_EVIDENCE_INVALID');
+  }
+  return {
+    status: 'verified',
+    scope: 't07-connected-e2e',
+    caseCount: 20,
+    mode: 'fixture',
+    externalConnectorsEnabled: false,
+  };
+}
+
 function splitLines(value) {
   return value.split('\n').map((line) => line.trim()).filter(Boolean);
 }
@@ -781,4 +827,5 @@ module.exports = {
   runRecorded,
   runTaskDiffCheck,
   seedMigrationBaseline,
+  verifyT07CurrentFactFixtureEvidence,
 };

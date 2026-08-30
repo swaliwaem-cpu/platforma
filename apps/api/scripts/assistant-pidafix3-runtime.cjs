@@ -192,6 +192,15 @@ function createT07OwnershipFilters(resourceSuffix) {
   };
 }
 
+function isExpectedT07ApiNavigationAbort(failure, apiOrigin) {
+  return failure?.method === 'GET'
+    && failure?.errorText === 'net::ERR_ABORTED'
+    && (
+      failure.url === `${apiOrigin}/assistant/config`
+      || failure.url === `${apiOrigin}/assistant/conversations`
+    );
+}
+
 async function removeT07OwnedDockerResources(kind, ownership, runDocker, options = {}) {
   assert.ok(['container', 'network'].includes(kind));
   assert.equal(typeof runDocker, 'function');
@@ -332,6 +341,7 @@ module.exports = {
   createT07OwnershipFilters,
   createUnverifiedProviderEvidence,
   installTerminationHandlers,
+  isExpectedT07ApiNavigationAbort,
   removeT07OwnedDockerResources,
   runBoundedOperation,
   runCommand,
