@@ -142,6 +142,85 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
   assert.equal(JSON.stringify(audit).includes('citation'), false);
 });
 
+test('Assistant T06 audit keeps platform object evidence separate from offer facts', () => {
+  const evidence = {
+    evidenceType: 'PLATFORMA_OBJECT',
+    objectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    objectType: 'COMMERCIAL',
+    title: 'БЦ Без фида',
+    slug: 'bc-bez-fida',
+    description: 'Описание объекта из Platforma.',
+    architectureDescription: null,
+    infrastructureDescription: null,
+    fillingDescription: null,
+    developer: 'Тест Девелопмент',
+    districts: ['Хамовники'],
+    metros: ['Спортивная'],
+    completionYear: 2027,
+    completionQuarter: 3,
+    propertyClass: 'A',
+    address: null,
+    latitude: 55.7,
+    longitude: 37.5,
+    pdfs: [],
+    updatedAt: '2026-08-26T11:30:00.000Z',
+  };
+  const card = {
+    objectId: evidence.objectId,
+    objectType: evidence.objectType,
+    title: evidence.title,
+    subtitle: 'Коммерческий объект · Хамовники',
+    description: evidence.description,
+    href: '/objects/bc-bez-fida',
+    facts: ['Тест Девелопмент'],
+    pdfs: [],
+  };
+  const input = {
+    intent: {
+      taskType: 'OBJECT',
+      comparisonTargets: [],
+      hardFilters: { ...emptyFilters, budgetMaxRub: null, rooms: [] },
+      softPreferences: { ...emptyFilters, budgetMaxRub: null, rooms: [] },
+      requiredFacts: [],
+      needsClarification: false,
+      clarificationQuestion: null,
+    },
+    answer: {
+      kind: 'OBJECT_RESULTS',
+      totalObjects: 1,
+      objects: [card],
+      additionalObjects: [],
+    },
+    candidateEvidence: [evidence],
+    selectedEvidence: [evidence],
+    telemetry: [],
+    latencyMs: 0,
+    now: new Date('2026-08-26T12:00:00.000Z'),
+  };
+
+  const audit = buildAssistantRunAudit(input);
+
+  assert.equal(audit.candidateSet[0].kind, 'PLATFORMA_OBJECT');
+  assert.equal(Object.hasOwn(audit.candidateSet[0], 'priceRub'), false);
+  assert.equal(Object.hasOwn(audit.candidateSet[0], 'availability'), false);
+  assert.deepEqual(audit.rankingDecisions.map(({ outcome, answerRank }) => [outcome, answerRank]), [
+    ['PRIMARY', 1],
+  ]);
+  assert.deepEqual(audit.evidenceRevisions, [{
+    kind: 'PLATFORMA_OBJECT',
+    evidenceId: evidence.objectId,
+    revisionId: evidence.objectId,
+    observedAt: evidence.updatedAt,
+  }]);
+  assert.deepEqual(audit.qualityFlags, []);
+
+  const broken = buildAssistantRunAudit({
+    ...input,
+    answer: { ...input.answer, objects: [{ ...card, href: '/broken' }] },
+  });
+  assert.deepEqual(broken.qualityFlags, ['BROKEN_LINK']);
+});
+
 test('Assistant T06 audit treats expanded exact results as primary ranks 4 through 8', () => {
   const intent = {
     taskType: 'SEARCH',

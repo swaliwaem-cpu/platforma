@@ -23,6 +23,12 @@ import { AssistantSearchService } from './assistant-search.service';
 import type { AssistantGeoSearchResult } from './assistant-search.service';
 import { buildAssistantComparisonAnswer } from './assistant-comparison-answer';
 import {
+  buildAssistantObjectAnswer,
+  validateAssistantObjectAnswer,
+  type AssistantObjectEvidence,
+} from './catalog/assistant-object-answer';
+import { AssistantPlatformCatalogService } from './catalog/assistant-platform-catalog.service';
+import {
   AssistantPlaceResolverService,
   stripAssistantGeoClauses,
 } from './geo/assistant-place-resolver.service';
@@ -44,8 +50,8 @@ export type AssistantAnswerResult = {
   content: string;
   answer: AssistantAnswer;
   intent: AssistantStructuredIntent;
-  evidence: Array<AssistantSearchEvidence | AssistantKnowledgeEvidence>;
-  candidateEvidence: Array<AssistantSearchEvidence | AssistantKnowledgeEvidence>;
+  evidence: Array<AssistantSearchEvidence | AssistantKnowledgeEvidence | AssistantObjectEvidence>;
+  candidateEvidence: Array<AssistantSearchEvidence | AssistantKnowledgeEvidence | AssistantObjectEvidence>;
   telemetry: AssistantPlannerTelemetry[];
 };
 
@@ -57,6 +63,7 @@ export class AssistantAnswerService {
     private readonly knowledge?: AssistantKnowledgeRetrievalService,
     private readonly places?: AssistantPlaceResolverService,
     private readonly currentFactRefresh?: AssistantCurrentFactRefreshCoordinator,
+    private readonly platformCatalog?: AssistantPlatformCatalogService,
   ) {}
 
   async answer(input: {
@@ -107,6 +114,27 @@ export class AssistantAnswerService {
 
         const query = createAssistantKnowledgeQueryContext(plannerMessages, input.context);
         let knowledgeContext = createAssistantKnowledgePageContext(plannerMessages, input.context);
+        if (intent.taskType === 'OBJECT') {
+          if (!this.platformCatalog) throw new Error('ASSISTANT_PLATFORM_CATALOG_UNAVAILABLE');
+          const result = await this.platformCatalog.ground({
+            query,
+            intent,
+            context: input.context,
+          });
+          const grounded = buildAssistantObjectAnswer(result.evidence, result.totalObjects, query);
+          validateAssistantObjectAnswer(grounded, result.evidence, result.totalObjects, query);
+          const { content, ...answer } = grounded;
+          const selectedIds = new Set([
+            ...answer.objects.map(({ objectId }) => objectId),
+            ...answer.additionalObjects.map(({ objectId }) => objectId),
+          ]);
+          return {
+            content,
+            answer,
+            evidence: result.evidence.filter(({ objectId }) => selectedIds.has(objectId)),
+            candidateEvidence: result.evidence,
+          };
+        }
         if (intent.taskType === 'FACT' && this.knowledge) {
           const currentVerificationRequested = requiresAssistantKnowledgeCurrentVerification(query);
           const projectReferenceClause = extractAssistantKnowledgeProjectReferenceClause(query);

@@ -239,6 +239,99 @@ if (!databaseUrl) {
     }
   });
 
+  test('platform catalog grounds every published feedless object while archived, draft and deleted objects stay hidden', async () => {
+    const fixture = await createPlatformCatalogFixture();
+    try {
+      const broad = await runAssistantMessage('Покажи все объекты Platforma');
+      assert.equal(broad.status, 'COMPLETED');
+      assert.equal(broad.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(broad.assistantMessage.answer.totalObjects, 5);
+      assert.deepEqual(
+        [
+          ...broad.assistantMessage.answer.objects,
+          ...broad.assistantMessage.answer.additionalObjects,
+        ].map(({ objectId }) => objectId).sort(),
+        [
+          fixture.firstResidential.id,
+          fixture.secondResidential.id,
+          fixture.prefixResidential.id,
+          fixture.commercial.id,
+          fixture.otherCommercial.id,
+        ].sort(),
+      );
+      for (const card of [
+        ...broad.assistantMessage.answer.objects,
+        ...broad.assistantMessage.answer.additionalObjects,
+      ]) {
+        assert.equal(Object.hasOwn(card, 'unitId'), false);
+        assert.equal(Object.hasOwn(card, 'priceRub'), false);
+        assert.equal(Object.hasOwn(card, 'availabilityLabel'), false);
+        assert.match(card.href, /^\/objects\//u);
+      }
+
+      const persisted = await prisma.assistantRun.findUniqueOrThrow({ where: { id: broad.id } });
+      assert.equal(persisted.evidenceJson.length, 5);
+      assert.equal(persisted.evidenceJson.every(({ evidenceType }) => evidenceType === 'PLATFORMA_OBJECT'), true);
+      assert.equal(persisted.evidenceJson.some(({ objectId }) => objectId === fixture.archived.id), false);
+      assert.equal(persisted.evidenceJson.some(({ objectId }) => objectId === fixture.draft.id), false);
+      assert.equal(persisted.evidenceJson.some(({ objectId }) => objectId === fixture.deleted.id), false);
+      assert.equal(persisted.evidenceJson.some(({ objectId }) => objectId === fixture.statusArchived.id), false);
+
+      const restored = await request(`/assistant/conversations/${broad.conversationId}`, { token: ownerToken });
+      assert.equal(restored.status, 200);
+      assert.equal(restored.body.conversation.messages.at(-1).answer.kind, 'OBJECT_RESULTS');
+      assert.equal(restored.body.conversation.messages.at(-1).answer.totalObjects, 5);
+
+      const named = await runAssistantMessage(`Расскажи про ЖК Двойник ${fixture.suffix}`);
+      assert.equal(named.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(named.assistantMessage.answer.totalObjects, 2);
+      assert.deepEqual(
+        named.assistantMessage.answer.objects.map(({ objectId }) => objectId).sort(),
+        [fixture.firstResidential.id, fixture.secondResidential.id].sort(),
+      );
+      assert.equal(named.assistantMessage.answer.objects.some(({ objectId }) =>
+        objectId === fixture.prefixResidential.id), false);
+
+      const namedOutsidePageContext = await runAssistantMessage(
+        `Расскажи про ЖК Двойник ${fixture.suffix}`,
+        { kind: 'OBJECT', key: fixture.otherCommercial.slug, label: fixture.otherCommercial.title },
+      );
+      assert.equal(namedOutsidePageContext.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(namedOutsidePageContext.assistantMessage.answer.totalObjects, 2);
+
+      const namedOutsideCatalogFilters = await runAssistantMessage(
+        `Расскажи про ЖК Двойник ${fixture.suffix}`,
+        { kind: 'CATALOG_FILTERS', key: 'completionYear=2099&type=COMMERCIAL', label: 'Каталог' },
+      );
+      assert.equal(namedOutsideCatalogFilters.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(namedOutsideCatalogFilters.assistantMessage.answer.totalObjects, 2);
+
+      const commercial = await runAssistantMessage('Покажи все коммерческие объекты Platforma');
+      assert.equal(commercial.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(commercial.assistantMessage.answer.totalObjects, 2);
+
+      const namedCommercial = await runAssistantMessage(`Расскажи про БЦ Каталог ${fixture.suffix}`);
+      assert.equal(namedCommercial.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(namedCommercial.assistantMessage.answer.totalObjects, 1);
+      assert.equal(namedCommercial.assistantMessage.answer.objects[0].objectId, fixture.commercial.id);
+
+      const lowercaseCommercial = await runAssistantMessage(
+        `расскажи про бц каталог ${fixture.suffix}`,
+      );
+      assert.equal(lowercaseCommercial.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(lowercaseCommercial.assistantMessage.answer.totalObjects, 1);
+      assert.equal(lowercaseCommercial.assistantMessage.answer.objects[0].objectId, fixture.commercial.id);
+
+      const archived = await runAssistantMessage(`Расскажи про ЖК Архив ${fixture.suffix}`);
+      assert.equal(archived.assistantMessage.answer.kind, 'OBJECT_RESULTS');
+      assert.equal(archived.assistantMessage.answer.totalObjects, 0);
+      assert.deepEqual(archived.assistantMessage.answer.objects, []);
+      assert.deepEqual(archived.assistantMessage.answer.additionalObjects, []);
+    } finally {
+      await deletePlatformCatalogFixture(fixture);
+    }
+  });
+
   test('grounded search generates only the four allowed relaxations from current PostgreSQL data', async () => {
     const fixture = await createSearchFixture();
     const searchService = app.get(AssistantSearchService);
@@ -781,6 +874,139 @@ if (!databaseUrl) {
     await prisma.role.deleteMany({
       where: { name: { startsWith: 'assistant-t01-' } },
     });
+  }
+
+  async function runAssistantMessage(content, context = null) {
+    const conversation = await createConversation();
+    const queued = await sendMessage(conversation.body.conversation.id, { content, context }, randomUUID());
+    const run = await waitForRun(queued.body.run.id, ownerToken);
+    return { ...run, conversationId: conversation.body.conversation.id };
+  }
+
+  async function createPlatformCatalogFixture() {
+    const suffix = randomUUID().slice(0, 8);
+    const developer = await prisma.developer.create({
+      data: { name: `Каталог Девелопмент ${suffix}` },
+    });
+    const district = await prisma.location.create({
+      data: { name: `Каталог район ${suffix}`, slug: `catalog-district-${suffix}`, type: 'DISTRICT' },
+    });
+    const common = {
+      developerId: developer.id,
+      primaryLocationId: district.id,
+      description: `Проверенное описание объекта ${suffix}`,
+      latitude: 55.751244,
+      longitude: 37.618423,
+    };
+    const [
+      firstResidential,
+      secondResidential,
+      prefixResidential,
+      commercial,
+      otherCommercial,
+      archived,
+      statusArchived,
+      draft,
+      deleted,
+    ] = await Promise.all([
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `ЖК Двойник ${suffix}`,
+        slug: `catalog-first-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `ЖК Двойник ${suffix}`,
+        slug: `catalog-second-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `ЖК Двойник ${suffix} Парк`,
+        slug: `catalog-prefix-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `БЦ Каталог ${suffix}`,
+        slug: `catalog-commercial-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'COMMERCIAL',
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `БЦ Другой ${suffix}`,
+        slug: `catalog-commercial-other-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'COMMERCIAL',
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `ЖК Архив ${suffix}`,
+        slug: `catalog-archived-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+        archivedAt: new Date(),
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `ЖК Архив Статус ${suffix}`,
+        slug: `catalog-status-archived-${suffix}`,
+        status: 'ARCHIVED',
+        type: 'RESIDENTIAL',
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `ЖК Черновик ${suffix}`,
+        slug: `catalog-draft-${suffix}`,
+        status: 'DRAFT',
+        type: 'RESIDENTIAL',
+      } }),
+      prisma.realEstateObject.create({ data: {
+        ...common,
+        title: `ЖК Удалён ${suffix}`,
+        slug: `catalog-deleted-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+        deletedAt: new Date(),
+      } }),
+    ]);
+    return {
+      suffix,
+      developer,
+      district,
+      firstResidential,
+      secondResidential,
+      prefixResidential,
+      commercial,
+      otherCommercial,
+      archived,
+      statusArchived,
+      draft,
+      deleted,
+    };
+  }
+
+  async function deletePlatformCatalogFixture(fixture) {
+    await prisma.realEstateObject.deleteMany({
+      where: { id: { in: [
+        fixture.firstResidential.id,
+        fixture.secondResidential.id,
+        fixture.prefixResidential.id,
+        fixture.commercial.id,
+        fixture.otherCommercial.id,
+        fixture.archived.id,
+        fixture.statusArchived.id,
+        fixture.draft.id,
+        fixture.deleted.id,
+      ] } },
+    });
+    await prisma.location.deleteMany({ where: { id: fixture.district.id } });
+    await prisma.developer.deleteMany({ where: { id: fixture.developer.id } });
   }
 
   async function createSearchFixture() {

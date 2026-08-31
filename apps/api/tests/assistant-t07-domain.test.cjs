@@ -76,6 +76,9 @@ const {
   extractAssistantKnowledgeProjectReferenceClause,
   resolveAssistantKnowledgeProjectIdentity,
 } = require('../dist/assistant/sources/assistant-knowledge-policy.js');
+const {
+  buildAssistantObjectAnswer,
+} = require('../dist/assistant/catalog/assistant-object-answer.js');
 
 const datasetPath = resolve(
   __dirname,
@@ -1037,6 +1040,95 @@ test('Assistant T07 eval derives verdicts from persisted runs and blocks every z
       true,
     );
   }
+});
+
+test('Assistant T07 eval accepts grounded platform objects and rejects offer facts in object evidence', () => {
+  const dataset = loadAssistantEvalDataset(JSON.parse(readFileSync(datasetPath, 'utf8')));
+  const now = new Date('2026-08-26T12:00:00.000Z');
+  const runRecords = perfectEvalRunRecords(dataset, now);
+  const caseIndex = dataset.cases.findIndex(({ category }) => category === 'CLARIFICATION');
+  const objectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const evidence = {
+    evidenceType: 'PLATFORMA_OBJECT',
+    objectId,
+    objectType: 'COMMERCIAL',
+    title: 'БЦ Без фида',
+    slug: 'bc-bez-fida',
+    description: `  ${'Описание объекта из Platforma. '.repeat(70)}  `,
+    architectureDescription: null,
+    infrastructureDescription: null,
+    fillingDescription: null,
+    developer: 'Тест Девелопмент',
+    districts: ['Хамовники'],
+    metros: ['Спортивная'],
+    completionYear: 2027,
+    completionQuarter: null,
+    propertyClass: 'A',
+    address: null,
+    latitude: 55.7,
+    longitude: 37.5,
+    pdfs: [],
+    updatedAt: '2026-08-26T11:30:00.000Z',
+  };
+  const productionAnswer = buildAssistantObjectAnswer([evidence], 1, '');
+  dataset.cases[caseIndex].expected = {
+    answerKinds: ['OBJECT_RESULTS'],
+    requiredEvidence: true,
+    inventedFactsForbidden: true,
+    maximumPrimaryResults: 8,
+    maximumAlternativeResults: 0,
+  };
+  runRecords[caseIndex] = {
+    ...runRecords[caseIndex],
+    answer: productionAnswer,
+    evidence: [evidence],
+    intent: {
+      taskType: 'OBJECT',
+      comparisonTargets: [],
+      hardFilters: emptySearchFilters(),
+      softPreferences: emptySearchFilters(),
+      requiredFacts: [],
+      needsClarification: false,
+      clarificationQuestion: null,
+    },
+    audit: {
+      schemaVersion: 1,
+      candidateSet: [{ evidenceId: objectId, kind: 'PLATFORMA_OBJECT', ...evidence }],
+      rankingDecisions: [{ evidenceId: objectId, outcome: 'PRIMARY' }],
+      evidenceRevisions: [{
+        kind: 'PLATFORMA_OBJECT',
+        evidenceId: objectId,
+        revisionId: objectId,
+        observedAt: evidence.updatedAt,
+      }],
+      qualityFlags: [],
+    },
+    qualityFlags: [],
+  };
+  const artifact = perfectEvalArtifact(dataset, now);
+
+  const valid = evaluateAssistantEvalArtifact(dataset, artifact, runRecords, now);
+  assert.equal(valid.results[caseIndex].passed, true);
+  assert.deepEqual(valid.results[caseIndex].violations, []);
+
+  for (const injected of [
+    (records) => { records[caseIndex].answer.objects[0].priceRub = 10_000_000; },
+    (records) => { records[caseIndex].answer.objects[0].availabilityLabel = 'В продаже'; },
+    (records) => { records[caseIndex].evidence[0].availability = 'AVAILABLE'; },
+  ]) {
+    const records = structuredClone(runRecords);
+    injected(records);
+    const report = evaluateAssistantEvalArtifact(dataset, artifact, records, now);
+    assert.equal(
+      report.results[caseIndex].violations.includes('INVENTED_PRICE_OR_AVAILABILITY'),
+      true,
+    );
+  }
+
+  const brokenLink = structuredClone(runRecords);
+  brokenLink[caseIndex].answer.objects[0].href = '/objects/other-object';
+  const brokenLinkReport = evaluateAssistantEvalArtifact(dataset, artifact, brokenLink, now);
+  assert.deepEqual(brokenLinkReport.results[caseIndex].violations, ['UNSUPPORTED_LINK']);
 });
 
 test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider fingerprint', () => {

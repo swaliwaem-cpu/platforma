@@ -1138,6 +1138,19 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
       }] : [],
     },
   }));
+  records[1].evidence = [{
+    evidenceType: 'PLATFORMA_OBJECT',
+    objectId: uuid(611_001),
+    updatedAt: '2026-08-30T07:58:00.000Z',
+    rawPayload: 'must-not-leak',
+  }];
+  records[1].audit.evidenceRevisions = [{
+    kind: 'PLATFORMA_OBJECT',
+    evidenceId: uuid(611_001),
+    revisionId: uuid(611_001),
+    observedAt: '2026-08-30T07:58:00.000Z',
+    rawPayload: 'must-not-leak',
+  }];
   const providerReceiptsByRun = new Map(artifact.runs.map(({ runId }, index) => [runId, [{
     receiptType: 'AI',
     receiptId: uuid(620_000 + (index * 2) + 1),
@@ -1277,6 +1290,12 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
       geoProviderCalls: 0,
     },
   });
+  assert.deepEqual(bundle.cases[1].evidenceRevisions, [{
+    kind: 'PLATFORMA_OBJECT',
+    evidenceId: uuid(611_001),
+    revisionId: uuid(611_001),
+    observedAt: '2026-08-30T07:58:00.000Z',
+  }]);
   assert.deepEqual(bundle.cleanup, runnerReport.cleanup);
 
   assert.throws(() => createAssistantEvalEvidenceBundle({

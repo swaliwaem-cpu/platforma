@@ -23,6 +23,7 @@ import type {
   AssistantGeoView,
   AssistantKnowledgeFactCard,
   AssistantMessage,
+  AssistantObjectResultCard,
   AssistantPageContext,
   AssistantProgressEvent,
   AssistantProgressStep,
@@ -63,8 +64,11 @@ const assistantConversationTitleMaxLength = 80;
 const assistantHistoryCursorMaxLength = 512;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const contextKinds = new Set(['OBJECT', 'LOT', 'DEVELOPER', 'CATALOG_FILTERS']);
-const answerKinds = new Set(['SEARCH_RESULTS', 'COMPARISON_RESULTS', 'KNOWLEDGE_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
+const answerKinds = new Set(['SEARCH_RESULTS', 'OBJECT_RESULTS', 'COMPARISON_RESULTS', 'KNOWLEDGE_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
 const deviationTypes = new Set(['BUDGET', 'DISTRICT', 'DEVELOPER', 'ROOMS']);
+const objectAnswerKeys = new Set(['kind', 'totalObjects', 'objects', 'additionalObjects']);
+const objectCardKeys = new Set(['objectId', 'objectType', 'title', 'subtitle', 'description', 'href', 'facts', 'pdfs']);
+const objectPdfKeys = new Set(['title', 'href']);
 
 const messageSelect = {
   id: true,
@@ -592,6 +596,7 @@ export class AssistantService {
     if (!this.isRecord(value) || typeof value.kind !== 'string' || !answerKinds.has(value.kind)) return null;
     if (value.kind === 'KNOWLEDGE_RESULTS') return this.parseStoredKnowledgeAnswer(value);
     if (value.kind === 'COMPARISON_RESULTS') return this.parseStoredComparisonAnswer(value);
+    if (value.kind === 'OBJECT_RESULTS') return this.parseStoredObjectAnswer(value);
     if (value.kind === 'REFUSAL') {
       if (value.code === undefined) return { kind: 'REFUSAL' };
       return value.code === 'SOURCE_NOT_CONNECTED'
@@ -662,6 +667,65 @@ export class AssistantService {
       additionalExactResults,
       alternatives,
       ...(geo ? { geo } : {}),
+    };
+  }
+
+  private parseStoredObjectAnswer(value: Record<string, unknown>): AssistantAnswer | null {
+    if (Object.keys(value).some((key) => !objectAnswerKeys.has(key))
+      || !Number.isSafeInteger(value.totalObjects) || (value.totalObjects as number) < 0
+      || !Array.isArray(value.objects) || value.objects.length > 3
+      || !Array.isArray(value.additionalObjects) || value.additionalObjects.length > 5) return null;
+    const totalObjects = value.totalObjects as number;
+    if (value.objects.length !== Math.min(totalObjects, 3)
+      || value.additionalObjects.length !== Math.min(5, Math.max(totalObjects - 3, 0))) return null;
+    const objects = value.objects.flatMap((item) => {
+      const parsed = this.parseStoredObjectCard(item);
+      return parsed ? [parsed] : [];
+    });
+    const additionalObjects = value.additionalObjects.flatMap((item) => {
+      const parsed = this.parseStoredObjectCard(item);
+      return parsed ? [parsed] : [];
+    });
+    if (objects.length !== value.objects.length
+      || additionalObjects.length !== value.additionalObjects.length) return null;
+    const objectIds = [...objects, ...additionalObjects].map(({ objectId }) => objectId);
+    if (new Set(objectIds).size !== objectIds.length) return null;
+    return { kind: 'OBJECT_RESULTS', totalObjects, objects, additionalObjects };
+  }
+
+  private parseStoredObjectCard(value: unknown): AssistantObjectResultCard | null {
+    if (!this.isRecord(value)
+      || Object.keys(value).some((key) => !objectCardKeys.has(key))
+      || typeof value.objectId !== 'string' || !uuidPattern.test(value.objectId)
+      || (value.objectType !== 'RESIDENTIAL' && value.objectType !== 'COMMERCIAL')
+      || typeof value.title !== 'string' || !this.isBoundedText(value.title, 300)
+      || typeof value.subtitle !== 'string' || !this.isBoundedText(value.subtitle, 300)
+      || typeof value.description !== 'string' || !this.isBoundedText(value.description, 1_200)
+      || typeof value.href !== 'string' || !/^\/objects\/[^/?#]+$/u.test(value.href)
+      || !Array.isArray(value.facts) || value.facts.length > 8
+      || !Array.isArray(value.pdfs) || value.pdfs.length > 4) return null;
+    const facts = value.facts.flatMap((fact) =>
+      typeof fact === 'string' && this.isBoundedText(fact, 240) ? [fact] : []);
+    const pdfs = value.pdfs.flatMap((pdf) => {
+      if (!this.isRecord(pdf)
+        || Object.keys(pdf).some((key) => !objectPdfKeys.has(key))
+        || typeof pdf.title !== 'string' || !this.isBoundedText(pdf.title, 240)
+        || typeof pdf.href !== 'string'
+        || !/^\/media\/files\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/content\?download=true$/iu.test(pdf.href)) return [];
+      return [{ title: pdf.title, href: pdf.href }];
+    });
+    if (facts.length !== value.facts.length || pdfs.length !== value.pdfs.length) return null;
+    if (new Set(facts.map((fact) => fact.toLocaleLowerCase('ru-RU'))).size !== facts.length
+      || new Set(pdfs.map(({ href }) => href)).size !== pdfs.length) return null;
+    return {
+      objectId: value.objectId,
+      objectType: value.objectType,
+      title: value.title,
+      subtitle: value.subtitle,
+      description: value.description,
+      href: value.href,
+      facts,
+      pdfs,
     };
   }
 

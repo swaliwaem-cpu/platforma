@@ -31,6 +31,38 @@ test('Assistant T03 fact cards expose their canonical official source and verifi
   assert.match(sourceLinkRule, /min-height:\s*44px/u);
 });
 
+test('Assistant T03 renders 3+5 platform object cards without invented offer fields', () => {
+  const objectResults = assistantSource.match(
+    /function AssistantObjectResults[\s\S]+?\n\}\n\nfunction AssistantObjectCard/u,
+  )?.[0] ?? '';
+  const objectCard = assistantSource.match(
+    /function AssistantObjectCard[\s\S]+?\n\}\n\nfunction AssistantComparisonResults/u,
+  )?.[0] ?? '';
+
+  assert.match(assistantSource, /message\.answer\?\.kind === 'OBJECT_RESULTS'/u);
+  assert.match(objectResults, /answer\.objects/u);
+  assert.match(objectResults, /answer\.additionalObjects/u);
+  assert.match(objectResults, /key=\{object\.objectId\}/u);
+  assert.match(objectResults, /messageId=\{messageId\}/u);
+  assert.match(objectResults, /aria-controls=\{objectsId\}/u);
+  assert.match(objectResults, /aria-expanded=\{showAdditional\}/u);
+  assert.match(objectResults, /setShowAdditional\(\(visible\) => !visible\)/u);
+  assert.match(objectResults, /firstAdditionalObjectRef/u);
+  assert.match(objectResults, /titleRef=\{index === answer\.objects\.length/u);
+  assert.match(objectResults, /aria-live="polite"/u);
+
+  assert.match(objectCard, /object\.description/u);
+  assert.match(objectCard, /assistant-object-title-\$\{messageId\}-\$\{object\.objectId\}/u);
+  assert.match(objectCard, /object\.facts/u);
+  assert.match(objectCard, /object\.pdfs/u);
+  assert.doesNotMatch(
+    objectCard,
+    /unitId|priceRub|availabilityLabel|freshnessLabel|assistant-result-price|assistant-result-status/u,
+  );
+  const descriptionRule = assistantStyles.match(/\.assistant-object-description\s*\{[^}]+\}/u)?.[0] ?? '';
+  assert.match(descriptionRule, /overflow-wrap:\s*anywhere/u);
+});
+
 test('Assistant T03 renders two labelled comparison groups and stacks them on mobile', () => {
   assert.match(assistantSource, /message\.answer\?\.kind === 'COMPARISON_RESULTS'/u);
   assert.match(assistantSource, /answer\.groups\.map/u);

@@ -29,6 +29,14 @@ const taskPaths = [
   'apps/api/scripts/assistant-pidafix3-runtime.cjs',
   'apps/api/scripts/assistant-rollout-preflight.cjs',
   'apps/api/src/assistant/assistant-planner-gateway.ts',
+  'apps/api/src/assistant/assistant-answer.service.ts',
+  'apps/api/src/assistant/assistant-query-planner.ts',
+  'apps/api/src/assistant/assistant.module.ts',
+  'apps/api/src/assistant/assistant.service.ts',
+  'apps/api/src/assistant/audit/assistant-run-audit.ts',
+  'apps/api/src/assistant/catalog/assistant-object-answer.ts',
+  'apps/api/src/assistant/catalog/assistant-platform-catalog.service.ts',
+  'apps/api/src/assistant/eval/assistant-eval.ts',
   'apps/api/src/assistant/assistant-runtime-config.ts',
   'apps/api/src/assistant/eval/assistant-eval-runtime-contract.ts',
   'apps/api/src/assistant/geo/assistant-place-resolver.service.ts',
@@ -39,24 +47,29 @@ const taskPaths = [
   'apps/api/src/assistant/sources/official-source.extractor.ts',
   'apps/api/src/project-presentations/project-presentations-worker.service.ts',
   'apps/api/tests/assistant-eval-runner.test.cjs',
+  'apps/api/tests/assistant-t01-postgres.test.cjs',
   'apps/api/tests/assistant-pidafix3-baseline.test.cjs',
   'apps/api/tests/assistant-pidafix3-geo-live.test.cjs',
   'apps/api/tests/assistant-t02-domain.test.cjs',
   'apps/api/tests/assistant-t03-connector.test.cjs',
   'apps/api/tests/assistant-t03-domain.test.cjs',
   'apps/api/tests/assistant-t03-postgres.cjs',
+  'apps/api/tests/assistant-t06-domain.test.cjs',
   'apps/api/tests/assistant-t07-domain.test.cjs',
   'apps/api/tests/assistant-t07-e2e.cjs',
   'apps/api/tests/project-presentations-worker-config.test.cjs',
   'apps/web/src/assistant/AssistantChat.tsx',
+  'apps/web/src/assistant/assistant.css',
   'apps/web/src/catalog/CatalogPage.tsx',
   'apps/web/src/map/MapLibreMap.tsx',
   'apps/web/tests/assistant-t05-ui.test.mjs',
+  'apps/web/tests/assistant-t03-ui.test.mjs',
   'apps/web/tests/assistant-t05.browser.mjs',
   'docker-compose.assistant-pidafix3.yml',
   'docker-compose.assistant-pidafix3-geo-live.yml',
   'docker-compose.yml',
   'package.json',
+  'packages/shared/src/assistant.ts',
 ];
 const taskCheckPaths = [...taskPaths, 'docs/helpar/t07-manual-qa.md'];
 
@@ -84,6 +97,11 @@ function createGatePlan() {
     gate('t07-domain', 'pnpm', ['test:assistant:t07:domain']),
     gate('t07-targeted', 'pnpm', ['test:assistant:t07:targeted']),
     gate('t07-connected-e2e', 'pnpm', ['test:assistant:t07:e2e'], 12 * 60_000),
+    gate('t01-platform-catalog-postgres', 'node', [
+      '--test',
+      '--test-name-pattern=platform catalog grounds',
+      'apps/api/tests/assistant-t01-postgres.test.cjs',
+    ]),
     gate('fix-token-unit', 'node', ['apps/api/tests/assistant-fix-token.test.cjs']),
     gate('t03-discovery-unit', 'node', ['apps/api/tests/assistant-t03-discovery.test.cjs']),
     gate('t03-connector-unit', 'node', ['apps/api/tests/assistant-t03-connector.test.cjs']),
@@ -281,7 +299,7 @@ async function runBaseline(options = {}) {
     await migrateDatabase({ compose, composeEnvironment, name: 'platforma_pidafix3', report, secrets });
     await seedMigrationBaseline(hostDatabaseUrl, { abortSignal: options.abortSignal });
 
-    const gateDatabases = ['fix_token_test', 't03_test', 't05_test', 'pidafix2_test'];
+    const gateDatabases = ['t01_test', 'fix_token_test', 't03_test', 't05_test', 'pidafix2_test'];
     for (const name of gateDatabases) {
       await runRecorded(report.setup, `create-db-${name}`, 'docker', [
         ...compose, 'exec', '--no-TTY', 'postgres', 'createdb', '--username', 'platforma', name,
@@ -301,6 +319,9 @@ async function runBaseline(options = {}) {
 
     const gateEnvironment = createSafeEnvironment(composeEnvironment, {
       DATABASE_URL: hostDatabaseUrl,
+      ASSISTANT_TEST_DATABASE_URL: databaseUrl({
+        postgresPassword, postgresPort, name: 't01_test',
+      }),
       ASSISTANT_FIX_TOKEN_TEST_DATABASE_URL: databaseUrl({
         postgresPassword, postgresPort, name: 'fix_token_test',
       }),
@@ -328,6 +349,7 @@ async function runBaseline(options = {}) {
     });
     secrets.push(
       gateEnvironment.DATABASE_URL,
+      gateEnvironment.ASSISTANT_TEST_DATABASE_URL,
       gateEnvironment.ASSISTANT_FIX_TOKEN_TEST_DATABASE_URL,
       gateEnvironment.ASSISTANT_T03_TEST_DATABASE_URL,
       gateEnvironment.ASSISTANT_T05_TEST_DATABASE_URL,

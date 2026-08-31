@@ -12,6 +12,7 @@ import { AssistantQueryPlanner } from './assistant-query-planner';
 import { AssistantRunProcessor } from './assistant-run.processor';
 import { AssistantExternalConnectorsGuard, AssistantFeatureGuard } from './assistant-runtime-config';
 import { AssistantSearchService } from './assistant-search.service';
+import { AssistantPlatformCatalogService } from './catalog/assistant-platform-catalog.service';
 import { AssistantService } from './assistant.service';
 import { AssistantFeedbackController } from './feedback/assistant-feedback.controller';
 import { AssistantFeedbackService } from './feedback/assistant-feedback.service';
@@ -48,6 +49,7 @@ import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.
     AssistantRunProcessor,
     AssistantAnswerService,
     AssistantSearchService,
+    AssistantPlatformCatalogService,
     AssistantGeoLandmarkService,
     AssistantUsageBudgetService,
     {

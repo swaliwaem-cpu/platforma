@@ -35,7 +35,7 @@ const intentKeys = [
 ] as const;
 const optionalIntentKeys = ['comparisonTargetModes'] as const;
 
-const taskTypes = ['SEARCH', 'COMPARE', 'FACT', 'LEGAL_TAX'] as const;
+const taskTypes = ['SEARCH', 'OBJECT', 'COMPARE', 'FACT', 'LEGAL_TAX'] as const;
 const requiredFactValues = [
   'PRICE',
   'AVAILABILITY',
@@ -52,6 +52,12 @@ const requiredFactValues = [
 const mandatorySearchFacts = ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'] as const;
 const complexRequestPattern = /(?:сравн\p{L}*|что\s+лучше|скрыт\p{L}*|компромисс\p{L}*|инвест\p{L}*|приоритет\p{L}*)/iu;
 const legalOrTaxPattern = /(?:налог\p{L}*|юрид\p{L}*|закон\p{L}*|договор\p{L}*|право\s+собственности)/iu;
+const externalKnowledgeFactPattern = /(?:ипотек\p{L}*|ипотеч\p{L}*|рассроч\p{L}*|акци\p{L}*|скидк\p{L}*|бонус\p{L}*|услови\p{L}*\s+(?:покупк\p{L}*|оплат\p{L}*))/iu;
+const objectKnowledgeFactPattern = /(?:архитектур\p{L}*|инфраструктур\p{L}*|благоустрой\p{L}*|паркинг\p{L}*|фасад\p{L}*|наполнен\p{L}*|отделк\p{L}*|интерьер\p{L}*)/iu;
+const explicitProjectMarkerPattern = /(?:^|[^\p{L}\p{N}])(?:жк|бц|бизнес[- ]центр|мфк)(?![\p{L}\p{N}])/iu;
+const currentKnowledgeStatePattern = /(?:что[^?!.,;:\r\n]{0,80}действ\p{L}*|действ\p{L}*\s+ли|действительно\s+ли)/iu;
+const currentOfferPattern = /(?:квартир\p{L}*|апартамент\p{L}*|студи\p{L}*|\d+\s*[- ]?\s*комн\p{L}*|однуш\p{L}*|двуш\p{L}*|треш\p{L}*|лот\p{L}*|бюджет\p{L}*|\bцена\p{L}*|\bстоимост\p{L}*|в\s+продаже|доступн\p{L}*\s+(?:квартир\p{L}*|лот\p{L}*)|площад\p{L}*\s+(?:от|до|не)|этаж\p{L}*\s+(?:от|до|не))/iu;
+const objectCatalogPattern = /(?:жк|жилой\s+комплекс|бц|бизнес[- ]центр|мфк|коммерческ\p{L}*|(?:все|каталог\p{L}*|платформ\p{L}*|расскаж\p{L}*|покаж\p{L}*|список\p{L}*)[^\r\n]{0,80}(?:объект\p{L}*|проект\p{L}*)|(?:объект\p{L}*|проект\p{L}*)[^\r\n]{0,80}(?:платформ\p{L}*|каталог\p{L}*))/iu;
 
 export type AssistantTaskType = (typeof taskTypes)[number];
 export type AssistantRequiredFact = (typeof requiredFactValues)[number];
@@ -347,7 +353,8 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
     ? undefined
     : parseComparisonTargetModes(value.comparisonTargetModes, comparisonTargets.length);
   const requiredFacts = parseRequiredFacts(value.requiredFacts);
-  if (value.taskType !== 'LEGAL_TAX' && mandatorySearchFacts.some((fact) => !requiredFacts.includes(fact))) {
+  if ((value.taskType === 'SEARCH' || value.taskType === 'COMPARE')
+    && mandatorySearchFacts.some((fact) => !requiredFacts.includes(fact))) {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   }
   if (typeof value.needsClarification !== 'boolean') {
@@ -401,7 +408,8 @@ function normalizeIntentAgainstRequest(
     ? { ...mergedHardFilters, developer: null }
     : mergedHardFilters;
   const hardFilters = consumeDistrictResolvedAsGeo(comparisonNormalizedFilters, context);
-  const isLegalOrTax = messages.some((message) => legalOrTaxPattern.test(message));
+  const requestText = messages.join('\n');
+  const isLegalOrTax = legalOrTaxPattern.test(requestText);
   if (isLegalOrTax) {
     return {
       ...intent,
@@ -414,8 +422,30 @@ function normalizeIntentAgainstRequest(
     };
   }
 
-  if (intent.taskType === 'FACT') {
+  const taskType = intent.taskType === 'COMPARE'
+    ? 'COMPARE'
+    : intent.taskType === 'FACT'
+      || isAssistantExternalKnowledgeFactRequest(requestText)
+      || isAssistantObjectKnowledgeFactRequest(requestText)
+      ? 'FACT'
+      : isAssistantObjectCatalogRequest(requestText) && !isAssistantCurrentOfferRequest(requestText)
+        ? 'OBJECT'
+        : intent.taskType;
+
+  if (taskType === 'FACT') {
     return { ...intent, hardFilters, comparisonTargets, comparisonTargetModes };
+  }
+  if (taskType === 'OBJECT') {
+    return {
+      ...intent,
+      taskType,
+      hardFilters,
+      comparisonTargets: [],
+      comparisonTargetModes: [],
+      requiredFacts: [],
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
   }
 
   const missingFacts: string[] = [];
@@ -435,6 +465,23 @@ function normalizeIntentAgainstRequest(
       ? `Уточните, пожалуйста: ${joinRussianList(missingFacts)}.`
       : null,
   };
+}
+
+export function isAssistantObjectCatalogRequest(value: string) {
+  return objectCatalogPattern.test(value);
+}
+
+export function isAssistantCurrentOfferRequest(value: string) {
+  return currentOfferPattern.test(value);
+}
+
+export function isAssistantExternalKnowledgeFactRequest(value: string) {
+  return externalKnowledgeFactPattern.test(value);
+}
+
+export function isAssistantObjectKnowledgeFactRequest(value: string) {
+  return objectKnowledgeFactPattern.test(value)
+    || (explicitProjectMarkerPattern.test(value) && currentKnowledgeStatePattern.test(value));
 }
 
 function isCombinedComparisonDeveloper(value: string | null, comparisonTargets: string[]) {

@@ -77,6 +77,7 @@ test('PIDAFIX3 gate plan includes connected, PostgreSQL, browser and full gates 
     't07-domain',
     't07-targeted',
     't07-connected-e2e',
+    't01-platform-catalog-postgres',
     'fix-token-unit',
     't03-discovery-unit',
     't03-connector-unit',
@@ -107,6 +108,9 @@ test('PIDAFIX3 task diff check covers tracked and untracked task files without m
   assert.equal(plan.paths.includes('apps/api/scripts/assistant-eval-runner.cjs'), true);
   assert.equal(plan.paths.includes('apps/api/src/assistant/rollout/assistant-rollout-preflight.ts'), true);
   assert.equal(plan.paths.includes('apps/api/tests/assistant-t02-domain.test.cjs'), true);
+  assert.equal(plan.paths.includes('apps/api/tests/assistant-t01-postgres.test.cjs'), true);
+  assert.equal(plan.paths.includes('apps/api/src/assistant/catalog/assistant-platform-catalog.service.ts'), true);
+  assert.equal(plan.paths.includes('packages/shared/src/assistant.ts'), true);
   assert.equal(plan.paths.includes('apps/api/tests/assistant-t03-postgres.cjs'), true);
   assert.equal(plan.paths.includes('apps/api/tests/assistant-t07-domain.test.cjs'), true);
   assert.equal(plan.paths.includes('docker-compose.yml'), true);

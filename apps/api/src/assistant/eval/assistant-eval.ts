@@ -54,7 +54,7 @@ export const assistantEvalZeroToleranceViolations = [
 
 type AssistantEvalCategory = (typeof assistantEvalCategories)[number];
 type AssistantEvalViolation = (typeof assistantEvalZeroToleranceViolations)[number];
-type AssistantAnswerKind = 'SEARCH_RESULTS' | 'COMPARISON_RESULTS' | 'KNOWLEDGE_RESULTS' | 'CLARIFICATION' | 'REFUSAL' | 'SAFE_BOUNDARY';
+type AssistantAnswerKind = 'SEARCH_RESULTS' | 'OBJECT_RESULTS' | 'COMPARISON_RESULTS' | 'KNOWLEDGE_RESULTS' | 'CLARIFICATION' | 'REFUSAL' | 'SAFE_BOUNDARY';
 
 type AssistantEvalExpectation = {
   answerKinds: AssistantAnswerKind[];
@@ -209,6 +209,7 @@ const caseIdPattern = /^[A-Z_]+-\d{3}$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const answerKinds = new Set<AssistantAnswerKind>([
   'SEARCH_RESULTS',
+  'OBJECT_RESULTS',
   'COMPARISON_RESULTS',
   'KNOWLEDGE_RESULTS',
   'CLARIFICATION',
@@ -542,6 +543,10 @@ function observeAssistantEvalRun(
   const comparisonGroups = answerKind === 'COMPARISON_RESULTS'
     ? readPersistedComparisonGroups(record.answer.groups)
     : [];
+  const objectAnswer = answerKind === 'OBJECT_RESULTS'
+    ? readPersistedObjectAnswer(record.answer)
+    : { totalObjects: 0, cards: [] as Record<string, unknown>[] };
+  const objectCards = objectAnswer.cards;
   const exactResults = answerKind === 'SEARCH_RESULTS'
     ? readPersistedAnswerArray(record.answer.exactResults)
     : comparisonGroups.flatMap((group) => [
@@ -585,18 +590,20 @@ function observeAssistantEvalRun(
   const externalLots = answerKind === 'KNOWLEDGE_RESULTS'
     ? readPersistedAnswerArray(record.answer.externalLots)
     : [];
-  const selectedIds = [...resultCards, ...facts, ...externalLots]
-    .map((item) => readString(item.unitId) ?? readString(item.id))
+  const selectedIds = [...resultCards, ...objectCards, ...facts, ...externalLots]
+    .map((item) => readString(item.unitId) ?? readString(item.objectId) ?? readString(item.id))
     .filter((id): id is string => id !== null);
-  const evidenceIds = evidence.map((item) => readString(item.unitId) ?? readString(item.factId));
+  const evidenceIds = evidence.map((item) => (
+    readString(item.unitId) ?? readString(item.objectId) ?? readString(item.factId)
+  ));
   const evidenceById = new Map(evidence.flatMap((item) => {
-    const id = readString(item.unitId) ?? readString(item.factId);
+    const id = readString(item.unitId) ?? readString(item.objectId) ?? readString(item.factId);
     return id === null ? [] : [[id, item] as const];
   }));
   const allEvidenceIdentifiedOnce = evidenceIds.every((id): id is string => id !== null)
     && new Set(evidenceIds).size === evidenceIds.length;
   const allSelectedGrounded = allEvidenceIdentifiedOnce
-    && selectedIds.length === resultCards.length + facts.length + externalLots.length
+    && selectedIds.length === resultCards.length + objectCards.length + facts.length + externalLots.length
     && new Set(selectedIds).size === selectedIds.length
     && selectedIds.every((id) => evidenceById.has(id));
   const pricesAndAvailabilityGrounded = resultCards.every((item) => {
@@ -626,7 +633,7 @@ function observeAssistantEvalRun(
       && readString(item.label) === readString(evidenceItem.label)
       && typeof item.value === 'string'
       && item.value === evidenceItem.value;
-  });
+  }) && persistedObjectCardsAreGrounded(objectCards, evidenceById);
   const answerContent = readString(record.answer.content)!;
   const freeTextFactsGrounded = persistedFreeTextFactsAreGrounded(answerContent, evidence);
   const answerContentGrounded = persistedAnswerContentMatchesProductionContract(
@@ -635,6 +642,8 @@ function observeAssistantEvalRun(
     record.intent,
     exactResults,
     alternatives,
+    objectCards,
+    objectAnswer.totalObjects,
     facts,
     externalLots,
   );
@@ -682,7 +691,7 @@ function observeAssistantEvalRun(
   );
   const sourcePriority = deriveSourcePriority(evidence, audit, expected, selectedIds, evidenceById);
   const links = [
-    ...collectAnswerLinks(resultCards, facts, externalLots).map(({ url, evidenceId }) => ({
+    ...collectAnswerLinks(resultCards, objectCards, facts, externalLots).map(({ url, evidenceId }) => ({
       url,
       supported: !qualityFlags.has('BROKEN_LINK')
         && isSupportedPersistedLink(url, evidenceById.get(evidenceId)),
@@ -734,7 +743,7 @@ function observeAssistantEvalRun(
       Array.isArray(item.deviations) && item.deviations.length > 0
     )),
     selectedAnswerCount: selectedIds.length,
-    primaryResultCount: exactResults.length,
+    primaryResultCount: exactResults.length + objectCards.length,
     alternativeResultCount: alternatives.length,
     primaryMarkerCount: markers.filter((marker) => marker.kind === 'PRIMARY').length,
     alternativeMarkerCount: markers.filter((marker) => marker.kind === 'ALTERNATIVE').length,
@@ -750,6 +759,67 @@ function readPersistedAnswerArray(value: unknown) {
     throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
   }
   return value as Record<string, unknown>[];
+}
+
+function readPersistedObjectAnswer(answer: Record<string, unknown>) {
+  if (!isNonNegativeInteger(answer.totalObjects)
+    || !Array.isArray(answer.objects) || answer.objects.length > 3
+    || !Array.isArray(answer.additionalObjects) || answer.additionalObjects.length > 5) {
+    throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+  }
+  const totalObjects = answer.totalObjects as number;
+  const objects = readPersistedAnswerArray(answer.objects);
+  const additionalObjects = readPersistedAnswerArray(answer.additionalObjects);
+  if (objects.length !== Math.min(totalObjects, 3)
+    || additionalObjects.length !== Math.min(5, Math.max(totalObjects - 3, 0))) {
+    throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+  }
+  const cardKeys = new Set([
+    'objectId',
+    'objectType',
+    'title',
+    'subtitle',
+    'description',
+    'href',
+    'facts',
+    'pdfs',
+    'unitId',
+    'unitExternalId',
+    'lotTitle',
+    'priceRub',
+    'availability',
+    'availabilityLabel',
+    'freshnessLabel',
+    'isStale',
+    'rooms',
+    'area',
+    'floor',
+    'deviations',
+    'distanceMeters',
+  ]);
+  const cards = [...objects, ...additionalObjects];
+  const ids = cards.map((card) => readString(card.objectId));
+  if (ids.some((id) => id === null)
+    || new Set(ids).size !== ids.length
+    || cards.some((card) => (
+      Object.keys(card).some((key) => !cardKeys.has(key))
+      || !uuidPattern.test(readString(card.objectId) ?? '')
+      || (card.objectType !== 'RESIDENTIAL' && card.objectType !== 'COMMERCIAL')
+      || readString(card.title) === null
+      || readString(card.subtitle) === null
+      || readString(card.description) === null
+      || !/^\/objects\/[^/?#]+$/u.test(readString(card.href) ?? '')
+      || !Array.isArray(card.facts) || card.facts.length > 8
+      || card.facts.some((fact) => readString(fact) === null)
+      || !Array.isArray(card.pdfs) || card.pdfs.length > 4
+      || card.pdfs.some((pdf) => !isRecord(pdf)
+        || Object.keys(pdf).some((key) => key !== 'title' && key !== 'href')
+        || readString(pdf.title) === null
+        || !/^\/media\/files\/[0-9a-f-]{36}\/content\?download=true$/iu.test(readString(pdf.href) ?? ''))
+    ))) {
+    throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+  }
+  return { totalObjects, cards };
 }
 
 function readPersistedComparisonGroups(value: unknown) {
@@ -1091,6 +1161,8 @@ function persistedAnswerContentMatchesProductionContract(
   intentValue: unknown,
   exactResults: Record<string, unknown>[],
   alternatives: Record<string, unknown>[],
+  objectCards: Record<string, unknown>[],
+  totalObjects: number,
   facts: Record<string, unknown>[],
   externalLots: Record<string, unknown>[],
 ) {
@@ -1109,6 +1181,14 @@ function persistedAnswerContentMatchesProductionContract(
     return content === (exactResults.length > 0
       ? 'Сравнил подтверждённые предложения отдельно по каждому выбранному ЖК.'
       : 'По каждому выбранному ЖК показываю отдельный результат: подтверждённых предложений нет.');
+  }
+  if (answerKind === 'OBJECT_RESULTS') {
+    if (objectCards.length !== Math.min(totalObjects, 8)) return false;
+    return content === (totalObjects === 0
+      ? 'Не нашёл подходящих опубликованных объектов в каталоге Platforma.'
+      : totalObjects === 1
+        ? 'Нашёл объект в каталоге Platforma.'
+        : 'Нашёл объекты в каталоге Platforma.');
   }
   if (answerKind === 'KNOWLEDGE_RESULTS') {
     const expectedContent = facts.length > 0 && externalLots.length > 0
@@ -1177,6 +1257,100 @@ function alternativeMatchesPersistedDeviation(
   }
   return !matchesAssistantSearchFilters(evidence, hardFilters)
     && matchesAssistantSearchFilters(evidence, relaxedFilters);
+}
+
+function persistedObjectCardsAreGrounded(
+  cards: Record<string, unknown>[],
+  evidenceById: Map<string, Record<string, unknown>>,
+) {
+  const forbiddenOfferFields = [
+    'unitId',
+    'unitExternalId',
+    'lotTitle',
+    'priceRub',
+    'availability',
+    'availabilityLabel',
+    'freshnessLabel',
+    'isStale',
+    'rooms',
+    'area',
+    'floor',
+    'deviations',
+    'distanceMeters',
+  ];
+  return cards.every((card) => {
+    const objectId = readString(card.objectId);
+    const evidence = objectId ? evidenceById.get(objectId) : undefined;
+    if (!evidence
+      || evidence.evidenceType !== 'PLATFORMA_OBJECT'
+      || forbiddenOfferFields.some((key) => Object.hasOwn(card, key) || Object.hasOwn(evidence, key))
+      || readString(evidence.objectId) !== objectId
+      || readString(card.objectType) !== readString(evidence.objectType)
+      || readString(card.title) !== readString(evidence.title)) return false;
+
+    const districts = readStringArray(evidence.districts);
+    const metros = readStringArray(evidence.metros);
+    if (districts === null || metros === null) return false;
+    const expectedSubtitle = [
+      evidence.objectType === 'RESIDENTIAL' ? 'Жилой объект' : 'Коммерческий объект',
+      districts[0] ?? null,
+    ].filter((value): value is string => value !== null).join(' · ');
+    if (readString(card.subtitle) !== expectedSubtitle) return false;
+
+    const descriptions = [
+      evidence.description,
+      evidence.architectureDescription,
+      evidence.infrastructureDescription,
+      evidence.fillingDescription,
+    ].map((value) => boundedPersistedObjectText(value, 1_200))
+      .filter((value): value is string => value !== null);
+    const cardDescription = readString(card.description);
+    if (cardDescription === null
+      || (cardDescription !== 'Описание объекта в Platforma не заполнено.'
+        && !descriptions.includes(cardDescription))) return false;
+
+    const expectedFacts = new Set([
+      readString(evidence.developer),
+      metros.length > 0 ? `м. ${metros.join(', ')}` : null,
+      formatPersistedObjectCompletion(evidence.completionYear, evidence.completionQuarter),
+      readString(evidence.propertyClass),
+      readString(evidence.address),
+    ].filter((value): value is string => value !== null));
+    if (!Array.isArray(card.facts)
+      || card.facts.some((fact) => typeof fact !== 'string' || !expectedFacts.has(fact))) return false;
+
+    if (!Array.isArray(card.pdfs) || !Array.isArray(evidence.pdfs)) return false;
+    const evidencePdfs = evidence.pdfs;
+    return card.pdfs.every((pdf) => {
+      if (!isRecord(pdf)) return false;
+      const href = readString(pdf.href);
+      const title = readString(pdf.title);
+      const match = href?.match(/^\/media\/files\/([0-9a-f-]{36})\/content\?download=true$/iu);
+      return Boolean(match && title && evidencePdfs.some((candidate) => (
+        isRecord(candidate)
+        && readString(candidate.fileId) === match[1]
+        && readString(candidate.title) === title
+      )));
+    });
+  });
+}
+
+function formatPersistedObjectCompletion(yearValue: unknown, quarterValue: unknown) {
+  const year = isPositiveInteger(yearValue) ? yearValue : null;
+  const quarter = isPositiveInteger(quarterValue) && quarterValue <= 4 ? quarterValue : null;
+  if (year === null) return null;
+  return quarter === null ? `${year} год` : `${quarter} кв. ${year}`;
+}
+
+function boundedPersistedObjectText(value: unknown, maximumLength: number) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(/\s+/gu, ' ');
+  return normalized ? normalized.slice(0, maximumLength) : null;
+}
+
+function readStringArray(value: unknown) {
+  if (!Array.isArray(value) || value.some((item) => readString(item) === null)) return null;
+  return value as string[];
 }
 
 function deriveSourcePriority(
@@ -1324,6 +1498,7 @@ function sameStringSet(left: string[], right: string[]) {
 
 function collectAnswerLinks(
   results: Record<string, unknown>[],
+  objects: Record<string, unknown>[],
   facts: Record<string, unknown>[],
   externalLots: Record<string, unknown>[],
 ) {
@@ -1334,6 +1509,15 @@ function collectAnswerLinks(
         ? item.pdfs.filter(isRecord).map((pdf) => ({
             url: readString(pdf.href),
             evidenceId: readString(item.unitId),
+          }))
+        : []),
+    ]),
+    ...objects.flatMap((item) => [
+      { url: readString(item.href), evidenceId: readString(item.objectId) },
+      ...(Array.isArray(item.pdfs)
+        ? item.pdfs.filter(isRecord).map((pdf) => ({
+            url: readString(pdf.href),
+            evidenceId: readString(item.objectId),
           }))
         : []),
     ]),
@@ -1352,7 +1536,7 @@ function collectAnswerLinks(
 
 function collectFreeTextLinks(content: string) {
   const links = content.match(
-    /https?:\/\/[^\s<>"']+|\/objects\/[^\s/]+\/lots\/[0-9a-f-]{36}|\/media\/files\/[0-9a-f-]{36}\/content\?download=true/giu,
+    /https?:\/\/[^\s<>"']+|\/objects\/[^\s/?#]+(?:\/lots\/[0-9a-f-]{36})?|\/media\/files\/[0-9a-f-]{36}\/content\?download=true/giu,
   ) ?? [];
   return [...new Set(links.map((url) => url.replace(/[),.;!?]+$/gu, '')))];
 }
@@ -1367,6 +1551,15 @@ function isSupportedPersistedLink(
     try {
       return readString(evidence.unitId) === lot[2]
         && readString(evidence.objectSlug) === decodeURIComponent(lot[1]!);
+    } catch {
+      return false;
+    }
+  }
+  const object = url.match(/^\/objects\/([^/]+)$/u);
+  if (object) {
+    try {
+      return readString(evidence.objectId) !== null
+        && readString(evidence.slug) === decodeURIComponent(object[1]!);
     } catch {
       return false;
     }

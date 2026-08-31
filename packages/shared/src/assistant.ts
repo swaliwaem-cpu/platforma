@@ -268,6 +268,24 @@ export type AssistantSearchResultCard = {
   distanceMeters?: number;
 };
 
+export type AssistantObjectResultCard = {
+  objectId: string;
+  objectType: 'RESIDENTIAL' | 'COMMERCIAL';
+  title: string;
+  subtitle: string;
+  description: string;
+  href: string;
+  facts: string[];
+  pdfs: Array<{ title: string; href: string }>;
+};
+
+export type AssistantObjectResultsAnswer = {
+  kind: 'OBJECT_RESULTS';
+  totalObjects: number;
+  objects: AssistantObjectResultCard[];
+  additionalObjects: AssistantObjectResultCard[];
+};
+
 type AssistantKnowledgeFactCardBase = {
   id: string;
   label: string;
@@ -344,6 +362,7 @@ export type AssistantComparisonResultsAnswer = {
 export type AssistantAnswer =
   | AssistantLegacySearchResultsAnswer
   | AssistantExpandedSearchResultsAnswer
+  | AssistantObjectResultsAnswer
   | AssistantComparisonResultsAnswer
   | {
       kind: 'KNOWLEDGE_RESULTS';

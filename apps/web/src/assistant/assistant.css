@@ -631,6 +631,14 @@
   line-height: 1.45;
 }
 
+.assistant-object-description {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text, #251d19);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .assistant-result-price {
   color: var(--color-text, #251d19);
   font-size: 16px;

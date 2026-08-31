@@ -18,6 +18,10 @@ const {
   buildAssistantComparisonAnswer,
 } = require('../dist/assistant/assistant-comparison-answer.js');
 const {
+  buildAssistantObjectAnswer,
+  validateAssistantObjectAnswer,
+} = require('../dist/assistant/catalog/assistant-object-answer.js');
+const {
   AssistantOpenAiPlannerGateway,
   createAssistantPlannerGateway,
 } = require('../dist/assistant/assistant-planner-gateway.js');
@@ -440,6 +444,32 @@ test('Assistant T02 planner imposes a safe legal and tax boundary independently 
   assert.equal(result.intent.clarificationQuestion, null);
 });
 
+test('Assistant platform catalog routes object knowledge separately from current offers', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const namedObject = await planner.plan({
+    messages: ['Расскажи про ЖК Метрополия'],
+    context: null,
+  });
+  const commercialCatalog = await planner.plan({
+    messages: ['Покажи все коммерческие объекты Platforma'],
+    context: null,
+  });
+  const currentOffers = await planner.plan({
+    messages: ['Найди однокомнатную квартиру до 40 млн в районе Можайский'],
+    context: null,
+  });
+
+  assert.equal(namedObject.intent.taskType, 'OBJECT');
+  assert.equal(namedObject.intent.needsClarification, false);
+  assert.deepEqual(namedObject.intent.requiredFacts, []);
+  assert.equal(commercialCatalog.intent.taskType, 'OBJECT');
+  assert.equal(commercialCatalog.intent.hardFilters.objectType, 'COMMERCIAL');
+  assert.equal(commercialCatalog.intent.needsClarification, false);
+  assert.equal(currentOffers.intent.taskType, 'SEARCH');
+  assert.equal(currentOffers.intent.hardFilters.objectType, 'RESIDENTIAL');
+});
+
 test('Assistant T02 ranking applies hard filters before soft ranking and keeps at most three exact results', () => {
   const intent = validIntent({
     hardFilters: {
@@ -502,6 +532,90 @@ test('Assistant T02 renders a feed-backed studio card with current commercial fa
     deviations: [],
   });
   validateAssistantSearchAnswer(answer, [evidence], intent, now);
+});
+
+test('Assistant platform catalog presents a feedless object without inventing offer facts', () => {
+  const evidence = {
+    evidenceType: 'PLATFORMA_OBJECT',
+    objectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    objectType: 'RESIDENTIAL',
+    title: 'ЖК Без фида',
+    slug: 'zhk-bez-fida',
+    description: 'Опубликованное описание объекта из Platforma.',
+    architectureDescription: 'Архитектура объекта.',
+    infrastructureDescription: 'Инфраструктура объекта.',
+    fillingDescription: 'Наполнение объекта.',
+    developer: 'Тест Девелопмент',
+    districts: ['Хамовники'],
+    metros: ['Спортивная'],
+    completionYear: 2027,
+    completionQuarter: 3,
+    propertyClass: 'Бизнес',
+    address: null,
+    latitude: 55.7,
+    longitude: 37.5,
+    pdfs: [{
+      fileId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      title: 'Презентация проекта',
+    }],
+    updatedAt: '2026-08-24T11:30:00.000Z',
+  };
+
+  const answer = buildAssistantObjectAnswer([evidence], 1, 'Расскажи про ЖК Без фида');
+
+  assert.deepEqual(answer, {
+    kind: 'OBJECT_RESULTS',
+    content: 'Нашёл объект в каталоге Platforma.',
+    totalObjects: 1,
+    objects: [{
+      objectId: evidence.objectId,
+      objectType: 'RESIDENTIAL',
+      title: 'ЖК Без фида',
+      subtitle: 'Жилой объект · Хамовники',
+      description: 'Опубликованное описание объекта из Platforma.',
+      href: '/objects/zhk-bez-fida',
+      facts: ['Тест Девелопмент', 'м. Спортивная', '3 кв. 2027', 'Бизнес'],
+      pdfs: [{
+        title: 'Презентация проекта',
+        href: '/media/files/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/content?download=true',
+      }],
+    }],
+    additionalObjects: [],
+  });
+  assert.equal('unitId' in answer.objects[0], false);
+  assert.equal('priceRub' in answer.objects[0], false);
+  assert.equal('availabilityLabel' in answer.objects[0], false);
+  validateAssistantObjectAnswer(answer, [evidence], 1, 'Расскажи про ЖК Без фида');
+});
+
+test('Assistant stored platform object answers round-trip and reject injected offer fields', () => {
+  const service = Object.create(AssistantService.prototype);
+  const answer = {
+    kind: 'OBJECT_RESULTS',
+    totalObjects: 1,
+    objects: [{
+      objectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      objectType: 'RESIDENTIAL',
+      title: 'ЖК Без фида',
+      subtitle: 'Жилой объект · Хамовники',
+      description: 'Опубликованное описание объекта из Platforma.',
+      href: '/objects/zhk-bez-fida',
+      facts: ['Тест Девелопмент'],
+      pdfs: [{
+        title: 'Презентация проекта',
+        href: '/media/files/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/content?download=true',
+      }],
+    }],
+    additionalObjects: [],
+  };
+
+  assert.deepEqual(service.parseStoredAnswer(answer), answer);
+  for (const injectedField of ['unitId', 'priceRub', 'availabilityLabel']) {
+    const injected = structuredClone(answer);
+    injected.objects[0][injectedField] = injectedField === 'priceRub' ? 10_000_000 : 'invented';
+    assert.equal(service.parseStoredAnswer(injected), null);
+  }
+  assert.equal(service.parseStoredAnswer({ ...answer, invented: true }), null);
 });
 
 test('Assistant T02 ranking keeps an exact total and exposes only the next five grounded results', () => {

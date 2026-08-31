@@ -1187,7 +1187,8 @@ function readCleanup(value, databaseFingerprint) {
 
 function readEvidenceRevision(value) {
   const code = 'ASSISTANT_EVAL_EVIDENCE_REVISIONS_INVALID';
-  if (!isRecord(value) || !['PLATFORMA_FEED_UNIT', 'KNOWLEDGE_SOURCE'].includes(value.kind)) {
+  if (!isRecord(value)
+    || !['PLATFORMA_FEED_UNIT', 'PLATFORMA_OBJECT', 'KNOWLEDGE_SOURCE'].includes(value.kind)) {
     throw new Error(code);
   }
   return {
@@ -1206,6 +1207,14 @@ function evidenceRevisionFromPersistedEvidence(value) {
       kind: 'PLATFORMA_FEED_UNIT',
       evidenceId: value.unitId,
       revisionId: value.unitId,
+      observedAt: requireIsoTimestamp(value.updatedAt, code),
+    };
+  }
+  if (value.evidenceType === 'PLATFORMA_OBJECT' && uuidPattern.test(value.objectId)) {
+    return {
+      kind: 'PLATFORMA_OBJECT',
+      evidenceId: value.objectId,
+      revisionId: value.objectId,
       observedAt: requireIsoTimestamp(value.updatedAt, code),
     };
   }

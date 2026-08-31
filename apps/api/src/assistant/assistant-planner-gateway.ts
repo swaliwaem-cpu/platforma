@@ -2,6 +2,10 @@ import {
   createEmptyAssistantSearchFilters,
   extractAssistantComparisonTargets,
   extractAssistantExplicitHardFilters,
+  isAssistantCurrentOfferRequest,
+  isAssistantExternalKnowledgeFactRequest,
+  isAssistantObjectKnowledgeFactRequest,
+  isAssistantObjectCatalogRequest,
   type AssistantPlannerGateway,
   type AssistantPlannerGatewayResult,
   type AssistantPlannerRequest,
@@ -13,8 +17,7 @@ type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefine
 type AssistantAiMode = 'fake' | 'openai';
 
 const assistantPlannerSchema = createAssistantPlannerSchema();
-export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-query-planner-v1';
-const officialKnowledgeFactPattern = /(?:архитектур\p{L}*|инфраструктур\p{L}*|благоустрой\p{L}*|описан\p{L}*|ипотек\p{L}*|ипотеч\p{L}*|рассроч\p{L}*|акци\p{L}*|скидк\p{L}*|бонус\p{L}*|лот\p{L}*\s+\d+)/iu;
+export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-query-planner-v2';
 
 export class AssistantPlannerGatewayError extends Error {
   readonly provider = 'openai' as const;
@@ -200,7 +203,7 @@ export function createAssistantPlannerSchema() {
       'clarificationQuestion',
     ],
     properties: {
-      taskType: { type: 'string', enum: ['SEARCH', 'COMPARE', 'FACT', 'LEGAL_TAX'] },
+      taskType: { type: 'string', enum: ['SEARCH', 'OBJECT', 'COMPARE', 'FACT', 'LEGAL_TAX'] },
       comparisonTargets: {
         type: 'array',
         maxItems: 2,
@@ -236,8 +239,10 @@ export function createAssistantPlannerRequestBody(request: AssistantPlannerReque
       'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
       'Не выдумывай названия, цены, наличие, координаты, ссылки или факты: их проверит сервер по базе.',
       'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
-      'Для описания проекта, архитектуры, инфраструктуры, благоустройства, ипотеки, рассрочки и акций выбери FACT.',
-      'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны для всех задач кроме LEGAL_TAX.',
+      'Для общего поиска, списка или обзорной карточки объектов, ЖК, БЦ и МФК по внутреннему каталогу Platforma выбери OBJECT.',
+      'Для текущих квартир, лотов, цен и наличия выбери SEARCH.',
+      'Для ипотеки, рассрочки, акций, архитектуры, инфраструктуры и иных подтверждаемых фактов о проекте выбери FACT.',
+      'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны только для SEARCH и COMPARE; для OBJECT requiredFacts пуст.',
       'Для явного сравнения двух ЖК или застройщиков заполни comparisonTargets двумя точными названиями.',
       'Если критичных условий поиска не хватает, задай один короткий составной clarificationQuestion.',
     ].join(' '),
@@ -271,18 +276,24 @@ function createDeterministicIntent(messages: string[]): AssistantStructuredInten
     ...extractAssistantExplicitHardFilters(messages),
   };
 
-  return {
-    taskType: /(?:налог\p{L}*|юрид\p{L}*|договор\p{L}*|закон\p{L}*)/iu.test(normalized)
+  const taskType: AssistantStructuredIntent['taskType'] = /(?:налог\p{L}*|юрид\p{L}*|договор\p{L}*|закон\p{L}*)/iu.test(normalized)
       ? 'LEGAL_TAX'
       : /сравн\p{L}*/iu.test(normalized)
         ? 'COMPARE'
-        : officialKnowledgeFactPattern.test(normalized)
+        : isAssistantExternalKnowledgeFactRequest(normalized)
+          || isAssistantObjectKnowledgeFactRequest(normalized)
           ? 'FACT'
-          : 'SEARCH',
+          : isAssistantObjectCatalogRequest(normalized) && !isAssistantCurrentOfferRequest(normalized)
+            ? 'OBJECT'
+            : 'SEARCH';
+  return {
+    taskType,
     comparisonTargets: extractAssistantComparisonTargets(messages) ?? [],
     hardFilters,
     softPreferences: createEmptyAssistantSearchFilters(),
-    requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
+    requiredFacts: taskType === 'SEARCH' || taskType === 'COMPARE'
+      ? ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK']
+      : [],
     needsClarification: false,
     clarificationQuestion: null,
   };

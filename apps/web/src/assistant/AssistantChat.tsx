@@ -14,6 +14,7 @@ import type {
   AssistantGeoSearchSelection,
   AssistantKnowledgeFactCard,
   AssistantMessage,
+  AssistantObjectResultCard,
   AssistantPageContext,
   AssistantRun,
   AssistantSearchResultCard,
@@ -878,6 +879,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                       'assistant-message',
                       `assistant-message--${message.role.toLocaleLowerCase('en-US')}`,
                       message.answer?.kind === 'SEARCH_RESULTS'
+                        || message.answer?.kind === 'OBJECT_RESULTS'
                         || message.answer?.kind === 'COMPARISON_RESULTS'
                         || message.answer?.kind === 'KNOWLEDGE_RESULTS'
                         ? 'assistant-message--results'
@@ -1051,6 +1053,9 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
       {message.answer?.kind === 'SEARCH_RESULTS' ? (
         <AssistantSearchResults answer={message.answer} messageId={message.id} />
       ) : null}
+      {message.answer?.kind === 'OBJECT_RESULTS' ? (
+        <AssistantObjectResults answer={message.answer} messageId={message.id} />
+      ) : null}
       {message.answer?.kind === 'COMPARISON_RESULTS' ? (
         <AssistantComparisonResults answer={message.answer} messageId={message.id} />
       ) : null}
@@ -1079,6 +1084,106 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
         </div>
       ) : null}
     </>
+  );
+}
+
+function AssistantObjectResults({
+  answer,
+  messageId,
+}: {
+  answer: Extract<AssistantAnswer, { kind: 'OBJECT_RESULTS' }>;
+  messageId: string;
+}) {
+  const [showAdditional, setShowAdditional] = useState(false);
+  const firstAdditionalObjectRef = useRef<HTMLAnchorElement>(null);
+  const visibleObjects = showAdditional
+    ? [...answer.objects, ...answer.additionalObjects]
+    : answer.objects;
+  const objectsId = `assistant-objects-${messageId}`;
+  const headingId = `assistant-objects-heading-${messageId}`;
+
+  useEffect(() => {
+    if (showAdditional) firstAdditionalObjectRef.current?.focus();
+  }, [showAdditional]);
+
+  return (
+    <div className="assistant-results">
+      <p className="assistant-results-total">
+        Найдено объектов: {answer.totalObjects.toLocaleString('ru-RU')}
+      </p>
+      <section aria-labelledby={headingId}>
+        <h3 id={headingId}>Объекты Platforma</h3>
+        {visibleObjects.length > 0 ? (
+          <div className="assistant-result-list" id={objectsId}>
+            {visibleObjects.map((object, index) => (
+              <AssistantObjectCard
+                key={object.objectId}
+                messageId={messageId}
+                object={object}
+                titleRef={index === answer.objects.length ? firstAdditionalObjectRef : undefined}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="assistant-results-empty">Подходящих опубликованных объектов нет.</p>
+        )}
+        {answer.additionalObjects.length > 0 ? (
+          <Button
+            aria-controls={objectsId}
+            aria-expanded={showAdditional}
+            className="min-h-11 w-full justify-start"
+            type="button"
+            variant="ghost"
+            onClick={() => setShowAdditional((visible) => !visible)}
+          >
+            {showAdditional ? 'Скрыть дополнительные' : 'Показать далее'}
+          </Button>
+        ) : null}
+        <span aria-live="polite" className="sr-only" role="status">
+          {showAdditional ? `Показано ${visibleObjects.length} объектов` : ''}
+        </span>
+      </section>
+    </div>
+  );
+}
+
+function AssistantObjectCard({
+  messageId,
+  object,
+  titleRef,
+}: {
+  messageId: string;
+  object: AssistantObjectResultCard;
+  titleRef?: Ref<HTMLAnchorElement>;
+}) {
+  const titleId = `assistant-object-title-${messageId}-${object.objectId}`;
+  return (
+    <section className="assistant-result-card" aria-labelledby={titleId}>
+      <a
+        className="assistant-result-title"
+        href={object.href}
+        id={titleId}
+        ref={titleRef}
+      >
+        {object.title}
+      </a>
+      <p className="assistant-result-subtitle">{object.subtitle}</p>
+      <p className="assistant-object-description">{object.description}</p>
+      {object.facts.length > 0 ? (
+        <ul className="assistant-result-facts">
+          {object.facts.map((fact) => <li key={fact}>{fact}</li>)}
+        </ul>
+      ) : null}
+      {object.pdfs.length > 0 ? (
+        <div className="assistant-result-pdfs" aria-label="Доступные PDF">
+          {object.pdfs.map((pdf) => (
+            <a href={pdf.href} key={pdf.href} rel="noopener noreferrer" target="_blank">
+              {pdf.title}
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

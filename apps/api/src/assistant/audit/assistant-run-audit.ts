@@ -9,6 +9,7 @@ import {
   createAssistantSearchRankingTrace,
   type AssistantSearchEvidence,
 } from '../assistant-search-ranking';
+import type { AssistantObjectEvidence } from '../catalog/assistant-object-answer';
 import type { AssistantKnowledgeEvidence } from '../sources/assistant-knowledge-retrieval.service';
 import { isSafeOfficialHttpsUrl } from '../sources/assistant-knowledge-policy';
 
@@ -23,7 +24,7 @@ export const assistantQualityFlags = [
 ] as const;
 
 export type AssistantQualityFlag = (typeof assistantQualityFlags)[number];
-export type AssistantRunEvidence = AssistantSearchEvidence | AssistantKnowledgeEvidence;
+export type AssistantRunEvidence = AssistantSearchEvidence | AssistantKnowledgeEvidence | AssistantObjectEvidence;
 
 export type AssistantRunAudit = {
   schemaVersion: 1;
@@ -38,7 +39,7 @@ export type AssistantRunAudit = {
     reason: string;
   }>;
   evidenceRevisions: Array<{
-    kind: 'PLATFORMA_FEED_UNIT' | 'KNOWLEDGE_SOURCE';
+    kind: 'PLATFORMA_FEED_UNIT' | 'PLATFORMA_OBJECT' | 'KNOWLEDGE_SOURCE';
     evidenceId: string;
     revisionId: string;
     observedAt: string;
@@ -107,19 +108,26 @@ export function buildAssistantRunAudit(input: {
           : describeRejection(evidence, input.intent.hardFilters),
       };
     }),
-    evidenceRevisions: input.selectedEvidence.map((evidence) => isSearchEvidence(evidence)
-      ? {
+    evidenceRevisions: input.selectedEvidence.map((evidence) => {
+      if (isSearchEvidence(evidence)) return {
           kind: 'PLATFORMA_FEED_UNIT' as const,
           evidenceId: evidence.unitId,
           revisionId: evidence.unitId,
           observedAt: evidence.updatedAt,
-        }
-      : {
+        };
+      if (isObjectEvidence(evidence)) return {
+        kind: 'PLATFORMA_OBJECT' as const,
+        evidenceId: evidence.objectId,
+        revisionId: evidence.objectId,
+        observedAt: evidence.updatedAt,
+      };
+      return {
           kind: 'KNOWLEDGE_SOURCE' as const,
           evidenceId: evidence.factId,
           revisionId: evidence.sourceRevisionId,
           observedAt: evidence.fetchedAt,
-        }),
+        };
+    }),
     qualityFlags: assistantQualityFlags.filter((flag) => qualityFlags.has(flag)),
   };
 }
@@ -131,8 +139,8 @@ function createRankingTrace(intent: AssistantStructuredIntent, evidence: Assista
   return evidence.map((item, index) => ({
     evidence: item,
     candidateRank: index + 1,
-    rankingPool: 'KNOWLEDGE' as const,
-    rankingScore: isSearchEvidence(item) ? null : {
+    rankingPool: isObjectEvidence(item) ? 'PLATFORMA_OBJECT' as const : 'KNOWLEDGE' as const,
+    rankingScore: isSearchEvidence(item) || isObjectEvidence(item) ? null : {
       retrievalScore: item.retrievalScore,
       sourcePriority: item.sourcePriority,
     },
@@ -178,6 +186,13 @@ function selectedOutcomes(answer: AssistantAnswer) {
       answerRank: index + 1,
       reason: 'Selected from grounded retrieval evidence',
     }));
+  } else if (answer.kind === 'OBJECT_RESULTS') {
+    [...answer.objects, ...answer.additionalObjects].forEach(({ objectId }, index) => outcomes.set(objectId, {
+      evidenceId: objectId,
+      outcome: 'PRIMARY',
+      answerRank: index + 1,
+      reason: 'Selected from the published Platforma object catalog',
+    }));
   }
   return outcomes;
 }
@@ -210,6 +225,31 @@ function serializeCandidate(evidence: AssistantRunEvidence): Record<string, unkn
       deviations: structuredClone(evidence.deviations),
     };
   }
+  if (isObjectEvidence(evidence)) {
+    return {
+      evidenceId: evidence.objectId,
+      kind: 'PLATFORMA_OBJECT',
+      objectId: evidence.objectId,
+      objectType: evidence.objectType,
+      title: evidence.title,
+      slug: evidence.slug,
+      description: evidence.description,
+      architectureDescription: evidence.architectureDescription,
+      infrastructureDescription: evidence.infrastructureDescription,
+      fillingDescription: evidence.fillingDescription,
+      developer: evidence.developer,
+      districts: [...evidence.districts],
+      metros: [...evidence.metros],
+      completionYear: evidence.completionYear,
+      completionQuarter: evidence.completionQuarter,
+      propertyClass: evidence.propertyClass,
+      address: evidence.address,
+      latitude: evidence.latitude,
+      longitude: evidence.longitude,
+      pdfs: structuredClone(evidence.pdfs),
+      updatedAt: evidence.updatedAt,
+    };
+  }
   return {
     evidenceId: evidence.factId,
     kind: 'KNOWLEDGE_SOURCE',
@@ -234,11 +274,16 @@ function serializeCandidate(evidence: AssistantRunEvidence): Record<string, unkn
 }
 
 function evidenceId(evidence: AssistantRunEvidence) {
-  return isSearchEvidence(evidence) ? evidence.unitId : evidence.factId;
+  if (isSearchEvidence(evidence)) return evidence.unitId;
+  return isObjectEvidence(evidence) ? evidence.objectId : evidence.factId;
 }
 
 function isSearchEvidence(evidence: AssistantRunEvidence): evidence is AssistantSearchEvidence {
   return 'unitId' in evidence;
+}
+
+function isObjectEvidence(evidence: AssistantRunEvidence): evidence is AssistantObjectEvidence {
+  return 'evidenceType' in evidence && evidence.evidenceType === 'PLATFORMA_OBJECT';
 }
 
 function matchesFilters(candidate: AssistantSearchEvidence, filters: AssistantSearchFilters) {
@@ -280,6 +325,9 @@ function readFilterViolations(candidate: AssistantSearchEvidence, filters: Assis
 }
 
 function describeRejection(evidence: AssistantRunEvidence, filters: AssistantSearchFilters) {
+  if (isObjectEvidence(evidence)) {
+    return 'Ranked outside the bounded Platforma object-card preview';
+  }
   if (!isSearchEvidence(evidence)) {
     return `Ranked outside bounded grounded answer (retrievalScore=${evidence.retrievalScore}, sourcePriority=${evidence.sourcePriority})`;
   }
@@ -323,6 +371,11 @@ function hasBrokenLink(answer: AssistantAnswer) {
   if (answer.kind === 'KNOWLEDGE_RESULTS') {
     return answer.externalLots.some(({ href }) => !isSafeOfficialHttpsUrl(href))
       || answer.facts.some((fact) => fact.sourceUrl !== undefined && !isSafeOfficialHttpsUrl(fact.sourceUrl));
+  }
+  if (answer.kind === 'OBJECT_RESULTS') {
+    return [...answer.objects, ...answer.additionalObjects].some((object) =>
+      !/^\/objects\/[^/?#]+$/u.test(object.href)
+      || object.pdfs.some(({ href }) => !/^\/media\/files\/[0-9a-f-]+\/content\?download=true$/iu.test(href)));
   }
   return false;
 }
