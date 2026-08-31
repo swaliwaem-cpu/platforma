@@ -43,13 +43,30 @@ type LandmarkRow = {
   referenceGeometry?: string;
 };
 
+const activeKnowledgeLandmark = Prisma.sql`
+  (
+    l."source_provider" <> 'knowledge'
+    OR EXISTS (
+      SELECT 1
+      FROM "assistant_source_facts" knowledge_fact
+      JOIN "assistant_knowledge_sources" knowledge_source
+        ON knowledge_source."id" = knowledge_fact."source_id"
+      WHERE knowledge_fact."id"::text = l."source_external_id"
+        AND knowledge_fact."kind" = 'address'::assistant_source_fact_kind
+        AND knowledge_fact."is_active" = true
+        AND knowledge_source."state" = 'active'::assistant_knowledge_source_state
+        AND knowledge_source."type" = 'development_page'::assistant_knowledge_source_type
+    )
+  )
+`;
+
 export type AssistantTrustedLandmark = {
   id: string;
   kind: AssistantGeoKind;
   label: string;
   city: string | null;
   countryCode: string | null;
-  source: 'ALIAS' | 'PLACE';
+  source: 'ALIAS' | 'PLACE' | 'KNOWLEDGE';
   point?: { latitude: number; longitude: number };
 };
 
@@ -62,7 +79,7 @@ export type AssistantVerifiedLandmarkInput = {
   country: string | null;
   city: string | null;
   geometry: AssistantGeoReferenceGeometry;
-  sourceProvider: 'locationiq' | 'overpass' | 'fake';
+  sourceProvider: 'locationiq' | 'overpass' | 'fake' | 'knowledge';
   sourceExternalId: string;
   retentionMs?: number;
   expiresAt?: Date;
@@ -226,6 +243,7 @@ export class AssistantGeoLandmarkService {
               : Prisma.empty}
           )
         )
+        AND ${activeKnowledgeLandmark}
       ORDER BY
         (l."confirmation_state" = 'confirmed') DESC,
         (l."normalized_query" = ${input.normalizedQuery}) DESC,
@@ -253,6 +271,7 @@ export class AssistantGeoLandmarkService {
           l."confirmation_state" = 'confirmed'
           OR (l."confirmation_state" = 'verified' AND l."expires_at" > CURRENT_TIMESTAMP)
         )
+        AND ${activeKnowledgeLandmark}
       LIMIT 1
     `);
     return rows[0] ? toTrustedLandmark(rows[0]) : null;
@@ -275,6 +294,7 @@ export class AssistantGeoLandmarkService {
           l."confirmation_state" = 'confirmed'
           OR (l."confirmation_state" = 'verified' AND l."expires_at" > CURRENT_TIMESTAMP)
         )
+        AND ${activeKnowledgeLandmark}
       LIMIT 1
     `);
     return rows.length > 0;
@@ -306,6 +326,7 @@ export class AssistantGeoLandmarkService {
           l."confirmation_state" = 'confirmed'
           OR (l."confirmation_state" = 'verified' AND l."expires_at" > CURRENT_TIMESTAMP)
         )
+        AND ${activeKnowledgeLandmark}
       LIMIT 1
     `);
     const encoded = rows[0]?.referenceGeometry;
@@ -452,16 +473,17 @@ export class AssistantGeoLandmarkService {
   private async findBySourceIdentity(sourceProvider: string, sourceExternalId: string) {
     const rows = await this.prisma.$queryRaw<LandmarkRow[]>(Prisma.sql`
       SELECT
-        "id"::text AS id,
-        "kind"::text AS kind,
-        "label",
-        "city",
-        "country",
-        "source_provider" AS "sourceProvider",
-        CASE WHEN "kind" = 'point' THEN ST_Y("geometry") ELSE NULL END AS latitude,
-        CASE WHEN "kind" = 'point' THEN ST_X("geometry") ELSE NULL END AS longitude
-      FROM "assistant_geo_landmarks"
-      WHERE "source_provider" = ${sourceProvider} AND "source_external_id" = ${sourceExternalId}
+        l."id"::text AS id,
+        l."kind"::text AS kind,
+        l."label",
+        l."city",
+        l."country",
+        l."source_provider" AS "sourceProvider",
+        CASE WHEN l."kind" = 'point' THEN ST_Y(l."geometry") ELSE NULL END AS latitude,
+        CASE WHEN l."kind" = 'point' THEN ST_X(l."geometry") ELSE NULL END AS longitude
+      FROM "assistant_geo_landmarks" l
+      WHERE l."source_provider" = ${sourceProvider} AND l."source_external_id" = ${sourceExternalId}
+        AND ${activeKnowledgeLandmark}
       LIMIT 1
     `);
     return rows[0] ? toTrustedLandmark(rows[0]) : null;
@@ -504,7 +526,11 @@ function toTrustedLandmark(row: LandmarkRow): AssistantTrustedLandmark {
     label: row.label,
     city: row.city,
     countryCode: row.country || null,
-    source: row.sourceProvider === 'manual_alias' ? 'ALIAS' : 'PLACE',
+    source: row.sourceProvider === 'manual_alias'
+      ? 'ALIAS'
+      : row.sourceProvider === 'knowledge'
+        ? 'KNOWLEDGE'
+        : 'PLACE',
     ...(kind === 'POINT' ? { point: { latitude: latitude!, longitude: longitude! } } : {}),
   };
 }

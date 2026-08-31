@@ -1277,6 +1277,223 @@ test('FIX-GEO1 valid geometry cache rehydrates a trusted landmark without provid
   assert.equal(operations.at(-1).data.providerCallCount, 0);
 });
 
+test('Assistant production resolver persists an official KB ADDRESS after a provider miss', async () => {
+  const factId = '56565656-5656-4565-8565-565656565656';
+  const observedAt = new Date('2026-08-31T00:00:00.000Z');
+  const saved = [];
+  const cacheWrites = [];
+  const operations = [];
+  let providerCalls = 0;
+  const prisma = createResolverPrisma({
+    knowledgeFacts: [{
+      id: factId,
+      observedAt,
+      valueJson: {
+        label: 'Missing Knowledge Plaza, Москва',
+        latitude: 55.7308,
+        longitude: 37.6337,
+        city: 'Москва',
+        countryCode: 'ru',
+      },
+    }],
+    onKnowledgeQuery: (input) => {
+      assert.equal(input.where.kind, 'ADDRESS');
+      assert.equal(input.where.isActive, true);
+      assert.equal(input.where.source.state, 'ACTIVE');
+      assert.equal(input.where.source.type, 'DEVELOPMENT_PAGE');
+    },
+    onCacheWrite: (input) => cacheWrites.push(input),
+    onOperation: (input) => operations.push(input),
+  });
+  const resolver = new AssistantPlaceResolverService(
+    prisma,
+    {
+      getProviderName: () => 'fake',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    {
+      findTrustedByQuery: async () => [],
+      findTrustedById: async () => null,
+      async saveVerified(input) {
+        saved.push(input);
+        return {
+          id: '57575757-5757-4575-8575-575757575757',
+          kind: 'POINT',
+          label: input.label,
+          city: input.city,
+          countryCode: input.country,
+          source: 'KNOWLEDGE',
+          point: { latitude: 55.7308, longitude: 37.6337 },
+        };
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'Найди квартиру рядом с Missing Knowledge Plaza',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'RESOLVED');
+  assert.equal(result.candidates[0].source, 'KNOWLEDGE');
+  assert.deepEqual(result.candidates[0].point, { latitude: 55.7308, longitude: 37.6337 });
+  assert.equal(providerCalls, 1);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].sourceProvider, 'knowledge');
+  assert.equal(saved[0].sourceExternalId, factId);
+  assert.deepEqual(saved[0].geometry, { type: 'Point', coordinates: [37.6337, 55.7308] });
+  assert.equal(cacheWrites.length, 1);
+  assert.equal(cacheWrites[0].create.candidatesJson[0].source, 'KNOWLEDGE');
+  assert.equal(operations.at(-1).data.provider, 'fake');
+  assert.equal(operations.at(-1).data.providerCallCount, 1);
+  assert.equal(operations.at(-1).data.status, 'RESOLVED');
+});
+
+test('Assistant production resolver checks KB ADDRESS behind an existing negative cache', async () => {
+  let providerCalls = 0;
+  const cacheWrites = [];
+  const operations = [];
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({
+      cache: { candidatesJson: [] },
+      knowledgeFacts: [{
+        id: '60606060-6060-4060-8060-606060606060',
+        observedAt: new Date('2026-08-31T00:00:00.000Z'),
+        valueJson: {
+          label: 'Cached Knowledge Plaza, Москва',
+          latitude: 55.7308,
+          longitude: 37.6337,
+          city: 'Москва',
+          countryCode: 'ru',
+        },
+      }],
+      onCacheWrite: (input) => cacheWrites.push(input),
+      onOperation: (input) => operations.push(input),
+    }),
+    {
+      getProviderName: () => 'fake',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    {
+      findTrustedByQuery: async () => [],
+      findTrustedById: async () => null,
+      async saveVerified(input) {
+        return {
+          id: '61616161-6161-4161-8161-616161616161',
+          kind: 'POINT',
+          label: input.label,
+          city: input.city,
+          countryCode: input.country,
+          source: 'KNOWLEDGE',
+          point: { latitude: 55.7308, longitude: 37.6337 },
+        };
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'Найди квартиру рядом с Cached Knowledge Plaza',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'RESOLVED');
+  assert.equal(result.candidates[0].source, 'KNOWLEDGE');
+  assert.equal(providerCalls, 0);
+  assert.equal(cacheWrites.length, 1);
+  assert.equal(operations.at(-1).data.provider, 'knowledge_base');
+  assert.equal(operations.at(-1).data.providerCallCount, 0);
+  assert.equal(operations.at(-1).data.cacheHit, false);
+});
+
+test('Assistant production resolver uses KB ADDRESS on provider error without negative cache', async () => {
+  const cacheWrites = [];
+  const operations = [];
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({
+      knowledgeFacts: [{
+        id: '58585858-5858-4585-8585-585858585858',
+        observedAt: new Date('2026-08-31T00:00:00.000Z'),
+        valueJson: {
+          label: 'Unavailable Knowledge Plaza, Москва',
+          latitude: 55.7308,
+          longitude: 37.6337,
+          city: 'Москва',
+          countryCode: 'ru',
+        },
+      }],
+      onCacheWrite: (input) => cacheWrites.push(input),
+      onOperation: (input) => operations.push(input),
+    }),
+    {
+      getProviderName: () => 'fake',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry() {
+        const error = new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_UNAVAILABLE', true);
+        error.providerCallCount = 1;
+        throw error;
+      },
+    },
+    {
+      findTrustedByQuery: async () => [],
+      findTrustedById: async () => null,
+      async saveVerified(input) {
+        return {
+          id: '59595959-5959-4595-8595-595959595959',
+          kind: 'POINT',
+          label: input.label,
+          city: input.city,
+          countryCode: input.country,
+          source: 'KNOWLEDGE',
+          point: { latitude: 55.7308, longitude: 37.6337 },
+        };
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'Найди квартиру рядом с Unavailable Knowledge Plaza',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'RESOLVED');
+  assert.equal(result.candidates[0].source, 'KNOWLEDGE');
+  assert.equal(cacheWrites.length, 0);
+  assert.equal(operations.at(-1).data.status, 'RESOLVED');
+  assert.equal(operations.at(-1).data.providerCallCount, 1);
+  assert.equal(operations.at(-1).data.errorCode, 'ASSISTANT_GEO_PROVIDER_UNAVAILABLE');
+});
+
+test('Assistant KB ADDRESS fallback never downgrades LINE or INSIDE to a point', async () => {
+  let knowledgeQueries = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ onKnowledgeQuery: () => { knowledgeQueries += 1; } }),
+    {
+      getProviderName: () => 'fake',
+      getCacheRetentionMs: () => 3_600_000,
+      searchWithTelemetry: async () => ({ providerCallCount: 1, candidates: [] }),
+    },
+    { findTrustedByQuery: async () => [], findTrustedById: async () => null },
+  );
+
+  const line = await resolver.resolve({ content: 'Найди квартиру возле Садового кольца' });
+  const area = await resolver.resolve({ content: 'Найди квартиру внутри района Арбат' });
+
+  assert.equal(line.status, 'NOT_FOUND');
+  assert.equal(area.status, 'NOT_FOUND');
+  assert.equal(knowledgeQueries, 0);
+});
+
 test('FIX-GEO1 Overpass outage is UNAVAILABLE, counted and never negative-cached', async () => {
   let providerCalls = 0;
   let cacheWrites = 0;
@@ -1513,6 +1730,74 @@ test('Assistant composite geo keeps slot-specific provider failures isolated', a
   assert.equal(operationUpdates.length, 1);
   assert.equal(operationUpdates[0].data.status, 'UNAVAILABLE');
   assert.equal(operationUpdates[0].data.errorCode, 'ASSISTANT_GEO_PROVIDER_GEOMETRY_REJECTED');
+});
+
+test('Assistant composite audit stays UNAVAILABLE when KB resolves only the exhausted provider slot', async () => {
+  let providerCalls = 0;
+  const operationUpdates = [];
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({
+      knowledgeFacts: (input) => input.where.searchText.contains === 'Missing Knowledge Plaza'
+        ? [{
+            id: '62626262-6262-4262-8262-626262626262',
+            observedAt: new Date('2026-08-31T00:00:00.000Z'),
+            valueJson: {
+              label: 'Missing Knowledge Plaza, Москва',
+              latitude: 55.7308,
+              longitude: 37.6337,
+              city: 'Москва',
+              countryCode: 'ru',
+            },
+          }]
+        : [],
+      onOperationUpdate: (input) => operationUpdates.push(input),
+    }),
+    {
+      getProviderName: () => 'locationiq',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        const error = new AssistantGeoProviderError(
+          'ASSISTANT_GEO_LOCATIONIQ_RESOLUTION_BUDGET_EXHAUSTED',
+          false,
+        );
+        error.providerCallCount = 1;
+        throw error;
+      },
+    },
+    {
+      findTrustedByQuery: async () => [],
+      findTrustedById: async () => null,
+      async saveVerified(input) {
+        return {
+          id: '63636363-6363-4363-8363-636363636363',
+          kind: 'POINT',
+          label: input.label,
+          city: input.city,
+          countryCode: input.country,
+          source: 'KNOWLEDGE',
+          point: { latitude: 55.7308, longitude: 37.6337 },
+        };
+      },
+    },
+    undefined,
+    { runResolution: async (_operationId, task) => task() },
+  );
+
+  const result = await resolver.resolve({
+    content: 'возле Missing Knowledge Plaza около Second Missing Place',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.deepEqual(result.constraints.map(({ status }) => status), ['RESOLVED', 'UNAVAILABLE']);
+  assert.equal(providerCalls, 1);
+  assert.equal(operationUpdates.length, 1);
+  assert.equal(operationUpdates[0].data.status, 'UNAVAILABLE');
+  assert.equal(
+    operationUpdates[0].data.errorCode,
+    'ASSISTANT_GEO_LOCATIONIQ_RESOLUTION_BUDGET_EXHAUSTED',
+  );
 });
 
 test('PIDAFIX2 fake provider keeps legacy call-count audit when the ledger is injected', async () => {
@@ -2501,6 +2786,14 @@ function createResolverPrisma(options = {}) {
         options.onCacheWrite?.(input);
         if (options.failCacheWrite) throw new Error('CACHE_WRITE_FAILED');
         return {};
+      },
+    },
+    assistantSourceFact: {
+      findMany: async (input) => {
+        options.onKnowledgeQuery?.(input);
+        return typeof options.knowledgeFacts === 'function'
+          ? options.knowledgeFacts(input)
+          : options.knowledgeFacts ?? [];
       },
     },
     assistantGeoOperation: {

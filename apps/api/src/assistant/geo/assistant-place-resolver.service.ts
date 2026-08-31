@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   AssistantKnowledgeSourceState,
+  AssistantKnowledgeSourceType,
   AssistantSourceFactKind,
   Prisma,
 } from '@prisma/client';
@@ -99,11 +100,12 @@ type CachedLandmark = {
   label: string;
   city: string | null;
   countryCode: string | null;
-  source: 'ALIAS' | 'PLACE';
+  source: 'ALIAS' | 'PLACE' | 'KNOWLEDGE';
   point?: { latitude: number; longitude: number };
 };
 
 const overpassGeometryRetentionMs = 30 * 24 * 60 * 60 * 1_000;
+const knowledgeGeometryRetentionMs = 24 * 60 * 60 * 1_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 @Injectable()
@@ -209,6 +211,13 @@ export class AssistantPlaceResolverService {
     const cached = await this.readLandmarkCache(cacheKey);
     if (cached !== null) {
       if (cached.length === 0) {
+        const knowledge = await this.findKnowledgeLandmarks(input);
+        if (knowledge.landmarks.length > 0) {
+          await this.writeLandmarkCache(cacheKey, input, knowledge.landmarks, knowledge.expiresAt);
+          const result = resolved(input, knowledge.landmarks.map((landmark) => toCandidate(input, landmark)));
+          await this.recordOperation(input, actorUserId, 'knowledge_base', result.status, startedAt, false, 0, null);
+          return result;
+        }
         const result = notFound(input);
         await this.recordOperation(input, actorUserId, this.provider.getProviderName(), result.status, startedAt, true, 0, null);
         return result;
@@ -223,7 +232,14 @@ export class AssistantPlaceResolverService {
     }
 
     const usageLedger = this.provider.getProviderName() === 'locationiq' ? this.usageLedger : undefined;
-    if (usageLedger && compositeOperation?.exhausted) return unavailable(input);
+    if (usageLedger && compositeOperation?.exhausted) {
+      const knowledge = await this.findKnowledgeLandmarks(input);
+      const result = knowledge.landmarks.length > 0
+        ? resolved(input, knowledge.landmarks.map((landmark) => toCandidate(input, landmark)))
+        : unavailable(input);
+      compositeOperation.providerStatuses.push(result.status);
+      return result;
+    }
     const ownsOperation = Boolean(usageLedger && !compositeOperation);
     const operationId = usageLedger
       ? compositeOperation
@@ -246,8 +262,19 @@ export class AssistantPlaceResolverService {
       const providerResult = operationId && usageLedger
         ? await usageLedger.runResolution(operationId, providerTask)
         : await providerTask();
-      await this.writeLandmarkCache(cacheKey, input, providerResult.landmarks, providerResult.cacheExpiresAt);
-      const compatible = filterLandmarksForMode(providerResult.landmarks, input.mode);
+      const knowledge = providerResult.landmarks.length === 0
+        ? await this.findKnowledgeLandmarks(input)
+        : null;
+      const resolvedLandmarks = knowledge?.landmarks.length
+        ? knowledge.landmarks
+        : providerResult.landmarks;
+      await this.writeLandmarkCache(
+        cacheKey,
+        input,
+        resolvedLandmarks,
+        knowledge?.landmarks.length ? knowledge.expiresAt : providerResult.cacheExpiresAt,
+      );
+      const compatible = filterLandmarksForMode(resolvedLandmarks, input.mode);
       const result = compatible.length > 0
         ? resolved(input, compatible.map((landmark) => toCandidate(input, landmark)))
         : notFound(input);
@@ -284,6 +311,44 @@ export class AssistantPlaceResolverService {
           );
         }
         throw error;
+      }
+      let knowledge: Awaited<ReturnType<AssistantPlaceResolverService['findKnowledgeLandmarks']>>;
+      try {
+        knowledge = await this.findKnowledgeLandmarks(input);
+      } catch (fallbackError) {
+        if (operationId && ownsOperation) {
+          await this.finalizeProviderOperation(
+            operationId,
+            'UNAVAILABLE',
+            startedAt,
+            'ASSISTANT_GEO_RESOLUTION_INTERNAL_ERROR',
+          );
+        }
+        throw fallbackError;
+      }
+      if (knowledge.landmarks.length > 0) {
+        const result = resolved(input, knowledge.landmarks.map((landmark) => toCandidate(input, landmark)));
+        if (compositeOperation) {
+          compositeOperation.providerStatuses.push(result.status);
+          compositeOperation.exhausted ||= shouldExhaustCompositeProviderOperation(error.code);
+          compositeOperation.errorCode ??= error.code;
+        }
+        if (operationId && ownsOperation) {
+          const finalized = await this.finalizeProviderOperation(operationId, result.status, startedAt, error.code);
+          if (!finalized) return unavailable(input);
+        } else if (!operationId) {
+          await this.recordOperation(
+            input,
+            actorUserId,
+            error.code.startsWith('ASSISTANT_OVERPASS') ? 'overpass' : this.provider.getProviderName(),
+            result.status,
+            startedAt,
+            false,
+            error.providerCallCount,
+            error.code,
+          );
+        }
+        return result;
       }
       const result = unavailable(input);
       const errorProvider = error.code.startsWith('ASSISTANT_OVERPASS') ? 'overpass' : this.provider.getProviderName();
@@ -468,6 +533,63 @@ export class AssistantPlaceResolverService {
       },
     });
     return { landmark, provider: sourceProvider, expiresAt };
+  }
+
+  private async findKnowledgeLandmarks(input: ParsedResolveInput) {
+    const expiresAt = new Date(Date.now() + Math.min(
+      this.provider.getCacheRetentionMs(),
+      knowledgeGeometryRetentionMs,
+    ));
+    if (!this.landmarks
+      || input.mode !== 'NEAR'
+      || (input.expectedKind !== null && input.expectedKind !== 'POINT')) {
+      return { landmarks: [] as AssistantTrustedLandmark[], expiresAt };
+    }
+    const facts = await this.prisma.assistantSourceFact.findMany({
+      where: {
+        kind: AssistantSourceFactKind.ADDRESS,
+        isActive: true,
+        searchText: { contains: input.placeQuery, mode: 'insensitive' },
+        source: {
+          state: AssistantKnowledgeSourceState.ACTIVE,
+          type: AssistantKnowledgeSourceType.DEVELOPMENT_PAGE,
+        },
+      },
+      orderBy: [{ source: { priority: 'desc' } }, { observedAt: 'desc' }, { id: 'asc' }],
+      take: 3,
+      select: { id: true, observedAt: true, valueJson: true },
+    });
+    const saved: AssistantTrustedLandmark[] = [];
+    for (const fact of facts) {
+      const point = parseKnowledgeAddress(fact.valueJson);
+      if (!point || !isKnowledgePointInScope(input, point)) continue;
+      saved.push(await this.landmarks.saveVerified({
+        kind: 'POINT',
+        label: point.label,
+        normalizedQuery: input.normalizedQuery,
+        aliases: [...new Set([
+          ...input.aliases,
+          input.userAlias,
+          normalizeAssistantGeoIdentityText(point.label),
+        ])],
+        locale: input.locale,
+        country: point.countryCode ?? input.expectedCountry ?? input.country,
+        city: point.city ?? input.expectedCity,
+        geometry: { type: 'Point', coordinates: [point.longitude, point.latitude] },
+        sourceProvider: 'knowledge',
+        sourceExternalId: fact.id,
+        expiresAt,
+        sourceMetadata: {
+          entityType: 'knowledge_address',
+          fetchedAt: fact.observedAt.toISOString(),
+          version: 2,
+          identityVersion: 2,
+          userAlias: input.userAlias,
+          providerQuery: point.label,
+        },
+      }));
+    }
+    return { landmarks: deduplicateLandmarks(saved).slice(0, 3), expiresAt };
   }
 
   private async rehydrateCached(cached: CachedLandmark[]) {
@@ -1272,7 +1394,7 @@ function parseCachedLandmarks(value: Prisma.JsonValue): CachedLandmark[] | null 
       || typeof candidate.id !== 'string'
       || !uuidPattern.test(candidate.id)
       || !['POINT', 'LINE', 'AREA'].includes(String(candidate.kind))
-      || !['ALIAS', 'PLACE'].includes(String(candidate.source))) return null;
+      || !['ALIAS', 'PLACE', 'KNOWLEDGE'].includes(String(candidate.source))) return null;
     const label = readText(candidate.label, 300);
     if (!label) return null;
     let point: CachedLandmark['point'];
@@ -1334,6 +1456,25 @@ function parseKnowledgeAddress(value: Prisma.JsonValue) {
     city: readText(value.city, 160),
     countryCode: readCountryCode(value.countryCode),
   };
+}
+
+function isKnowledgePointInScope(
+  input: ParsedResolveInput,
+  point: NonNullable<ReturnType<typeof parseKnowledgeAddress>>,
+) {
+  const expectedCountry = input.expectedCountry ?? input.country;
+  if (expectedCountry && point.countryCode && point.countryCode !== expectedCountry) return false;
+  if (input.expectedCity && point.city
+    && normalizeAssistantGeoIdentityText(point.city) !== normalizeAssistantGeoIdentityText(input.expectedCity)) {
+    return false;
+  }
+  const viewbox = input.providerViewbox ?? input.viewbox;
+  return !viewbox || (
+    point.longitude >= viewbox[0]
+    && point.latitude >= viewbox[1]
+    && point.longitude <= viewbox[2]
+    && point.latitude <= viewbox[3]
+  );
 }
 
 function readCoordinate(value: unknown, minimum: number, maximum: number) {

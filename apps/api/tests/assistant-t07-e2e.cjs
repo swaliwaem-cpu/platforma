@@ -2,14 +2,14 @@ require('reflect-metadata');
 
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const dnsPromises = require('node:dns').promises;
 const { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } = require('node:fs/promises');
 const { createServer } = require('node:http');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
-const { deflateSync } = require('node:zlib');
+const { deflateSync, gzipSync } = require('node:zlib');
 const { hash } = require('argon2');
 const { NestFactory } = require('@nestjs/core');
 const { PrismaClient } = require('@prisma/client');
@@ -119,6 +119,7 @@ async function main() {
     configureProviderStubs(sourceOrigin);
     installOutboundDenyHook();
     const fixtures = await seed(sourceOrigin);
+    fixtures.knowledgeAddress = await seedKnowledgeAddressFixture(fixtures.admin.user.id);
 
     const { AppModule } = require('../dist/app.module.js');
     apiApp = await NestFactory.create(AppModule, { logger: false, abortOnError: false });
@@ -139,6 +140,7 @@ async function main() {
       }),
       /ASSISTANT_ROLLOUT_EVENTS_ARE_IMMUTABLE/u,
     );
+    await knowledgeAddressFallbackJourney(fixtures);
     const initialSource = await ingestSource(fixtures.admin.user.id, sourceOrigin);
     fixtures.currentFactSources = await seedCurrentFactFixtureSources(fixtures, initialSource);
     await currentFactFixtureJourney(fixtures);
@@ -875,6 +877,164 @@ async function createUser(label, permissionIds) {
     },
   });
   return { user, role };
+}
+
+async function seedKnowledgeAddressFixture(actorId) {
+  const query = 'Missing Knowledge Plaza';
+  const canonicalUrl = 'https://developer.example/projects/missing-knowledge-plaza';
+  const payload = Buffer.from('assistant t07 knowledge address fixture');
+  const observedAt = new Date();
+  const source = await prisma.assistantKnowledgeSource.create({
+    data: {
+      canonicalUrl,
+      type: 'DEVELOPMENT_PAGE',
+      state: 'ACTIVE',
+      priority: 120,
+      scheduleMinutes: 1_440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfigJson: { allowedHosts: ['developer.example'] },
+      projectKey: 'missing-knowledge-plaza',
+      developerKey: 'test-development',
+      createdByUserId: actorId,
+      lastSuccessAt: observedAt,
+      lastIndexedAt: observedAt,
+    },
+  });
+  const revision = await prisma.assistantSourceRevision.create({
+    data: {
+      sourceId: source.id,
+      checksum: createHash('sha256').update(payload).digest('hex'),
+      rawPayload: gzipSync(payload),
+      rawEncoding: 'gzip',
+      rawSizeBytes: payload.byteLength,
+      contentType: 'text/plain',
+      finalUrl: canonicalUrl,
+      httpStatus: 200,
+      fetchedAt: observedAt,
+      processingStatus: 'INDEXED',
+    },
+  });
+  const valueJson = {
+    label: 'Missing Knowledge Plaza, Москва',
+    latitude: 55.7308,
+    longitude: 37.6337,
+    city: 'Москва',
+    countryCode: 'ru',
+  };
+  const fact = await prisma.assistantSourceFact.create({
+    data: {
+      sourceId: source.id,
+      sourceRevisionId: revision.id,
+      kind: 'ADDRESS',
+      label: query,
+      valueJson,
+      valueHash: createHash('sha256').update(JSON.stringify(valueJson)).digest('hex'),
+      searchText: `${query} официальный адрес Москва`,
+      canonicalUrl,
+      observedAt,
+      isActive: true,
+    },
+  });
+  return { query, source, revision, fact, valueJson };
+}
+
+async function knowledgeAddressFallbackJourney(fixtures) {
+  const session = await loginApi(fixtures.regular.user);
+  const query = `Найди квартиру рядом с ${fixtures.knowledgeAddress.query}`;
+  const resolve = () => httpJson('/assistant/geo/resolve', {
+    method: 'POST',
+    token: session.accessToken,
+    body: { content: query, locale: 'ru', country: 'ru' },
+  });
+
+  const first = await resolve();
+  assert.equal([200, 201].includes(first.status), true, JSON.stringify(first.body));
+  assert.equal(first.body.status, 'RESOLVED');
+  assert.equal(first.body.candidates.length, 1);
+  const candidate = first.body.candidates[0];
+  assert.equal(candidate.source, 'KNOWLEDGE');
+  assert.equal(candidate.kind, 'POINT');
+  assert.equal(candidate.label, fixtures.knowledgeAddress.valueJson.label);
+  assert.equal(candidate.distanceMeters, 2_000);
+  assert.deepEqual(candidate.point, {
+    latitude: fixtures.knowledgeAddress.valueJson.latitude,
+    longitude: fixtures.knowledgeAddress.valueJson.longitude,
+  });
+
+  const submission = mapAssistantProductSubmission(query, first.body, null);
+  assert.equal(submission.status, 'READY');
+  assert.deepEqual(submission.body.geo, {
+    referenceType: 'LANDMARK',
+    landmarkId: candidate.id,
+    mode: 'NEAR',
+    distanceMeters: 2_000,
+    slotId: 'geo-1',
+    sourceSpan: first.body.sourceSpan,
+  });
+  const { AssistantGeoLandmarkService } = require('../dist/assistant/geo/assistant-geo-landmark.service.js');
+  assert.deepEqual(
+    await apiApp.get(AssistantGeoLandmarkService).materializeBrowserInput(submission.body.geo),
+    {
+      kind: 'POINT',
+      mode: 'NEAR',
+      label: fixtures.knowledgeAddress.valueJson.label,
+      landmarkId: candidate.id,
+      point: {
+        latitude: fixtures.knowledgeAddress.valueJson.latitude,
+        longitude: fixtures.knowledgeAddress.valueJson.longitude,
+      },
+      distanceMeters: 2_000,
+      source: 'LANDMARK',
+    },
+  );
+  const landmark = await prisma.assistantGeoLandmark.findFirstOrThrow({
+    where: {
+      id: candidate.id,
+      sourceProvider: 'knowledge',
+      sourceExternalId: fixtures.knowledgeAddress.fact.id,
+    },
+  });
+  assert.equal(landmark.kind, 'POINT');
+
+  const second = await resolve();
+  assert.equal(second.body.status, 'RESOLVED');
+  assert.equal(second.body.candidates[0].id, candidate.id);
+  assert.equal(second.body.candidates[0].source, 'KNOWLEDGE');
+  const operations = await prisma.assistantGeoOperation.findMany({
+    where: {
+      actorUserId: fixtures.regular.user.id,
+      normalizedQuery: fixtures.knowledgeAddress.query.toLocaleLowerCase('en-US'),
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { provider: true, providerCallCount: true, status: true },
+  });
+  assert.deepEqual(operations, [
+    { provider: 'fake', providerCallCount: 1, status: 'RESOLVED' },
+    { provider: 'landmark_db', providerCallCount: 0, status: 'RESOLVED' },
+  ]);
+
+  await prisma.assistantSourceFact.update({
+    where: { id: fixtures.knowledgeAddress.fact.id },
+    data: { isActive: false },
+  });
+  const revoked = await resolve();
+  assert.equal(revoked.body.status, 'NOT_FOUND');
+  await assert.rejects(
+    () => apiApp.get(AssistantGeoLandmarkService).materializeBrowserInput(submission.body.geo),
+    /ASSISTANT_GEO_LANDMARK_NOT_FOUND/u,
+  );
+  await prisma.assistantSourceFact.update({
+    where: { id: fixtures.knowledgeAddress.fact.id },
+    data: { isActive: true },
+  });
+  await prisma.assistantKnowledgeSource.update({
+    where: { id: fixtures.knowledgeAddress.source.id },
+    data: { state: 'PAUSED' },
+  });
+  await assert.rejects(
+    () => apiApp.get(AssistantGeoLandmarkService).materializeBrowserInput(submission.body.geo),
+    /ASSISTANT_GEO_LANDMARK_NOT_FOUND/u,
+  );
 }
 
 async function ingestSource(actorId, origin) {
