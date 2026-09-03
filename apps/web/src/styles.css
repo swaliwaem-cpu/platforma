@@ -4803,6 +4803,10 @@ tr.user-row--deactivated .text-button {
   font-family: var(--platforma-font-sans);
 }
 
+.catalog-map-panel .platform-map-shell[data-map-controls-position='top-left'] .maplibregl-ctrl-top-left {
+  top: 120px;
+}
+
 .platform-map--measuring .platform-map-canvas,
 .platform-map--measuring .maplibregl-canvas {
   cursor: crosshair;
@@ -5364,6 +5368,10 @@ tr.user-row--deactivated .text-button {
     width: auto;
     max-height: 40%;
     min-height: 0;
+  }
+
+  .platform-map-shell[data-map-controls-position='top-left'] .catalog-map-list {
+    left: 64px;
   }
 
   .catalog-map-list-toggle {

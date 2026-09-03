@@ -72,6 +72,7 @@ maplibregl.setWorkerUrl(mapLibreWorkerUrl);
 export default function MapLibreMap({
   ariaLabel,
   children,
+  controlsPosition = 'top-right',
   enableFullscreen = true,
   enableMeasurement = true,
   initialViewport,
@@ -99,6 +100,7 @@ export default function MapLibreMap({
   const measurementActiveRef = useRef(false);
   const amenityVisibilityRef = useRef(initialAmenityVisibility);
   const initialViewportRef = useRef<MapViewport>(initialViewport ?? createInitialViewport(points));
+  const shouldSkipInitialContentFitRef = useRef(initialViewport !== undefined);
   const [status, setStatus] = useState<MapStatus>('loading');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMeasurementActive, setIsMeasurementActive] = useState(false);
@@ -186,7 +188,7 @@ export default function MapLibreMap({
     setStatus('loading');
     callbacksRef.current.onStatusChange?.('loading');
 
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false, visualizePitch: false }), 'top-right');
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false, visualizePitch: false }), controlsPosition);
     map.addControl(
       new maplibregl.AttributionControl({
         compact: false,
@@ -222,7 +224,7 @@ export default function MapLibreMap({
       fullscreenControl = new maplibregl.FullscreenControl({ container: shell });
       fullscreenControl.on('fullscreenstart', handleFullscreenStart);
       fullscreenControl.on('fullscreenend', handleFullscreenEnd);
-      map.addControl(fullscreenControl, 'top-right');
+      map.addControl(fullscreenControl, controlsPosition);
     }
 
     const handleLoad = () => {
@@ -307,7 +309,7 @@ export default function MapLibreMap({
       shell.classList.remove('platform-map--markers-expanded');
       shell.classList.remove('platform-map--measuring');
     };
-  }, [enableFullscreen, enableMeasurement, prefersReducedMotion, styleUrl]);
+  }, [controlsPosition, enableFullscreen, enableMeasurement, prefersReducedMotion, styleUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -338,6 +340,13 @@ export default function MapLibreMap({
     const map = mapRef.current;
 
     if (!map || status !== 'ready') {
+      return;
+    }
+
+    if (shouldSkipInitialContentFitRef.current) {
+      if (points.length > 0 || geometries.length > 0) {
+        shouldSkipInitialContentFitRef.current = false;
+      }
       return;
     }
 
@@ -476,6 +485,7 @@ export default function MapLibreMap({
       aria-busy={status === 'loading'}
       aria-label={ariaLabel}
       className="platform-map-shell"
+      data-map-controls-position={controlsPosition}
       data-map-fullscreen={isFullscreen ? 'true' : 'false'}
       data-map-status={status}
       role={ariaLabel ? 'region' : undefined}

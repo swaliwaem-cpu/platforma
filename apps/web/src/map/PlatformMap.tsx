@@ -143,6 +143,7 @@ function useMapStatusNotification(status: MapStatus, onStatusChange: PlatformMap
 export type {
   MapBounds,
   MapCoordinate,
+  MapControlsPosition,
   MapFallbackState,
   MapNearbyTransitResult,
   MapNearbyTransitStation,

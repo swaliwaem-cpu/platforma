@@ -61,6 +61,7 @@ import {
   type MapNearbyTransitResult,
   type MapPoint,
   type MapStatus,
+  type MapViewport,
 } from '../map/PlatformMap';
 import aerotourIconUrl from '../../../../aerotour-icon.png';
 import floorPlanIconUrl from '../../../../floor-plan.svg';
@@ -153,6 +154,10 @@ const defaultFilters: CatalogFilters = {
 
 const catalogPageSizeOptions = [25, 50, 75] as const;
 const catalogFilterSearchResultLimit = 24;
+const catalogMapInitialViewport: MapViewport = {
+  center: [55.751244, 37.618423],
+  zoom: 11,
+};
 
 const catalogRoomOptions = [
   { value: '0', label: 'Студия' },
@@ -1638,6 +1643,8 @@ function CatalogMapView({
     <section className="catalog-map-layout" aria-label="Карта объектов">
       <div className="catalog-map-panel">
         <PlatformMap
+          controlsPosition="top-left"
+          initialViewport={catalogMapInitialViewport}
           onBoundsChange={handleBoundsChange}
           onNearbyTransitChange={setNearbyTransit}
           onStatusChange={handleMapStatusChange}

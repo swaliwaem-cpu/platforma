@@ -74,6 +74,7 @@ async function verifyCatalogMap() {
 
     const mapList = page.getByRole('complementary', { name: 'Объекты на карте' });
     const initialBoundsLabel = await mapList.locator('.table-meta span').first().innerText();
+    await assertMapControlsAreLeftBelowPrimaryTools(map);
     const northMarker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
     await northMarker.waitFor();
     await northMarker.click();
@@ -313,6 +314,7 @@ async function verifyMobileMap() {
     const map = page.getByRole('region', { name: 'Карта объектов' });
     const marker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
     await marker.waitFor();
+    await assertMapControlsAreLeftBelowPrimaryTools(map);
     const zoomControlBox = await map.getByRole('button', { name: 'Увеличить масштаб' }).boundingBox();
     const fullscreenControlBox = await map.getByRole('button', { name: 'Открыть карту на весь экран' }).boundingBox();
     const educationControlBox = await map.getByRole('button', { name: 'Показать школы и детские сады' }).boundingBox();
@@ -320,7 +322,24 @@ async function verifyMobileMap() {
     assert.ok(zoomControlBox && zoomControlBox.width >= 44 && zoomControlBox.height >= 44);
     assert.ok(fullscreenControlBox && fullscreenControlBox.width >= 44 && fullscreenControlBox.height >= 44);
     assert.ok(educationControlBox && educationControlBox.width >= 44 && educationControlBox.height >= 44);
-    await marker.tap();
+
+    await map.getByRole('button', { name: 'Открыть карту на весь экран' }).tap();
+    await map.locator('.platform-map-shell[data-map-fullscreen="true"]').waitFor();
+    await map.getByRole('button', { name: 'Закрыть полноэкранную карту' }).tap();
+    await map.locator('.platform-map-shell[data-map-fullscreen="false"]').waitFor();
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await map.getByRole('button', { name: 'Открыть карту на весь экран' }).tap();
+    await map.locator('.platform-map-shell[data-map-fullscreen="true"]').waitFor();
+    await assertMapControlsAreLeftBelowPrimaryTools(map, 'Закрыть полноэкранную карту');
+    await map.getByRole('button', { name: 'Закрыть полноэкранную карту' }).tap();
+    await map.locator('.platform-map-shell[data-map-fullscreen="false"]').waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await map
+      .getByRole('complementary', { name: 'Объекты на карте' })
+      .getByRole('button', { name: 'ЖК Северный', exact: true })
+      .tap();
     await page.getByRole('article', { name: 'Объект ЖК Северный' }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: '/tmp/platforma-maplibre-catalog-mobile.png' });
@@ -328,6 +347,35 @@ async function verifyMobileMap() {
   } finally {
     await context.close();
   }
+}
+
+async function assertMapControlsAreLeftBelowPrimaryTools(map, fullscreenButtonName = 'Открыть карту на весь экран') {
+  const mapBox = await map.boundingBox();
+  const primaryToolsBox = await map.locator('.map-primary-tools').boundingBox();
+  const zoomControlBox = await map.getByRole('button', { name: 'Увеличить масштаб' }).boundingBox();
+  const zoomOutControlBox = await map.getByRole('button', { name: 'Уменьшить масштаб' }).boundingBox();
+  const fullscreenControlBox = await map.getByRole('button', { name: fullscreenButtonName }).boundingBox();
+  const mapListBox = await map.getByRole('complementary', { name: 'Объекты на карте' }).boundingBox();
+
+  assert.ok(mapBox && primaryToolsBox && zoomControlBox && zoomOutControlBox && fullscreenControlBox && mapListBox);
+  assert.ok(zoomControlBox.x < mapBox.x + mapBox.width / 2, 'zoom controls should be on the left half of the map');
+  assert.ok(fullscreenControlBox.x < mapBox.x + mapBox.width / 2, 'fullscreen control should be on the left half of the map');
+  assert.ok(
+    zoomControlBox.y >= primaryToolsBox.y + primaryToolsBox.height + 8,
+    'map controls should not overlap the primary map tools',
+  );
+  assert.equal(boxesOverlap(zoomControlBox, mapListBox), false, 'zoom-in control should not overlap the map list');
+  assert.equal(boxesOverlap(zoomOutControlBox, mapListBox), false, 'zoom-out control should not overlap the map list');
+  assert.equal(boxesOverlap(fullscreenControlBox, mapListBox), false, 'fullscreen control should not overlap the map list');
+}
+
+function boxesOverlap(first, second) {
+  return (
+    first.x < second.x + second.width &&
+    first.x + first.width > second.x &&
+    first.y < second.y + second.height &&
+    first.y + first.height > second.y
+  );
 }
 
 async function installMapFixtures(

@@ -9,6 +9,8 @@ export type MapViewport = {
   zoom: number;
 };
 
+export type MapControlsPosition = 'top-left' | 'top-right';
+
 export type MapPoint = {
   id: string;
   title: string;
@@ -54,6 +56,7 @@ export type PlatformMapProps = {
   ariaLabel?: string;
   children?: ReactNode;
   emptyState?: MapFallbackState;
+  controlsPosition?: MapControlsPosition;
   enableFullscreen?: boolean;
   enableMeasurement?: boolean;
   initialViewport?: MapViewport;

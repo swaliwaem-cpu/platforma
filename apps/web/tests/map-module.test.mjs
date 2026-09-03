@@ -123,6 +123,40 @@ test('provider-neutral map contract exposes coordinate selection without leaking
   assert.doesNotMatch(browserTestSource, /\.maplibregl-/);
 });
 
+test('catalog map honors the explicit central Moscow viewport on first render', () => {
+  assert.match(
+    catalogSource,
+    /const catalogMapInitialViewport: MapViewport = \{\s*center: \[55\.751244, 37\.618423\],\s*zoom: 11,\s*\};/,
+  );
+  assert.match(catalogSource, /<PlatformMap[\s\S]*?initialViewport=\{catalogMapInitialViewport\}/);
+  assert.match(mapLibreSource, /const shouldSkipInitialContentFitRef = useRef\(initialViewport !== undefined\)/);
+  assert.match(
+    mapLibreSource,
+    /if \(shouldSkipInitialContentFitRef\.current\) \{\s*if \(points\.length > 0 \|\| geometries\.length > 0\) \{\s*shouldSkipInitialContentFitRef\.current = false;\s*\}\s*return;\s*\}/,
+  );
+});
+
+test('catalog map places navigation and fullscreen controls on the left below its primary tools', () => {
+  assert.match(mapTypesSource, /export type MapControlsPosition = 'top-left' \| 'top-right'/);
+  assert.match(mapTypesSource, /controlsPosition\?: MapControlsPosition/);
+  assert.match(catalogSource, /<PlatformMap[\s\S]*?controlsPosition="top-left"/);
+  assert.match(mapLibreSource, /controlsPosition = 'top-right'/);
+  assert.match(
+    mapLibreSource,
+    /map\.addControl\(new maplibregl\.NavigationControl\([^;]+?\), controlsPosition\)/,
+  );
+  assert.match(mapLibreSource, /map\.addControl\(fullscreenControl, controlsPosition\)/);
+  assert.match(mapLibreSource, /data-map-controls-position=\{controlsPosition\}/);
+  assert.match(
+    styles,
+    /\.catalog-map-panel \.platform-map-shell\[data-map-controls-position='top-left'\] \.maplibregl-ctrl-top-left\s*\{\s*top:\s*120px;/,
+  );
+  assert.match(
+    styles,
+    /\.platform-map-shell\[data-map-controls-position='top-left'\] \.catalog-map-list\s*\{\s*left:\s*64px;/,
+  );
+});
+
 test('map operations checklists document provider-neutral runtime configuration', () => {
   const operationsDocs = `${manualQaSource}\n${productionChecklistSource}`;
 
