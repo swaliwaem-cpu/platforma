@@ -1467,6 +1467,9 @@ test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates 
     assert.equal(body.max_tool_calls, undefined);
     assert.equal(body.include, undefined);
     assert.equal(JSON.stringify(body.text.format.schema).includes('uniqueItems'), false);
+    assert.equal(JSON.stringify(body.text.format.schema).includes('"oneOf"'), false);
+    const predicates = body.text.format.schema.properties.predicates.items.anyOf;
+    assert.deepEqual(predicates.map((branch) => branch.properties.type.enum), [['SPATIAL'], ['TRAVEL_TIME']]);
     response.writeHead(200, {
       'content-type': 'application/json',
       'x-request-id': 'stub-request-id',

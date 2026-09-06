@@ -244,7 +244,7 @@ export function createAssistantPlannerSchema() {
         type: 'array',
         maxItems: 2,
         items: {
-          oneOf: [
+          anyOf: [
             {
               type: 'object',
               additionalProperties: false,
