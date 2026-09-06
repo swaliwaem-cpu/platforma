@@ -2,6 +2,24 @@ import { randomUUID } from 'node:crypto';
 
 import { stripAssistantGeoDistanceClause } from './geo/assistant-geo-query';
 import { extractAssistantDistrictFromText } from './geo/assistant-district-query';
+import {
+  extractAssistantLogicalPredicates,
+  type AssistantLogicalPredicateV1,
+} from './assistant-logical-plan';
+import {
+  assistantPlannerValuesAreGrounded,
+  assistantFiltersHaveConflict,
+  omitProviderAssignedFilters,
+  removeHardFilterOverlaps,
+} from './assistant-plan-grounding';
+import {
+  normalizeAssistantDialog,
+  type AssistantDialogMessage,
+} from './assistant-dialog';
+
+export { extractAssistantLogicalPredicates } from './assistant-logical-plan';
+export type { AssistantLogicalPredicateV1 } from './assistant-logical-plan';
+export type { AssistantDialogMessage } from './assistant-dialog';
 
 export const ASSISTANT_LUNA_MODEL = 'gpt-5.6-luna';
 export const ASSISTANT_TERRA_MODEL = 'gpt-5.6-terra';
@@ -34,6 +52,7 @@ const intentKeys = [
   'clarificationQuestion',
 ] as const;
 const optionalIntentKeys = ['comparisonTargetModes'] as const;
+const logicalPlanKeys = ['schemaVersion', 'predicates', 'clarificationReason'] as const;
 
 const taskTypes = ['SEARCH', 'OBJECT', 'COMPARE', 'FACT', 'LEGAL_TAX'] as const;
 const requiredFactValues = [
@@ -64,6 +83,10 @@ export type AssistantRequiredFact = (typeof requiredFactValues)[number];
 export type AssistantObjectType = 'RESIDENTIAL' | 'COMMERCIAL';
 export type AssistantReasoningEffort = 'medium' | 'high';
 export type AssistantComparisonTargetMode = 'EXACT' | 'INSTRUMENTAL';
+export type AssistantClarificationReason =
+  | 'AMBIGUOUS_PLACE'
+  | 'MISSING_NUMERIC_VALUE'
+  | 'CONFLICTING_HARD_CONDITIONS';
 
 export type AssistantSearchFilters = {
   budgetMinRub: number | null;
@@ -92,16 +115,27 @@ export type AssistantStructuredIntent = {
   requiredFacts: AssistantRequiredFact[];
   needsClarification: boolean;
   clarificationQuestion: string | null;
+  schemaVersion?: 'AssistantLogicalPlanV1';
+  predicates?: AssistantLogicalPredicateV1[];
+  clarificationReason?: AssistantClarificationReason | null;
+};
+
+export type AssistantLogicalPlanV1 = AssistantStructuredIntent & {
+  schemaVersion: 'AssistantLogicalPlanV1';
+  predicates: AssistantLogicalPredicateV1[];
+  clarificationReason: AssistantClarificationReason | null;
 };
 
 export type AssistantPlannerRequest = {
   model: typeof ASSISTANT_LUNA_MODEL | typeof ASSISTANT_TERRA_MODEL;
   reasoningEffort: AssistantReasoningEffort;
   messages: string[];
+  dialog?: AssistantDialogMessage[];
   context: unknown;
   operationRunId: string;
   executionId: string;
   attemptOrdinal: number;
+  deadlineAt?: Date;
 };
 
 export type AssistantPlannerGateway = {
@@ -156,6 +190,7 @@ export class AssistantPlannerError extends Error {
   constructor(
     readonly code: string,
     readonly telemetry: AssistantPlannerTelemetry[] = [],
+    readonly pipelineCause?: unknown,
   ) {
     super(code);
     this.name = 'AssistantPlannerError';
@@ -183,9 +218,11 @@ export class AssistantQueryPlanner {
   async planWithValidation<Value>(
     input: {
       messages: string[];
+      dialog?: AssistantDialogMessage[];
       context: unknown;
       operationRunId?: string;
       executionId?: string;
+      deadlineAt?: Date;
     },
     validate: (
       intent: AssistantStructuredIntent,
@@ -193,7 +230,9 @@ export class AssistantQueryPlanner {
       attempts: AssistantPhysicalAttemptAllocator,
     ) => Promise<Value>,
   ) {
+    assertPlannerDeadline(input.deadlineAt);
     const messages = normalizeMessages(input.messages);
+    const dialog = normalizeAssistantDialog(input.dialog, messages);
     const operationRunId = input.operationRunId ?? randomUUID();
     const executionId = input.executionId ?? randomUUID();
     const reasoningEffort = chooseReasoningEffort(messages);
@@ -217,13 +256,16 @@ export class AssistantQueryPlanner {
     ];
 
     for (const [attemptIndex, template] of requestTemplates.entries()) {
+      assertPlannerDeadline(input.deadlineAt, attempts);
       const request: AssistantPlannerRequest = {
         ...template,
         messages,
+        dialog,
         context: input.context,
         operationRunId,
         executionId,
         attemptOrdinal: attemptsAllocator.nextAttemptOrdinal(),
+        deadlineAt: input.deadlineAt,
       };
       const startedAt = Date.now();
       let gatewayResult: unknown;
@@ -245,8 +287,14 @@ export class AssistantQueryPlanner {
         await this.recordUsage(reservation, telemetry, attempts);
         throw new AssistantPlannerError(failure?.errorCode ?? 'ASSISTANT_PLANNER_PROVIDER_FAILED', attempts);
       }
-
       const result = unwrapGatewayResult(gatewayResult);
+      if (input.deadlineAt && input.deadlineAt.getTime() <= Date.now()) {
+        const telemetry = createTelemetry(request, attemptIndex === 1, 'LOCAL_VALIDATION_FAILED',
+          Date.now() - startedAt, result.metadata, 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED');
+        attempts.push(telemetry);
+        await this.recordUsage(reservation, telemetry, attempts);
+        assertPlannerDeadline(input.deadlineAt, attempts);
+      }
       let intent: AssistantStructuredIntent;
       try {
         const parsedIntent = parseAssistantStructuredIntent(result.output);
@@ -281,11 +329,10 @@ export class AssistantQueryPlanner {
         attempts.push(telemetry);
         await this.recordUsage(reservation, telemetry, attempts);
         if (!(error instanceof AssistantPlannerFallbackValidationError)) {
-          throw new AssistantPlannerError('ASSISTANT_PLANNER_PIPELINE_FAILED', attempts);
+          throw new AssistantPlannerError('ASSISTANT_PLANNER_PIPELINE_FAILED', attempts, error);
         }
         continue;
       }
-
       const telemetry = createTelemetry(
         request,
         attemptIndex === 1,
@@ -295,6 +342,7 @@ export class AssistantQueryPlanner {
       );
       attempts.push(telemetry);
       await this.recordUsage(reservation, telemetry, attempts);
+      assertPlannerDeadline(input.deadlineAt, attempts);
       return { intent, value, telemetry: attempts };
     }
 
@@ -312,6 +360,12 @@ export class AssistantQueryPlanner {
     } catch (error) {
       throw new AssistantPlannerError(readUsageSettlementErrorCode(error), [...attempts]);
     }
+  }
+}
+
+function assertPlannerDeadline(deadlineAt?: Date, telemetry: AssistantPlannerTelemetry[] = []) {
+  if (deadlineAt && deadlineAt.getTime() <= Date.now()) {
+    throw new AssistantPlannerError('ASSISTANT_EXECUTION_DEADLINE_EXCEEDED', telemetry);
   }
 }
 
@@ -336,17 +390,21 @@ export function createEmptyAssistantSearchFilters(): AssistantSearchFilters {
 }
 
 export function parseAssistantStructuredIntent(value: unknown): AssistantStructuredIntent {
+  const hasLogicalPlan = isRecord(value) && logicalPlanKeys.some((key) => Object.hasOwn(value, key));
   if (!isRecord(value)
     || intentKeys.some((key) => !Object.hasOwn(value, key))
+    || (hasLogicalPlan && logicalPlanKeys.some((key) => !Object.hasOwn(value, key)))
     || Object.keys(value).some((key) => (
       !intentKeys.includes(key as (typeof intentKeys)[number])
       && !optionalIntentKeys.includes(key as (typeof optionalIntentKeys)[number])
+      && !logicalPlanKeys.includes(key as (typeof logicalPlanKeys)[number])
     ))) throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   if (!taskTypes.includes(value.taskType as AssistantTaskType)) {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   }
 
-  const hardFilters = parseFilters(value.hardFilters);
+  const hardFilters = parseFilters(value.hardFilters,
+    hasLogicalPlan && value.clarificationReason === 'CONFLICTING_HARD_CONDITIONS');
   const softPreferences = parseFilters(value.softPreferences);
   const comparisonTargets = parseComparisonTargets(value.comparisonTargets);
   const comparisonTargetModes = value.comparisonTargetModes === undefined
@@ -367,6 +425,15 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
   if (value.needsClarification !== Boolean(clarificationQuestion)) {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   }
+  const predicates = hasLogicalPlan ? parseLogicalPredicates(value.predicates) : undefined;
+  const clarificationReason = hasLogicalPlan
+    ? parseClarificationReason(value.clarificationReason)
+    : undefined;
+  if (hasLogicalPlan
+    && (value.schemaVersion !== 'AssistantLogicalPlanV1'
+      || value.needsClarification !== Boolean(clarificationReason))) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
 
   return {
     taskType: value.taskType as AssistantTaskType,
@@ -377,7 +444,91 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
     requiredFacts,
     needsClarification: value.needsClarification,
     clarificationQuestion,
+    ...(hasLogicalPlan ? {
+      schemaVersion: 'AssistantLogicalPlanV1' as const,
+      predicates: predicates!,
+      clarificationReason: clarificationReason!,
+    } : {}),
   };
+}
+
+function parseLogicalPredicates(value: unknown): AssistantLogicalPredicateV1[] {
+  if (!Array.isArray(value) || value.length > 2) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
+  const predicates = value.map((predicate): AssistantLogicalPredicateV1 => {
+    if (!isRecord(predicate) || typeof predicate.type !== 'string') {
+      throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+    }
+    if (predicate.type === 'SPATIAL') {
+      if (!isExactRecord(predicate, ['type', 'relation', 'referenceType', 'place'] as const)
+        || predicate.relation !== 'INSIDE'
+        || predicate.referenceType !== 'PLACE') {
+        throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+      }
+      return {
+        type: 'SPATIAL',
+        relation: 'INSIDE',
+        referenceType: 'PLACE',
+        place: parseBoundedString(predicate.place, 240),
+      };
+    }
+    if (predicate.type === 'TRAVEL_TIME') {
+      if (!isExactRecord(
+        predicate,
+        ['type', 'mode', 'destination', 'operator', 'value', 'unit'] as const,
+      )
+        || predicate.mode !== 'WALK'
+        || predicate.destination !== 'NEAREST_METRO'
+        || predicate.operator !== 'LTE'
+        || predicate.unit !== 'MINUTES') {
+        throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+      }
+      return {
+        type: 'TRAVEL_TIME',
+        mode: 'WALK',
+        destination: 'NEAREST_METRO',
+        operator: 'LTE',
+        value: parsePositiveTravelMinutes(predicate.value),
+        unit: 'MINUTES',
+      };
+    }
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  });
+  if (new Set(predicates.map(({ type }) => type)).size !== predicates.length) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
+  return predicates;
+}
+
+function parseClarificationReason(value: unknown): AssistantClarificationReason | null {
+  if (value === null) return null;
+  if (value === 'AMBIGUOUS_PLACE'
+    || value === 'MISSING_NUMERIC_VALUE'
+    || value === 'CONFLICTING_HARD_CONDITIONS') return value;
+  throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+}
+
+function parsePositiveTravelMinutes(value: unknown) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 240) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
+  return value;
+}
+
+function assertLogicalPlanGrounded(plan: AssistantLogicalPlanV1, messages: string[]) {
+  const extracted = extractAssistantLogicalPredicates(messages);
+  if (JSON.stringify(plan.predicates) !== JSON.stringify(extracted.predicates)) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
+  const conflicting = assistantFiltersHaveConflict(extractAssistantExplicitHardFilters(messages));
+  if (conflicting !== (plan.clarificationReason === 'CONFLICTING_HARD_CONDITIONS')
+    || (!conflicting && extracted.missingTravelValue !== (plan.clarificationReason === 'MISSING_NUMERIC_VALUE'))) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
+  if (plan.clarificationReason === 'AMBIGUOUS_PLACE') {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
 }
 
 function chooseReasoningEffort(messages: string[]): AssistantReasoningEffort {
@@ -389,30 +540,51 @@ function normalizeIntentAgainstRequest(
   messages: string[],
   context: unknown,
 ): AssistantStructuredIntent {
+  if (intent.schemaVersion === 'AssistantLogicalPlanV1') {
+    assertLogicalPlanGrounded(intent as AssistantLogicalPlanV1, messages);
+  }
   const explicitFilters = extractAssistantExplicitHardFilters(messages);
   const contextFilters = extractContextHardFilters(context);
   const explicitComparison = extractAssistantComparison(messages);
+  if (intent.schemaVersion === 'AssistantLogicalPlanV1'
+    && !assistantPlannerValuesAreGrounded(
+      intent,
+      explicitFilters,
+      contextFilters,
+      explicitComparison?.targets ?? null,
+    )) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
   const comparisonTargets = explicitComparison?.targets ?? intent.comparisonTargets;
   const comparisonTargetModes = explicitComparison?.modes
     ?? intent.comparisonTargetModes
     ?? comparisonTargets.map(() => 'EXACT' as const);
   const hardMarkedSoftFilters = promoteHardMarkedSoftFilters(intent.softPreferences, messages.join('\n'));
+  const providerHardFilters = intent.hardFilters;
+  const providerSoftPreferences = intent.softPreferences;
+  const unassignedExplicitFilters = intent.schemaVersion === 'AssistantLogicalPlanV1'
+    ? omitProviderAssignedFilters(explicitFilters, providerHardFilters, providerSoftPreferences)
+    : explicitFilters;
   const mergedHardFilters: AssistantSearchFilters = {
-    ...intent.hardFilters,
+    ...providerHardFilters,
     ...hardMarkedSoftFilters,
-    ...explicitFilters,
+    ...unassignedExplicitFilters,
     ...contextFilters,
-    rooms: contextFilters.rooms ?? explicitFilters.rooms ?? intent.hardFilters.rooms,
+    rooms: contextFilters.rooms
+      ?? unassignedExplicitFilters.rooms
+      ?? providerHardFilters.rooms,
   };
   const comparisonNormalizedFilters = isCombinedComparisonDeveloper(mergedHardFilters.developer, comparisonTargets)
     ? { ...mergedHardFilters, developer: null }
     : mergedHardFilters;
   const hardFilters = consumeDistrictResolvedAsGeo(comparisonNormalizedFilters, context);
+  const softPreferences = removeHardFilterOverlaps(providerSoftPreferences, hardFilters);
   const requestText = messages.join('\n');
   const isLegalOrTax = legalOrTaxPattern.test(requestText);
   if (isLegalOrTax) {
     return {
       ...intent,
+      softPreferences,
       taskType: 'LEGAL_TAX',
       comparisonTargets: [],
       comparisonTargetModes: [],
@@ -432,12 +604,24 @@ function normalizeIntentAgainstRequest(
         ? 'OBJECT'
         : intent.taskType;
 
+  if (intent.needsClarification) {
+    return { ...intent, hardFilters, softPreferences, comparisonTargets, comparisonTargetModes };
+  }
+  if (intent.predicates?.length && taskType === 'OBJECT') {
+    return {
+      ...intent, taskType: 'SEARCH', hardFilters, softPreferences,
+      comparisonTargets: [], comparisonTargetModes: [], requiredFacts: [...mandatorySearchFacts],
+    };
+  }
   if (taskType === 'FACT') {
-    return { ...intent, hardFilters, comparisonTargets, comparisonTargetModes };
+    return {
+      ...intent, hardFilters, softPreferences, comparisonTargets, comparisonTargetModes,
+    };
   }
   if (taskType === 'OBJECT') {
     return {
       ...intent,
+      softPreferences,
       taskType,
       hardFilters,
       comparisonTargets: [],
@@ -448,22 +632,12 @@ function normalizeIntentAgainstRequest(
     };
   }
 
-  const missingFacts: string[] = [];
-  if (hardFilters.budgetMaxRub === null) missingFacts.push('максимальный бюджет');
-  if (hardFilters.objectType === 'RESIDENTIAL' && hardFilters.rooms.length === 0) {
-    missingFacts.push('комнатность');
-  }
-  if (!hasLocationConstraint(hardFilters, context)) missingFacts.push('район или метро');
-
   return {
     ...intent,
+    softPreferences,
     comparisonTargets,
     comparisonTargetModes,
     hardFilters,
-    needsClarification: missingFacts.length > 0,
-    clarificationQuestion: missingFacts.length > 0
-      ? `Уточните, пожалуйста: ${joinRussianList(missingFacts)}.`
-      : null,
   };
 }
 
@@ -603,7 +777,7 @@ export function createAssistantComparisonTargetVariants(
 export function extractAssistantExplicitHardFilters(
   messages: string[],
 ): Partial<AssistantSearchFilters> & { rooms?: number[] } {
-  return extractExplicitFilters(messages.join('\n'));
+  return Object.assign({}, ...messages.map((message) => extractExplicitFilters(message)));
 }
 
 export function extractAssistantExplicitDistrict(text: string, requireInPrefix = false) {
@@ -823,13 +997,12 @@ function normalizeMessages(messages: string[]) {
   const normalized = messages
     .filter((message): message is string => typeof message === 'string')
     .map((message) => message.trim().replace(/\s+/gu, ' '))
-    .filter(Boolean)
-    .slice(-20);
+    .filter(Boolean);
   if (normalized.length === 0) throw new AssistantPlannerError('ASSISTANT_MESSAGES_INVALID');
   return normalized;
 }
 
-function parseFilters(value: unknown): AssistantSearchFilters {
+function parseFilters(value: unknown, allowConflict = false): AssistantSearchFilters {
   if (!isExactRecord(value, filterKeys)) throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
 
   const filters: AssistantSearchFilters = {
@@ -850,10 +1023,9 @@ function parseFilters(value: unknown): AssistantSearchFilters {
     floorMax: parseNullableInteger(value.floorMax, -20, 500),
   };
 
-  assertValidRange(filters.budgetMinRub, filters.budgetMaxRub);
-  assertValidRange(filters.completionYearMin, filters.completionYearMax);
-  assertValidRange(filters.areaMin, filters.areaMax);
-  assertValidRange(filters.floorMin, filters.floorMax);
+  if (!allowConflict && assistantFiltersHaveConflict(filters)) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
   return filters;
 }
 
@@ -939,12 +1111,6 @@ function parseObjectType(value: unknown): AssistantObjectType {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   }
   return value;
-}
-
-function assertValidRange(minimum: number | null, maximum: number | null) {
-  if (minimum !== null && maximum !== null && minimum > maximum) {
-    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
-  }
 }
 
 function unwrapGatewayResult(value: unknown) {

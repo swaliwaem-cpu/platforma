@@ -10,18 +10,15 @@ import {
   Prisma,
 } from '@prisma/client';
 import type {
-  AssistantPageContext,
-  AssistantGeoSearchSelection,
   AssistantProgressEvent,
   AssistantProgressStep,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 import { randomUUID } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { AssistantAnswerService } from './assistant-answer.service';
+import { AssistantExecutionModule } from './assistant-execution.module';
 import { buildAssistantRunAudit } from './audit/assistant-run-audit';
 import { AssistantPlannerError } from './assistant-query-planner';
-import { parseAssistantGeoStoredValue } from './geo/assistant-geo-contract';
 import {
   AssistantAiUsageBudgetError,
   AssistantAiUsageBudgetService,
@@ -55,8 +52,7 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly answerService: AssistantAnswerService,
-    private readonly aiUsageBudgets: AssistantAiUsageBudgetService,
+    private readonly execution: AssistantExecutionModule,
   ) {}
 
   async onModuleInit() {
@@ -141,31 +137,10 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
     if (claimed.count !== 1) return;
 
     try {
-      const executionId = randomUUID();
-      try {
-        await this.aiUsageBudgets.reconcileExpiredReservations({
-          operationRunId: runId,
-          executionId,
-        });
-      } catch (error) {
-        if (error instanceof AssistantAiUsageBudgetError
-          && error.code === 'ASSISTANT_AI_RESERVATION_ACTIVE'
-          && error.retryAt) {
-          await this.deferRunUntilReservationExpiry(runId, error.retryAt);
-          return;
-        }
-        throw error;
-      }
       const run = await this.prisma.assistantRun.findUniqueOrThrow({
         where: { id: runId },
         select: {
           conversationId: true,
-          userMessage: {
-            select: {
-              contextJson: true,
-              geoContextJson: true,
-            },
-          },
         },
       });
       const events: AssistantProgressEvent[] = [];
@@ -185,25 +160,21 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
         if (delayMs > 0) await this.delay(delayMs);
       }
 
-      const answerResult = await this.withLeaseHeartbeat(runId, async () => {
-        const recentMessages = await this.prisma.assistantMessage.findMany({
-          where: {
-            conversationId: run.conversationId,
-            role: AssistantMessageRole.USER,
-          },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          take: 20,
-          select: { content: true },
-        });
-        return this.answerService.answer({
-          messages: recentMessages.reverse().map(({ content }) => content),
-          context: this.parseContext(run.userMessage.contextJson),
-          geo: this.parseGeoContext(run.userMessage.geoContextJson),
-          operationRunId: runId,
-          executionId,
-          deadlineAt: new Date(startedAt.getTime() + 15_000),
-        });
-      });
+      let answerResult: Awaited<ReturnType<AssistantExecutionModule['execute']>>;
+      try {
+        answerResult = await this.withLeaseHeartbeat(
+          runId,
+          () => this.execution.execute(runId, new Date(startedAt.getTime() + 15_000)),
+        );
+      } catch (error) {
+        if (error instanceof AssistantAiUsageBudgetError
+          && error.code === 'ASSISTANT_AI_RESERVATION_ACTIVE'
+          && error.retryAt) {
+          await this.deferRunUntilReservationExpiry(runId, error.retryAt);
+          return;
+        }
+        throw error;
+      }
       const latencyMs = Math.max(0, Date.now() - startedAt.getTime());
       const audit = buildAssistantRunAudit({
         intent: answerResult.intent,
@@ -343,24 +314,6 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private parseContext(value: Prisma.JsonValue | null): AssistantPageContext | null {
-    if (!isRecord(value)) return null;
-    if (!['OBJECT', 'LOT', 'DEVELOPER', 'CATALOG_FILTERS'].includes(String(value.kind))) return null;
-    if (typeof value.key !== 'string' || typeof value.label !== 'string') return null;
-    return {
-      kind: value.kind as AssistantPageContext['kind'],
-      key: value.key,
-      label: value.label,
-    };
-  }
-
-  private parseGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchSelection | null {
-    return value === null ? null : parseAssistantGeoStoredValue(value, {
-      ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
-      ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
-    });
-  }
-
   private getFakeStepDelayMs() {
     const raw = process.env.ASSISTANT_FAKE_STEP_DELAY_MS;
     const value = raw === undefined || raw === '' ? 120 : Number(raw);
@@ -371,10 +324,6 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
   private delay(milliseconds: number) {
     return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readAssistantRunErrorCode(error: unknown) {

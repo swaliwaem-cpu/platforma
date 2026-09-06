@@ -1044,7 +1044,7 @@ test('Assistant T03 current FACT performs one bounded refresh and then uses only
     operationRunId: '10000000-0000-4000-8000-000000000001',
     executionId: '20000000-0000-4000-8000-000000000001',
     now: new Date('2026-08-25T18:00:00.000Z'),
-    deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+    deadlineAt: new Date(Date.now() + 10_000),
   });
 
   assert.equal(refreshCalls, 1);
@@ -1093,7 +1093,7 @@ test('Assistant T03 natural recency wording still performs the bounded refresh',
       operationRunId: '10000000-0000-4000-8000-000000000001',
       executionId: '20000000-0000-4000-8000-000000000001',
       now: new Date('2026-08-25T18:00:00.000Z'),
-      deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+      deadlineAt: new Date(Date.now() + 10_000),
     });
 
     assert.equal(refreshCalls, 1, query);
@@ -1185,7 +1185,7 @@ test('Assistant T03 current FACT keeps the active multi-turn query through retri
     operationRunId: '10000000-0000-4000-8000-000000000001',
     executionId: '20000000-0000-4000-8000-000000000001',
     now: new Date('2026-08-25T18:00:00.000Z'),
-    deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+    deadlineAt: new Date(Date.now() + 10_000),
   });
 
   assert.equal(refreshCalls, 1);
@@ -1236,7 +1236,7 @@ test('Assistant T03 current FACT resolves a named project over a conflicting obj
     operationRunId: '10000000-0000-4000-8000-000000000001',
     executionId: '20000000-0000-4000-8000-000000000001',
     now: new Date('2026-08-25T18:00:00.000Z'),
-    deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+    deadlineAt: new Date(Date.now() + 10_000),
   });
 
   assert.equal(resolverCalls, 1);
@@ -1273,7 +1273,7 @@ test('Assistant T03 unresolved named project fails closed before retrieval or re
     operationRunId: '10000000-0000-4000-8000-000000000001',
     executionId: '20000000-0000-4000-8000-000000000001',
     now: new Date('2026-08-25T18:00:00.000Z'),
-    deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+    deadlineAt: new Date(Date.now() + 10_000),
   });
 
   assert.equal(result.answer.kind, 'REFUSAL');
@@ -1403,7 +1403,7 @@ test('Assistant T03 current FACT drops stale markers when the latest turn starts
     operationRunId: '10000000-0000-4000-8000-000000000001',
     executionId: '20000000-0000-4000-8000-000000000001',
     now: new Date('2026-08-25T18:00:00.000Z'),
-    deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+    deadlineAt: new Date(Date.now() + 10_000),
   });
 
   assert.equal(refreshCalls, 0);
@@ -1711,7 +1711,7 @@ test('Assistant T03 current FACT reports SOURCE_NOT_CONNECTED without arbitrary 
     operationRunId: '10000000-0000-4000-8000-000000000001',
     executionId: '20000000-0000-4000-8000-000000000001',
     now: new Date('2026-08-25T18:00:00.000Z'),
-    deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+    deadlineAt: new Date(Date.now() + 10_000),
   });
 
   assert.deepEqual(result.answer, { kind: 'REFUSAL', code: 'SOURCE_NOT_CONNECTED' });
@@ -1742,7 +1742,7 @@ test('Assistant T03 failed current refresh never claims stale facts are current'
     operationRunId: '10000000-0000-4000-8000-000000000001',
     executionId: '20000000-0000-4000-8000-000000000001',
     now: new Date('2026-08-25T18:00:00.000Z'),
-    deadlineAt: new Date('2026-08-25T18:00:10.000Z'),
+    deadlineAt: new Date(Date.now() + 10_000),
   });
 
   assert.equal(result.answer.kind, 'REFUSAL');

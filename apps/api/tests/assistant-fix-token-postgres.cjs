@@ -27,6 +27,9 @@ const {
   AssistantRunProcessor,
 } = require('../dist/assistant/assistant-run.processor.js');
 const {
+  AssistantExecutionModule,
+} = require('../dist/assistant/assistant-execution.module.js');
+const {
   createEmptyAssistantSearchFilters,
 } = require('../dist/assistant/assistant-query-planner.js');
 const {
@@ -1032,7 +1035,7 @@ test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new executio
       const filters = createEmptyAssistantSearchFilters();
       return {
         content: 'Уточните, пожалуйста, параметры поиска.',
-        answer: { kind: 'CLARIFICATION' },
+        answer: { kind: 'CLARIFICATION', reason: 'MISSING_NUMERIC_VALUE' },
         intent: {
           taskType: 'SEARCH',
           comparisonTargets: [],
@@ -1048,7 +1051,10 @@ test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new executio
       };
     },
   };
-  const processor = new AssistantRunProcessor(prisma, answerService, service);
+  const processor = new AssistantRunProcessor(
+    prisma,
+    new AssistantExecutionModule(prisma, answerService, service),
+  );
 
   let terminalRun;
   try {
@@ -1111,12 +1117,12 @@ test('FIX-TOKEN defers a recovered AssistantRun while its previous provider rese
     reservationExpiresAt,
   });
   let answerCalls = 0;
-  const processor = new AssistantRunProcessor(prisma, {
+  const processor = new AssistantRunProcessor(prisma, new AssistantExecutionModule(prisma, {
     async answer() {
       answerCalls += 1;
       throw new Error('active reservation must defer the run');
     },
-  }, service);
+  }, service));
 
   let deferredRun;
   try {

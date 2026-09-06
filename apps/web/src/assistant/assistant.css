@@ -712,7 +712,7 @@
   margin: 1px 0 0;
   padding: 0;
   flex-wrap: wrap;
-  color: var(--color-muted, #756a64);
+  color: var(--color-muted-foreground, #756a64);
   font-size: 11px;
   line-height: 1.4;
   list-style: none;

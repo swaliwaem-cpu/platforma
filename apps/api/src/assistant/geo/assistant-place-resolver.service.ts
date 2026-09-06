@@ -26,6 +26,7 @@ import {
   AssistantGeoLandmarkGeometryError,
   AssistantGeoLandmarkService,
   type AssistantTrustedLandmark,
+  type AssistantVerifiedLandmarkInput,
 } from './assistant-geo-landmark.service';
 import {
   isExpectedAssistantGeoAdministrativeBounds,
@@ -511,7 +512,7 @@ export class AssistantPlaceResolverService {
     const expiresAt = sourceProvider === 'overpass'
       ? new Date(Date.now() + overpassGeometryRetentionMs)
       : new Date(Date.now() + this.provider.getCacheRetentionMs());
-    const landmark = await this.landmarks.saveVerified({
+    const writeInput: AssistantVerifiedLandmarkInput = {
       kind,
       label: input.placeQuery,
       normalizedQuery: input.normalizedQuery,
@@ -531,7 +532,14 @@ export class AssistantPlaceResolverService {
         userAlias: input.userAlias,
         providerQuery: input.providerQuery,
       },
-    });
+    };
+    const boundary = await this.landmarks.saveVerified(writeInput);
+    const landmark = input.mode === 'INSIDE' && boundary.kind === 'LINE'
+      ? await this.landmarks.saveVerifiedAreaFromBoundary(boundary.id, {
+          ...writeInput,
+          sourceExternalId: `${sourceExternalId.slice(0, 155)}#area`,
+        })
+      : boundary;
     return { landmark, provider: sourceProvider, expiresAt };
   }
 

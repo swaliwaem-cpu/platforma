@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import type {
   AssistantAnswer,
+  AssistantClarificationReason,
   AssistantComparisonGroup,
   AssistantConversation,
   AssistantConversationSummary,
@@ -30,6 +31,7 @@ import type {
   AssistantRun,
   AssistantSearchResultCard,
   AssistantSendMessageInput,
+  AssistantUnavailableReason,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 import { createHash } from 'node:crypto';
 
@@ -64,7 +66,19 @@ const assistantConversationTitleMaxLength = 80;
 const assistantHistoryCursorMaxLength = 512;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const contextKinds = new Set(['OBJECT', 'LOT', 'DEVELOPER', 'CATALOG_FILTERS']);
-const answerKinds = new Set(['SEARCH_RESULTS', 'OBJECT_RESULTS', 'COMPARISON_RESULTS', 'KNOWLEDGE_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
+const answerKinds = new Set(['SEARCH_RESULTS', 'OBJECT_RESULTS', 'COMPARISON_RESULTS', 'KNOWLEDGE_RESULTS', 'CLARIFICATION', 'UNAVAILABLE', 'REFUSAL', 'SAFE_BOUNDARY']);
+const clarificationReasons = new Set<AssistantClarificationReason>([
+  'AMBIGUOUS_PLACE',
+  'MISSING_NUMERIC_VALUE',
+  'CONFLICTING_HARD_CONDITIONS',
+]);
+const unavailableReasons = new Set<AssistantUnavailableReason>([
+  'PLACE_RESOLUTION',
+  'ROUTING',
+  'DEADLINE',
+  'PROVIDER',
+  'DATA',
+]);
 const deviationTypes = new Set(['BUDGET', 'DISTRICT', 'DEVELOPER', 'ROOMS']);
 const objectAnswerKeys = new Set(['kind', 'totalObjects', 'objects', 'additionalObjects']);
 const objectCardKeys = new Set(['objectId', 'objectType', 'title', 'subtitle', 'description', 'href', 'facts', 'pdfs']);
@@ -207,7 +221,6 @@ export class AssistantService {
     const conversationId = this.parseUuid(input.conversationId, 'conversationId');
     const idempotencyKey = this.parseUuid(input.idempotencyKey, 'Idempotency-Key');
     const messageInput = this.parseMessageInput(input.body);
-    const inspectedGeo = this.assertCanonicalGeoContext(messageInput);
     const requestHash = this.hashRequest(conversationId, messageInput);
     const existing = await this.findRunByIdempotencyKey(input.ownerUserId, idempotencyKey);
 
@@ -218,7 +231,12 @@ export class AssistantService {
       select: { id: true },
     });
     if (!ownedConversation) throw new NotFoundException('ASSISTANT_CONVERSATION_NOT_FOUND');
-    await this.assertCanonicalGeoIdentity(messageInput, inspectedGeo);
+    if (messageInput.geo) {
+      await this.assertCanonicalGeoIdentity(
+        messageInput,
+        this.assertCanonicalGeoContext(messageInput),
+      );
+    }
     const canonicalGeo = messageInput.geo
       ? await this.geoLandmarks.materializeBrowserContext(messageInput.geo)
       : null;
@@ -597,6 +615,21 @@ export class AssistantService {
     if (value.kind === 'KNOWLEDGE_RESULTS') return this.parseStoredKnowledgeAnswer(value);
     if (value.kind === 'COMPARISON_RESULTS') return this.parseStoredComparisonAnswer(value);
     if (value.kind === 'OBJECT_RESULTS') return this.parseStoredObjectAnswer(value);
+    if (value.kind === 'CLARIFICATION') {
+      if (value.reason === undefined) {
+        return { kind: 'CLARIFICATION', reason: 'MISSING_NUMERIC_VALUE' };
+      }
+      return typeof value.reason === 'string'
+        && clarificationReasons.has(value.reason as AssistantClarificationReason)
+        ? { kind: 'CLARIFICATION', reason: value.reason as AssistantClarificationReason }
+        : null;
+    }
+    if (value.kind === 'UNAVAILABLE') {
+      return typeof value.reason === 'string'
+        && unavailableReasons.has(value.reason as AssistantUnavailableReason)
+        ? { kind: 'UNAVAILABLE', reason: value.reason as AssistantUnavailableReason }
+        : null;
+    }
     if (value.kind === 'REFUSAL') {
       if (value.code === undefined) return { kind: 'REFUSAL' };
       return value.code === 'SOURCE_NOT_CONNECTED'

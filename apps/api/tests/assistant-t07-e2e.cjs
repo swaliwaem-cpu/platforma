@@ -74,6 +74,14 @@ const apiImage = process.env.ASSISTANT_T07_API_IMAGE || 'platforma-api:local';
 const postgresImage = process.env.ASSISTANT_T07_POSTGRES_IMAGE || 'platforma-postgres:16-postgis3.5-pgvector0.8.6';
 const password = 'AssistantT07!';
 const manualQaEnabled = process.env.ASSISTANT_T07_MANUAL_QA_HOLD === 'true';
+const geo2MetroPoints = [
+  ['Таганская', 37.6536, 55.7404],
+  ['Марксистская', 37.655, 55.7405],
+  ['Павелецкая', 37.637, 55.731],
+];
+// Three Moscow points above, encoded in the poi layer of one z0 MVT (extent 2^24).
+const geo2MetroTile = Buffer.from('GscBCgNwb2kSFRIGAAABAwIEGAEiCQnCmtYJ6K6ABRIVEgYAAQEDAgQYASIJCcSb1gnYroAFEhUSBgACAQMCBBgBIgkJto7WCfy6gAUaBG5hbWUaBWNsYXNzGghzdWJjbGFzcyIUChLQotCw0LPQsNC90YHQutCw0Y8iGgoY0JzQsNGA0LrRgdC40YHRgtGB0LrQsNGPIhYKFNCf0LDQstC10LvQtdGG0LrQsNGPIgkKB3JhaWx3YXkiCAoGc3Vid2F5KICAgAh4Ag==', 'base64');
+const geo2RouteDurations = new Map();
 let postgresPort;
 let apiOrigin;
 let webOrigin;
@@ -166,6 +174,7 @@ async function main() {
     await mapDegradationJourney(fixtures, 'tile');
     fixtures.connectedGeo = await seedConnectedGeoFixtures(fixtures.connectedGeoSeed);
     await lineGeoJourney(fixtures);
+    await geo2LogicalPlanJourney(fixtures);
     await areaGeoJourney(fixtures);
     await prepareStudioFeed(fixtures);
     await connectedStudioJourney(fixtures);
@@ -311,6 +320,25 @@ async function startSourceStub() {
   const mapTile = createDeterministicMapTile();
   sourceServer = createServer((request, response) => {
     const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    if (pathname === '/__routing_fixture__/v2/matrix/foot-walking') {
+      let body = '';
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        const input = JSON.parse(body);
+        const originKey = input.locations[0].map((coordinate) => Number(coordinate).toFixed(5)).join(',');
+        const baseDuration = geo2RouteDurations.get(originKey) ?? 240;
+        const durations = input.destinations.map((index) =>
+          baseDuration + (Math.abs(input.locations[index][0] - 37.6536) < 0.0001 ? 0 : 60));
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ durations: [durations], distances: [durations.map((duration) => duration * 4 / 3)] }));
+      });
+      return;
+    }
+    if (pathname === '/__map_fixture__/metro.pbf') {
+      response.writeHead(200, { 'access-control-allow-origin': '*', 'content-type': 'application/x-protobuf' });
+      response.end(geo2MetroTile);
+      return;
+    }
     const provider = Object.keys(providerStubRequests).find((key) => (
       pathname.startsWith(`/__provider_stub__/${key}`)
     ));
@@ -337,6 +365,7 @@ async function startSourceStub() {
       const style = JSON.stringify({
         version: 8,
         sources: {
+          metroFixture: { type: 'vector', tiles: [`${fixtureOrigin}/__map_fixture__/metro.pbf`], maxzoom: 0 },
           rasterFixture: {
             type: 'raster',
             tiles: [`${fixtureOrigin}/__map_fixture__/tiles/{z}/{x}/{y}.png`],
@@ -352,6 +381,7 @@ async function startSourceStub() {
         },
         layers: [
           { id: 'background', type: 'background', paint: { 'background-color': '#eef2f0' } },
+          { id: 'metro-fixture', type: 'circle', source: 'metroFixture', 'source-layer': 'poi', paint: { 'circle-radius': 3 } },
           {
             id: 'raster-fixture',
             type: 'raster',
@@ -411,6 +441,8 @@ function configureProviderStubs(sourceOrigin) {
     ASSISTANT_OPENAI_BASE_URL: `${sourceOrigin}/__provider_stub__/openai`,
     LOCATIONIQ_API_URL: `${sourceOrigin}/__provider_stub__/locationiq`,
     ASSISTANT_OVERPASS_URL: `${sourceOrigin}/__provider_stub__/overpass`,
+    OPENROUTESERVICE_API_URL: `${sourceOrigin}/__routing_fixture__`,
+    OPENROUTESERVICE_API_KEY: 'assistant-t07-local-router',
   });
 }
 
@@ -1426,7 +1458,8 @@ async function userJourney(fixtures) {
     await page.getByRole('button', { name: 'Повторить отправку' }).waitFor();
     const progress = await captureProgress(page, async () => {
       await page.getByRole('button', { name: 'Повторить отправку' }).click();
-      await page.getByText(/Уточните, пожалуйста:.*максимальный бюджет/u).waitFor();
+      const broadArticle = await waitForAssistantArticle(page, 'Найди подходящий объект');
+      await broadArticle.getByRole('heading', { name: 'Лучшие по этим критериям' }).waitFor();
     });
     for (const label of ['Понимаю запрос', 'Ищу данные', 'Сравниваю варианты', 'Формирую ответ']) {
       assert.equal(progress.includes(label), true, `missing progress label: ${label}`);
@@ -1629,8 +1662,8 @@ async function userJourney(fixtures) {
     await startNewConversation(page);
     const namedGeoQuery = 'Найди двушку до 25 млн рядом с Павелецкая Плаза в радиусе 2 км';
     await submit(page, input, namedGeoQuery);
-    await page.getByText('Павелецкая Плаза · до 2 км', { exact: true }).waitFor();
-    const distances = page.locator('.assistant-result-distance');
+    const namedGeoArticle = await waitForAssistantArticle(page, namedGeoQuery);
+    const distances = namedGeoArticle.locator('.assistant-result-distance');
     await distances.last().waitFor();
     for (const text of await distances.allTextContents()) {
       assert.ok(parseDistanceMeters(text) <= 2_000, `result escaped radius: ${text}`);
@@ -1668,9 +1701,10 @@ async function userJourney(fixtures) {
       where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: compositeGeoQuery } },
       include: { userMessage: true, assistantMessage: true },
     });
-    assert.equal(compositeRun.userMessage.geoContextJson.operator, 'ALL');
+    assert.equal(compositeRun.userMessage.geoContextJson, null);
     assert.deepEqual(
-      compositeRun.userMessage.geoContextJson.constraints.map(({ slotId, distanceMeters }) => ({ slotId, distanceMeters })),
+      compositeRun.assistantMessage.answerJson.geo.constraints
+        .map(({ slotId, distanceMeters }) => ({ slotId, distanceMeters })),
       [{ slotId: 'geo-1', distanceMeters: 5_000 }, { slotId: 'geo-2', distanceMeters: 2_000 }],
     );
     assert.equal(compositeRun.assistantMessage.answerJson.geo.operator, 'ALL');
@@ -1679,33 +1713,31 @@ async function userJourney(fixtures) {
     await startNewConversation(page);
     const ambiguityQuery = 'Найди в радиусе 2 км от Площадь неоднознач';
     await submit(page, input, ambiguityQuery);
-    const ambiguous = page.locator('[data-assistant-geo-candidates] .assistant-geo-candidates button');
-    await ambiguous.first().waitFor();
-    assert.equal(await ambiguous.count(), 3);
-    await ambiguous.nth(1).click();
-    await page.locator('[data-assistant-geo-chip]').waitFor();
-    await waitForAssistantArticle(page, ambiguityQuery);
+    const ambiguityArticle = await waitForAssistantArticle(page, ambiguityQuery);
+    await ambiguityArticle.getByText('Уточните, какое именно место вы имеете в виду.', { exact: true }).waitFor();
+    const ambiguityRun = await prisma.assistantRun.findFirstOrThrow({
+      where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: ambiguityQuery } },
+      include: { assistantMessage: true },
+    });
+    assert.deepEqual(ambiguityRun.assistantMessage.answerJson, {
+      kind: 'CLARIFICATION', reason: 'AMBIGUOUS_PLACE',
+    });
 
-    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
     await startNewConversation(page);
-    await submit(page, input, 'Найди в радиусе 2 км от geocoder unavailable');
-    await page.getByText(/Геокодер сейчас недоступен/u).waitFor();
-    const runsBeforeManual = await countUserRuns(fixtures.regular.user.id);
-    const operationsBeforeManual = await prisma.assistantGeoOperation.count();
-    await page.getByRole('button', { name: 'Указать на карте' }).click();
-    const picker = page.getByRole('region', { name: 'Выбор точки и радиуса' });
-    await picker.getByRole('button', { name: '2 км' }).click();
-    assert.equal(await countUserRuns(fixtures.regular.user.id), runsBeforeManual);
-    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
-    await waitForCount(() => countUserRuns(fixtures.regular.user.id), runsBeforeManual + 1);
-    assert.equal(await prisma.assistantGeoOperation.count(), operationsBeforeManual);
-    await waitForAssistantArticle(page, 'Найди в радиусе 2 км от geocoder unavailable');
-    const runsBeforeMove = await countUserRuns(fixtures.regular.user.id);
-    await page.getByRole('button', { name: 'Изменить точку и расстояние' }).click();
-    await picker.getByRole('button', { name: '3 км' }).click();
-    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
-    await waitForCount(() => countUserRuns(fixtures.regular.user.id), runsBeforeMove + 1);
-    assert.equal(await prisma.assistantGeoOperation.count(), operationsBeforeManual);
+    const unavailableQuery = 'Найди в радиусе 2 км от geocoder unavailable';
+    await submit(page, input, unavailableQuery);
+    const unavailableArticle = await waitForAssistantArticle(page, unavailableQuery);
+    await unavailableArticle.getByText(
+      'Не удалось выполнить запрос по подтверждённым данным. Попробуйте позже.',
+      { exact: true },
+    ).waitFor();
+    const unavailableRun = await prisma.assistantRun.findFirstOrThrow({
+      where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: unavailableQuery } },
+      include: { assistantMessage: true },
+    });
+    assert.deepEqual(unavailableRun.assistantMessage.answerJson, {
+      kind: 'UNAVAILABLE', reason: 'PROVIDER',
+    });
 
     await page.getByRole('button', { name: 'Закрыть помощника' }).click();
     await navigateSpa(page, '/catalog/map?lotRooms=2&lotPriceMax=25000000');
@@ -2007,7 +2039,6 @@ async function alternativeGeoJourney(fixtures, primaryMarkerColor) {
     await submit(page, input, query);
     const article = await waitForAssistantArticle(page, query);
     await article.getByRole('heading', { name: 'Альтернативы' }).waitFor();
-    await page.getByText('Павелецкая Плаза · до 2 км', { exact: true }).waitFor();
     const distances = article.locator('.assistant-result-distance');
     await distances.last().waitFor();
     for (const text of await distances.allTextContents()) {
@@ -2057,7 +2088,6 @@ async function lineGeoJourney(fixtures) {
     for (const title of ['ЖК Линия дальше 5 км', 'ЖК Линия неверная комнатность', 'ЖК Линия выше бюджета']) {
       assert.equal(await article.getByText(title, { exact: true }).count(), 0);
     }
-    await page.getByText('Садовое кольцо · до 5 км от всей дороги', { exact: true }).waitFor();
     assert.equal(await page.getByRole('region', { name: 'Выбор точки и радиуса' }).count(), 0);
     await assertGeoResultMap(article, {
       ariaLabel: 'Результаты до 5 км от всей дороги Садовое кольцо',
@@ -2080,7 +2110,6 @@ async function lineGeoJourney(fixtures) {
       providerCallCount: 1,
     });
 
-    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
     await startNewConversation(page);
     const operationIdsBeforeOverride = await readGeoOperationIds(fixtures.regular.user.id, 'садовое кольцо');
     const overrideQuery = 'Найди однокомнатную квартиру до 30 млн в радиусе 1 км от Садового кольца';
@@ -2094,7 +2123,6 @@ async function lineGeoJourney(fixtures) {
     ]) {
       assert.equal(await overrideArticle.getByText(title, { exact: true }).count(), 0);
     }
-    await page.getByText('Садовое кольцо · до 1 км от всей дороги', { exact: true }).waitFor();
     await assertGeoResultMap(overrideArticle, {
       ariaLabel: 'Результаты до 1 км от всей дороги Садовое кольцо',
       mode: 'NEAR', referenceType: 'LineString', primaryMarkers: 2,
@@ -2126,7 +2154,6 @@ async function lineGeoJourney(fixtures) {
     assert.equal(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), true);
     await captureQaScreenshot(page, 'desktop-assistant-geo-line.png', dialog);
 
-    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
     await startNewConversation(page);
     const operationIdsBeforeAlternative = await readGeoOperationIds(fixtures.regular.user.id, 'садовое кольцо');
     const alternativeQuery = 'Найди однокомнатную квартиру до 18 млн рядом с Садовым кольцом';
@@ -2146,7 +2173,6 @@ async function lineGeoJourney(fixtures) {
     ]) {
       assert.equal(await alternativeArticle.getByText(title, { exact: true }).count(), 0);
     }
-    await page.getByText('Садовое кольцо · до 5 км от всей дороги', { exact: true }).waitFor();
     await assertGeoResultMap(alternativeArticle, {
       ariaLabel: 'Результаты до 5 км от всей дороги Садовое кольцо',
       mode: 'NEAR', referenceType: 'LineString', primaryMarkers: 0, alternativeMarkers: 1,
@@ -2210,7 +2236,6 @@ async function areaGeoJourney(fixtures) {
     for (const title of ['ЖК За границей Арбата', 'ЖК Арбат неверная комнатность', 'ЖК Арбат выше бюджета']) {
       assert.equal(await article.getByText(title, { exact: true }).count(), 0);
     }
-    await page.getByText('внутри района Арбат', { exact: true }).waitFor();
     assert.equal(await article.locator('.assistant-result-distance').count(), 0);
     await assertGeoResultMap(article, {
       ariaLabel: 'Результаты внутри области район Арбат',
@@ -2240,6 +2265,98 @@ async function areaGeoJourney(fixtures) {
     assert.equal(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), true);
     await captureQaScreenshot(page, 'mobile-assistant-geo-area.png', dialog);
     assertProviderIsolation(requestedUrls);
+  } finally {
+    await context.close();
+  }
+}
+
+async function geo2LogicalPlanJourney(fixtures) {
+  const datasetVersion = `assistant-t07-geo2-${resourceSuffix}`;
+  const { AssistantMetroTravelTimeService } = require('../dist/assistant/geo/assistant-metro-travel-time.service.js');
+  const metroTravelTimes = apiApp.get(AssistantMetroTravelTimeService);
+  await metroTravelTimes.importAccessPoints({
+    type: 'FeatureCollection',
+    features: geo2MetroPoints.map(([name, longitude, latitude], index) => ({
+      type: 'Feature', id: `node/${index + 1}`, properties: { name },
+      geometry: { type: 'Point', coordinates: [longitude, latitude] },
+    })),
+  }, datasetVersion);
+  const objects = await prisma.realEstateObject.findMany({
+    where: {
+      status: 'PUBLISHED', deletedAt: null,
+      latitude: { not: null }, longitude: { not: null },
+    },
+    select: { id: true, title: true, latitude: true, longitude: true },
+  });
+  for (const object of objects) {
+    const durationSeconds = object.title === 'ЖК Линия B' ? 360 : 240;
+    geo2RouteDurations.set([object.longitude, object.latitude]
+      .map((coordinate) => Number(coordinate).toFixed(5)).join(','), durationSeconds);
+    await metroTravelTimes.ensureFacts([object]);
+  }
+
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  await installMapFixture(page);
+  try {
+    await login(page, fixtures.regular.user);
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    await startNewConversation(page);
+    const query = 'Найди квартиры внутри Садового кольца, не более пяти минут пешком до ближайшего метро';
+    const input = page.getByLabel('Сообщение помощнику');
+    await submit(page, input, query);
+    const article = await waitForAssistantArticle(page, query);
+    const run = await prisma.assistantRun.findFirstOrThrow({
+      where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: query } },
+      include: { userMessage: true, assistantMessage: true },
+    });
+    assert.equal(
+      run.assistantMessage.answerJson.kind,
+      'SEARCH_RESULTS',
+      `FIX-GEO2 exact run failed: ${JSON.stringify({
+        intent: run.intentJson,
+        answer: run.assistantMessage.answerJson,
+      })}`,
+    );
+    assert.equal(run.userMessage.geoContextJson, null);
+    assert.deepEqual(run.intentJson.predicates, [
+      { type: 'SPATIAL', relation: 'INSIDE', referenceType: 'PLACE', place: 'Садовое кольцо' },
+      {
+        type: 'TRAVEL_TIME', mode: 'WALK', destination: 'NEAREST_METRO',
+        operator: 'LTE', value: 5, unit: 'MINUTES',
+      },
+    ]);
+    assert.equal(run.assistantMessage.answerJson.geo.mode, 'INSIDE');
+    assert.equal(run.assistantMessage.answerJson.geo.kind, 'AREA');
+    const cards = [
+      ...run.assistantMessage.answerJson.exactResults,
+      ...run.assistantMessage.answerJson.additionalExactResults,
+    ];
+    assert.ok(cards.length > 0, `FIX-GEO2 exact run returned no cards: ${JSON.stringify({
+      intent: run.intentJson,
+      answer: run.assistantMessage.answerJson,
+    })}`);
+    await article.locator('.assistant-result-card').first().waitFor();
+    assert.equal(cards.some(({ title }) => title === 'ЖК Линия B'), false);
+    for (const card of cards) {
+      assert.ok(card.facts.includes('4 мин пешком до метро «Таганская»'));
+      const evidence = run.evidenceJson.find(({ unitId }) => unitId === card.unitId);
+      assert.deepEqual(evidence.walkingMetro, { stationName: 'Таганская', durationSeconds: 240 });
+    }
+    assert.ok((await article.locator('.assistant-result-facts').allTextContents())
+      .every((facts) => facts.includes('4 мин пешком до метро «Таганская»')));
+    await captureQaScreenshot(page, 'geo2-assistant-walking.png', article);
+    await page.getByRole('button', { name: 'Закрыть помощника' }).click();
+    await navigateSpa(page, '/catalog/map');
+    const map = page.getByRole('region', { name: 'Карта объектов' });
+    await map.locator('.map-price-marker')
+      .and(map.getByRole('button', { name: cards[0].title, exact: true })).click();
+    const mapCard = page.getByRole('article', { name: `Объект ${cards[0].title}` });
+    const station = mapCard.locator('.map-nearby-metro-list li').filter({ hasText: 'Таганская' });
+    await station.waitFor();
+    assert.match(await station.innerText(), /300 м · 4 мин/u);
+    await captureQaScreenshot(page, 'geo2-map-walking.png', mapCard);
+    process.stdout.write('ASSISTANT_GEO2_MAP_WALKING_MATCH_OK\n');
   } finally {
     await context.close();
   }
@@ -2316,7 +2433,10 @@ async function assertConnectedGeoRun({
   for (const key of ['district', 'metro', 'developer']) {
     assert.equal(run.intentJson.hardFilters[key], null);
   }
-  const { slotId, sourceSpan, ...storedGeo } = run.userMessage.geoContextJson;
+  assert.equal(run.userMessage.geoContextJson, null);
+  const { slotId, sourceSpan, markers: _markers,
+    referenceGeometry: _referenceGeometry, searchArea: _searchArea,
+    ...storedGeo } = answer.geo;
   assert.deepEqual(storedGeo, {
     kind,
     mode,
@@ -2666,12 +2786,16 @@ async function installMapFixture(page, options = {}) {
   });
   await page.route(/https:\/\/map-fixtures\.test\/tiles\/.*\.png/u, fulfillTile);
   await page.route(/\/__map_fixture__\/tiles\/.*\.png(?:\?.*)?$/u, fulfillTile);
+  await page.route('https://map-fixtures.test/metro.pbf', (route) => route.fulfill({
+    status: 200, contentType: 'application/x-protobuf', body: geo2MetroTile,
+  }));
   await page.route('https://map-fixtures.test/style.json', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
       version: 8,
       sources: {
+        metroFixture: { type: 'vector', tiles: ['https://map-fixtures.test/metro.pbf'], maxzoom: 0 },
         rasterFixture: {
           type: 'raster',
           tiles: ['https://map-fixtures.test/tiles/{z}/{x}/{y}.png'],
@@ -2687,6 +2811,7 @@ async function installMapFixture(page, options = {}) {
       },
       layers: [
         { id: 'background', type: 'background', paint: { 'background-color': '#f3f0e9' } },
+        { id: 'metro-fixture', type: 'circle', source: 'metroFixture', 'source-layer': 'poi', paint: { 'circle-radius': 3 } },
         {
           id: 'raster-fixture',
           type: 'raster',

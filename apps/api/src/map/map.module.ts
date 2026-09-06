@@ -10,5 +10,6 @@ import { MapService } from './map.service';
   imports: [AuthModule, PrismaModule],
   controllers: [MapController],
   providers: [MapService, MapRoutingService],
+  exports: [MapRoutingService],
 })
 export class MapModule {}

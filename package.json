@@ -44,6 +44,7 @@
     "assistant:rollout:preflight": "pnpm build:api && node apps/api/scripts/assistant-rollout-preflight.cjs",
     "assistant:rollout:advance": "pnpm build:api && node apps/api/scripts/assistant-rollout-preflight.cjs --record-stage",
     "assistant:sources:discover": "pnpm build:api && node --env-file-if-exists=.env apps/api/scripts/assistant-source-discovery.cjs",
+    "assistant:metro:refresh": "pnpm build:api && node --env-file-if-exists=apps/api/.env apps/api/dist/assistant/geo/assistant-metro-refresh.js",
     "training:webhook:status": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs status",
     "training:webhook:register": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs register",
     "training:webhook:delete": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs delete",

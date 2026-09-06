@@ -391,12 +391,26 @@ function selectLegacyGeometryCandidates(
   candidates: AssistantGeoProviderCandidate[],
   mode: 'NEAR' | 'INSIDE',
 ) {
-  if (mode === 'INSIDE') return candidates.filter((candidate) => candidate.geometryKind === 'AREA');
+  if (mode === 'INSIDE') {
+    const areas = candidates.filter((candidate) => candidate.geometryKind === 'AREA');
+    return areas.length > 0 ? areas : candidates.filter(isClosedLineBoundary);
+  }
   const lines = candidates.filter((candidate) => candidate.geometryKind === 'LINE');
   if (lines.length > 0) return lines;
   const areas = candidates.filter((candidate) => candidate.geometryKind === 'AREA');
   if (areas.length > 0) return areas;
   return candidates.filter((candidate) => (candidate.geometryKind ?? 'POINT') === 'POINT');
+}
+
+function isClosedLineBoundary(candidate: AssistantGeoProviderCandidate) {
+  if (candidate.geometryKind !== 'LINE'
+    || candidate.geometryComplete !== true
+    || candidate.referenceGeometry?.type !== 'LineString') return false;
+  const coordinates = candidate.referenceGeometry.coordinates;
+  if (coordinates.length < 4) return false;
+  const first = coordinates[0];
+  const last = coordinates.at(-1);
+  return Boolean(first && last && first[0] === last[0] && first[1] === last[1]);
 }
 
 function isExpectedAdministrativeArea(

@@ -93,6 +93,11 @@ export type AssistantVerifiedLandmarkInput = {
   };
 };
 
+type AssistantVerifiedAreaFromBoundaryInput = Omit<
+  AssistantVerifiedLandmarkInput,
+  'kind' | 'geometry'
+>;
+
 @Injectable()
 export class AssistantGeoLandmarkService {
   constructor(private readonly prisma: PrismaService) {}
@@ -416,6 +421,36 @@ export class AssistantGeoLandmarkService {
     const existing = await this.findBySourceIdentity(input.sourceProvider, input.sourceExternalId);
     if (!existing) throw new Error('ASSISTANT_GEO_LANDMARK_PERSIST_FAILED');
     return existing;
+  }
+
+  async saveVerifiedAreaFromBoundary(
+    boundaryId: string,
+    input: AssistantVerifiedAreaFromBoundaryInput,
+  ) {
+    const rows = await this.prisma.$queryRaw<Array<{ geometry: string }>>(Prisma.sql`
+      SELECT ST_AsGeoJSON(
+        ST_CollectionExtract(ST_MakeValid(ST_BuildArea(ST_Node("geometry"))), 3),
+        7
+      ) AS geometry
+      FROM assistant_geo_landmarks
+      WHERE id = ${boundaryId}::uuid
+        AND kind = 'line'::assistant_geo_landmark_kind
+        AND ST_IsClosed("geometry")
+        AND NOT ST_IsEmpty(ST_BuildArea(ST_Node("geometry")))
+      LIMIT 1
+    `);
+    if (!rows[0]?.geometry) throw new AssistantGeoLandmarkGeometryError();
+    let geometry: unknown;
+    try {
+      geometry = JSON.parse(rows[0].geometry);
+    } catch {
+      throw new AssistantGeoLandmarkGeometryError();
+    }
+    return this.saveVerified({
+      ...input,
+      kind: 'AREA',
+      geometry: parseAssistantReferenceGeometry(geometry, 'AREA'),
+    });
   }
 
   async confirmManualAlias(input: {

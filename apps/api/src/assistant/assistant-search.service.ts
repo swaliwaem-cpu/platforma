@@ -32,6 +32,11 @@ import {
   assistantComparisonSummaryItemLimit,
   type AssistantComparisonSearchGroup,
 } from './assistant-comparison-answer';
+import {
+  assistantMetroRoutingProfile,
+  AssistantMetroTravelTimeService,
+  AssistantMetroTravelTimeUnavailableError,
+} from './geo/assistant-metro-travel-time.service';
 
 const candidateLimit = 120;
 export const assistantBudgetRelaxationRub = 7_000_000;
@@ -134,6 +139,7 @@ type SearchOptions = {
   requiredFacts?: AssistantRequiredFact[];
   geo?: AssistantGeoSearchSelection | null;
   includeComparisonSummary?: boolean;
+  travelTime?: { maxSeconds: number };
 };
 
 export type AssistantGeoSearchResult = AssistantGeoConstraintView | {
@@ -146,12 +152,14 @@ export class AssistantSearchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly landmarks?: AssistantGeoLandmarkService,
+    private readonly metroTravelTimes?: AssistantMetroTravelTimeService,
   ) {}
 
   async search(
     intent: AssistantStructuredIntent,
     context: AssistantPageContext | null,
     geoInput: AssistantGeoSearchSelection | null = null,
+    execution: { deadlineAt?: Date; onDemandObjectIds?: Set<string> } = {},
   ): Promise<{
     exact: AssistantSearchEvidence[];
     totalExactResults: number;
@@ -159,6 +167,9 @@ export class AssistantSearchService {
     geo: AssistantGeoSearchResult | null;
     summary: NonNullable<AssistantComparisonSearchGroup['summary']>;
   }> {
+    if (execution.deadlineAt && execution.deadlineAt.getTime() <= Date.now()) {
+      throw new Error('ASSISTANT_EXECUTION_DEADLINE_EXCEEDED');
+    }
     const geo = geoInput ? parseAssistantGeoStoredValue(geoInput, {
       ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
       ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
@@ -175,7 +186,17 @@ export class AssistantSearchService {
       requiredFacts: intent.requiredFacts,
       geo,
       includeComparisonSummary: intent.taskType === 'COMPARE',
+      travelTime: readWalkingMetroConstraint(intent),
     };
+    if (searchOptions.travelTime) {
+      await this.ensureTravelTimeCoverage(
+        intent.hardFilters,
+        context,
+        searchOptions,
+        execution.deadlineAt,
+        execution.onDemandObjectIds,
+      );
+    }
     const exactSearch = await this.findEvidence(intent.hardFilters, context, searchOptions);
     if (exactSearch.evidence.length > 0) {
       return {
@@ -184,6 +205,16 @@ export class AssistantSearchService {
         alternatives: [],
         geo: geoResult,
         summary: exactSearch.summary,
+      };
+    }
+
+    if (searchOptions.travelTime) {
+      return {
+        exact: [],
+        totalExactResults: 0,
+        alternatives: [],
+        geo: geoResult,
+        summary: emptyComparisonSummary(),
       };
     }
 
@@ -336,6 +367,10 @@ export class AssistantSearchService {
         context,
         options,
       );
+      if (resolvedOptions.travelTime
+        && (await this.findMissingTravelTimeFacts(transaction, filters, context, resolvedOptions)).length > 0) {
+        throw new AssistantMetroTravelTimeUnavailableError('ASSISTANT_METRO_ROUTE_COVERAGE_GAP');
+      }
       const comparisonGroups = resolvedOptions.comparisonTargets?.length === 2
         ? resolvedOptions.comparisonTargets.map((target, index) => ({
             targets: [target],
@@ -381,10 +416,31 @@ export class AssistantSearchService {
         where: { id: { in: rowIds } },
         select: candidateSelect,
       });
+      const routeFacts = options.travelTime
+        ? await transaction.assistantObjectMetroRouteFact.findMany({
+            where: {
+              objectId: { in: records.map(({ object }) => object.id) },
+              routingProfile: assistantMetroRoutingProfile,
+              metroAccessPoint: { isActive: true },
+            },
+            select: {
+              objectId: true,
+              durationSeconds: true,
+              metroAccessPoint: { select: { stationName: true } },
+            },
+          })
+        : [];
+      const routeFactsByObjectId = new Map(routeFacts.map((fact) => [fact.objectId, fact]));
       const recordsById = new Map(records.map((record) => [record.id, record]));
       const evidence = rowIds.flatMap((id) => {
         const record = recordsById.get(id);
-        const candidate = record ? this.toEvidence(record, filters) : null;
+        const routeFact = record ? routeFactsByObjectId.get(record.object.id) : undefined;
+        const candidate = record ? this.toEvidence(record, filters, routeFact
+          ? {
+              stationName: routeFact.metroAccessPoint.stationName,
+              durationSeconds: routeFact.durationSeconds,
+            }
+          : null) : null;
         return candidate ? [{ ...candidate, distanceMeters: rowDistances.get(id) ?? null }] : [];
       });
       return { evidence, total, summary };
@@ -647,6 +703,22 @@ export class AssistantSearchService {
       }
     }
 
+    if (options.travelTime) {
+      conditions.push(Prisma.sql`EXISTS (
+        SELECT 1
+        FROM assistant_object_metro_route_facts metro_fact
+        JOIN assistant_metro_access_points metro_access
+          ON metro_access.id = metro_fact.metro_access_point_id
+        WHERE metro_fact.object_id = o.id
+          AND metro_fact.object_latitude = o.latitude
+          AND metro_fact.object_longitude = o.longitude
+          AND metro_fact.access_dataset_version = metro_access.dataset_version
+          AND metro_fact.routing_profile = ${assistantMetroRoutingProfile}
+          AND metro_access.is_active = TRUE
+          AND metro_fact.duration_seconds <= ${options.travelTime.maxSeconds}
+      )`);
+    }
+
     if (options.nearbyDistrictParentIds?.length) {
       const parentIds = Prisma.join(options.nearbyDistrictParentIds.map((id) => Prisma.sql`${id}::uuid`));
       conditions.push(Prisma.sql`(
@@ -846,6 +918,7 @@ export class AssistantSearchService {
   private toEvidence(
     record: CandidateRecord,
     filters: AssistantSearchFilters,
+    walkingMetro: AssistantSearchEvidence['walkingMetro'] = null,
   ): AssistantSearchEvidence | null {
     if (record.status !== FeedUnitStatus.AVAILABLE) return null;
     const priceRub = toFiniteNumber(record.effectivePrice ?? record.discountPrice ?? record.price);
@@ -889,10 +962,72 @@ export class AssistantSearchService {
       latitude: toFiniteNumber(record.object.latitude),
       longitude: toFiniteNumber(record.object.longitude),
       distanceMeters: null,
+      walkingMetro,
       pdfs: collectPdfs(record),
       deviations: [],
     };
   }
+
+  private async ensureTravelTimeCoverage(
+    filters: AssistantSearchFilters,
+    context: AssistantPageContext | null,
+    options: SearchOptions,
+    deadlineAt?: Date,
+    onDemandObjectIds?: Set<string>,
+  ) {
+    if (!this.metroTravelTimes) {
+      throw new AssistantMetroTravelTimeUnavailableError('ASSISTANT_METRO_ROUTE_SERVICE_UNAVAILABLE');
+    }
+    const missing = await this.findMissingTravelTimeFacts(this.prisma, filters, context, options);
+    await this.metroTravelTimes.ensureFacts(missing, deadlineAt, onDemandObjectIds);
+  }
+
+  private async findMissingTravelTimeFacts(
+    database: Prisma.TransactionClient,
+    filters: AssistantSearchFilters,
+    context: AssistantPageContext | null,
+    options: SearchOptions,
+  ) {
+    const conditions = this.createSqlConditions(filters, context, {
+      ...options,
+      travelTime: undefined,
+    });
+    return database.$queryRaw<Array<{
+      id: string;
+      latitude: Prisma.Decimal | null;
+      longitude: Prisma.Decimal | null;
+    }>>(Prisma.sql`
+      SELECT DISTINCT
+        o.id::text AS id,
+        o.latitude,
+        o.longitude
+      FROM feed_units fu
+      JOIN feed_sources fs ON fs.id = fu.source_id
+      JOIN real_estate_objects o ON o.id = fu.object_id
+      LEFT JOIN developers d ON d.id = o.developer_id
+      WHERE ${Prisma.join(conditions, ' AND ')}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM assistant_object_metro_route_facts metro_fact
+          JOIN assistant_metro_access_points metro_access
+            ON metro_access.id = metro_fact.metro_access_point_id
+          WHERE metro_fact.object_id = o.id
+            AND metro_fact.object_latitude = o.latitude
+            AND metro_fact.object_longitude = o.longitude
+            AND metro_fact.access_dataset_version = metro_access.dataset_version
+            AND metro_fact.routing_profile = ${assistantMetroRoutingProfile}
+            AND metro_access.is_active = TRUE
+        )
+      ORDER BY o.id::text
+      LIMIT 4
+    `);
+  }
+}
+
+function readWalkingMetroConstraint(intent: AssistantStructuredIntent) {
+  const predicate = intent.predicates?.find((item) => item.type === 'TRAVEL_TIME');
+  if (!predicate) return undefined;
+  return { maxSeconds: predicate.value * 60 };
 }
 
 function toSafeCount(value: bigint | undefined) {

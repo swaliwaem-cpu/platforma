@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
+import { MapModule } from '../map/map.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssistantController } from './assistant.controller';
@@ -10,6 +11,7 @@ import { AssistantAnswerService } from './assistant-answer.service';
 import { createAssistantPlannerGateway } from './assistant-planner-gateway';
 import { AssistantQueryPlanner } from './assistant-query-planner';
 import { AssistantRunProcessor } from './assistant-run.processor';
+import { AssistantExecutionModule } from './assistant-execution.module';
 import { AssistantExternalConnectorsGuard, AssistantFeatureGuard } from './assistant-runtime-config';
 import { AssistantSearchService } from './assistant-search.service';
 import { AssistantPlatformCatalogService } from './catalog/assistant-platform-catalog.service';
@@ -32,9 +34,10 @@ import { AssistantAiUsageBudgetService } from './operations/assistant-ai-usage-b
 import { AssistantRetentionService } from './operations/assistant-retention.service';
 import { AssistantUsageBudgetService } from './operations/assistant-usage-budget.service';
 import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.service';
+import { AssistantMetroTravelTimeService } from './geo/assistant-metro-travel-time.service';
 
 @Module({
-  imports: [AuthModule, PrismaModule, AssistantSourcesModule],
+  imports: [AuthModule, PrismaModule, MapModule, AssistantSourcesModule],
   controllers: [
     AssistantController,
     AssistantFeedbackController,
@@ -47,10 +50,12 @@ import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.
     AssistantFeedbackService,
     AssistantAuditService,
     AssistantRunProcessor,
+    AssistantExecutionModule,
     AssistantAnswerService,
     AssistantSearchService,
     AssistantPlatformCatalogService,
     AssistantGeoLandmarkService,
+    AssistantMetroTravelTimeService,
     AssistantUsageBudgetService,
     {
       provide: AssistantGeoUsageLedgerService,

@@ -238,7 +238,7 @@ test('Assistant T07 resolves every frozen project reference before the contribut
   }
 });
 
-test('Assistant T07 frozen standalone queries reproduce their canonical persisted intents', async () => {
+test('Assistant T07 frozen standalone queries preserve canonical intents except superseded broad clarifications', async () => {
   const dataset = loadAssistantEvalDataset(JSON.parse(readFileSync(datasetPath, 'utf8')));
   const planner = new AssistantQueryPlanner(new AssistantFakePlannerGateway());
   for (const item of dataset.cases.filter(({ expected }) => expected.expectedIntent)) {
@@ -253,7 +253,22 @@ test('Assistant T07 frozen standalone queries reproduce their canonical persiste
       messages: [item.query],
       context: geo ? { pageContext: null, geo } : null,
     });
-    assert.deepEqual(planned.intent, item.expected.expectedIntent, item.id);
+    const expectedIntent = item.category === 'CLARIFICATION'
+      ? {
+          ...item.expected.expectedIntent,
+          needsClarification: false,
+          clarificationQuestion: null,
+          schemaVersion: 'AssistantLogicalPlanV1',
+          predicates: [],
+          clarificationReason: null,
+        }
+      : {
+          ...item.expected.expectedIntent,
+          schemaVersion: 'AssistantLogicalPlanV1',
+          predicates: [],
+          clarificationReason: null,
+        };
+    assert.deepEqual(planned.intent, expectedIntent, item.id);
   }
 });
 

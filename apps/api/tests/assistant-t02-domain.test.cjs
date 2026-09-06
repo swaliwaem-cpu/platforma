@@ -8,6 +8,7 @@ const {
   AssistantPlannerError,
   AssistantQueryPlanner,
   createAssistantComparisonTargetVariants,
+  extractAssistantLogicalPredicates,
 } = require('../dist/assistant/assistant-query-planner.js');
 const {
   AssistantAnswerValidationError,
@@ -31,6 +32,13 @@ const {
 const {
   AssistantSearchService,
 } = require('../dist/assistant/assistant-search.service.js');
+const {
+  AssistantMetroTravelTimeService,
+  AssistantMetroTravelTimeUnavailableError,
+} = require('../dist/assistant/geo/assistant-metro-travel-time.service.js');
+const {
+  AssistantExecutionModule,
+} = require('../dist/assistant/assistant-execution.module.js');
 const {
   AssistantService,
 } = require('../dist/assistant/assistant.service.js');
@@ -105,7 +113,7 @@ test('Assistant T02 planner stops after invalid Luna and Terra responses', async
   assert.equal(attempts, 2);
 });
 
-test('Assistant T02 planner pins explicit hard filters and asks only for missing critical facts', async () => {
+test('FIX-GEO2 planner pins explicit hard filters without requiring omitted optional filters', async () => {
   const planner = new AssistantQueryPlanner({
     async plan() {
       return validIntent();
@@ -118,10 +126,8 @@ test('Assistant T02 planner pins explicit hard filters and asks only for missing
   });
 
   assert.equal(result.intent.hardFilters.budgetMaxRub, 25_000_000);
-  assert.equal(result.intent.needsClarification, true);
-  assert.match(result.intent.clarificationQuestion, /комнатность/iu);
-  assert.match(result.intent.clarificationQuestion, /район или метро/iu);
-  assert.doesNotMatch(result.intent.clarificationQuestion, /бюджет/iu);
+  assert.equal(result.intent.needsClarification, false);
+  assert.equal(result.intent.clarificationQuestion, null);
 });
 
 test('Assistant T02 planner keeps previously stated conditions and applies the page context', async () => {
@@ -156,6 +162,167 @@ test('Assistant T02 fake planner keeps a district from the previous turn and acc
   assert.equal(result.intent.hardFilters.areaMin, 55);
   assert.equal(result.intent.hardFilters.areaMax, 70);
   assert.equal(result.intent.needsClarification, false);
+});
+
+test('FIX-GEO2 planner returns a grounded logical plan for inside and walking-time predicates', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['Покажи квартиры внутри Садового кольца, до пяти минут пешком до ближайшего метро'],
+    context: null,
+  });
+
+  assert.equal(result.intent.schemaVersion, 'AssistantLogicalPlanV1');
+  assert.deepEqual(result.intent.predicates, [
+    {
+      type: 'SPATIAL',
+      relation: 'INSIDE',
+      referenceType: 'PLACE',
+      place: 'Садовое кольцо',
+    },
+    {
+      type: 'TRAVEL_TIME',
+      mode: 'WALK',
+      destination: 'NEAREST_METRO',
+      operator: 'LTE',
+      value: 5,
+      unit: 'MINUTES',
+    },
+  ]);
+  assert.equal(result.intent.needsClarification, false);
+  assert.equal(result.intent.clarificationReason, null);
+});
+
+test('FIX-GEO2 logical predicates use the latest corrected place without losing an earlier travel limit', () => {
+  assert.deepEqual(extractAssistantLogicalPredicates([
+    'Найди внутри Арбата не более пяти минут пешком до метро',
+    'Нет, внутри Садового кольца',
+  ]), {
+    predicates: [
+      {
+        type: 'SPATIAL', relation: 'INSIDE', referenceType: 'PLACE', place: 'Садовое кольцо',
+      },
+      {
+        type: 'TRAVEL_TIME', mode: 'WALK', destination: 'NEAREST_METRO',
+        operator: 'LTE', value: 5, unit: 'MINUTES',
+      },
+    ],
+    missingTravelValue: false,
+  });
+});
+
+test('FIX-GEO2 rejects an invented planner clarification and uses Terra only as local-plan fallback', async () => {
+  const calls = [];
+  const planner = new AssistantQueryPlanner({
+    async plan(request) {
+      calls.push(request.model);
+      return request.model === 'gpt-5.6-luna'
+        ? validLogicalIntent({
+            needsClarification: true,
+            clarificationQuestion: 'Уточните место.',
+            clarificationReason: 'AMBIGUOUS_PLACE',
+          })
+        : validLogicalIntent();
+    },
+  });
+
+  const result = await planner.plan({ messages: ['Покажи доступные квартиры'], context: null });
+
+  assert.equal(result.intent.needsClarification, false);
+  assert.deepEqual(calls, ['gpt-5.6-luna', 'gpt-5.6-terra']);
+});
+
+test('FIX-GEO2 rejects invented plan values and preserves a grounded soft preference', async () => {
+  const calls = [];
+  const planner = new AssistantQueryPlanner({
+    async plan(request) {
+      calls.push(request.model);
+      if (request.model === 'gpt-5.6-luna') {
+        return validLogicalIntent({
+          comparisonTargets: ['Выдуманный ЖК'],
+          hardFilters: { ...emptyFilters(), developer: 'Выдуманный девелопер' },
+        });
+      }
+      return validLogicalIntent({
+        softPreferences: { ...emptyFilters(), metro: 'Спортивная' },
+      });
+    },
+  });
+
+  const result = await planner.plan({
+    messages: ['Желательно у метро Спортивная'],
+    context: null,
+  });
+
+  assert.deepEqual(calls, ['gpt-5.6-luna', 'gpt-5.6-terra']);
+  assert.equal(result.intent.hardFilters.metro, null);
+  assert.equal(result.intent.softPreferences.metro, 'Спортивная');
+});
+
+test('FIX-GEO2 follows corrected budget and walking time without parsing across messages', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+  const result = await planner.plan({ messages: [
+    'Квартиры до 30 млн, до пяти минут пешком до метро',
+    'Нет, бюджет до 20 млн',
+    'Нет, до десяти минут',
+  ], context: null });
+  assert.equal(result.intent.hardFilters.budgetMaxRub, 20_000_000);
+  assert.equal(result.intent.hardFilters.metro, null);
+  assert.equal(result.intent.predicates.find((item) => item.type === 'TRAVEL_TIME').value, 10);
+});
+
+test('FIX-GEO2 asks for clarification on a grounded conflicting budget range', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+  const result = await planner.plan({ messages: ['Квартиры от 30 млн до 20 млн'], context: null });
+  assert.equal(result.intent.clarificationReason, 'CONFLICTING_HARD_CONDITIONS');
+  assert.equal(result.intent.needsClarification, true);
+  assert.equal(result.telemetry.length, 1);
+});
+
+test('FIX-GEO2 routes project requests with spatial or travel conditions through verified search', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+  const result = await planner.plan({
+    messages: ['Покажи ЖК внутри Садового кольца, до пяти минут пешком до метро'], context: null,
+  });
+  assert.equal(result.intent.taskType, 'SEARCH');
+  assert.equal(result.intent.predicates.length, 2);
+});
+
+test('FIX-GEO2 empty metro selection never falls back to external lots without routes', async () => {
+  let knowledgeCalls = 0;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    { async search() { return { exact: [], alternatives: [], totalExactResults: 0, geo: null }; } },
+    { async retrieve() { knowledgeCalls += 1; return []; } },
+  );
+  const result = await service.answer({
+    messages: ['Квартиры до пяти минут пешком до метро'], context: null,
+  });
+  assert.equal(knowledgeCalls, 0);
+  assert.equal(result.answer.kind, 'SEARCH_RESULTS');
+  assert.equal(result.answer.totalExactResults, 0);
+});
+
+test('FIX-GEO2 preserves a later knowledge question after a spatial search', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+  const result = await planner.plan({ messages: [
+    'Покажи квартиры внутри Садового кольца, до пяти минут пешком до метро',
+    'Какие условия ипотеки в ЖК Символ?',
+  ], context: null });
+  assert.equal(result.intent.taskType, 'FACT');
+});
+
+test('FIX-GEO2 broad search does not require budget, rooms, or location', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({ messages: ['Покажи доступные квартиры'], context: null });
+
+  assert.equal(result.intent.taskType, 'SEARCH');
+  assert.equal(result.intent.needsClarification, false);
+  assert.equal(result.intent.clarificationQuestion, null);
+  assert.equal(result.intent.schemaVersion, 'AssistantLogicalPlanV1');
+  assert.deepEqual(result.intent.predicates, []);
+  assert.equal(result.intent.clarificationReason, null);
 });
 
 test('Assistant T02 planner consumes a district filter resolved as the same trusted landmark', async () => {
@@ -696,6 +863,10 @@ test('Assistant T02 stored answer parser keeps legacy results and rejects a part
   assert.equal(restored.totalExactResults, undefined);
   assert.equal(restored.additionalExactResults, undefined);
   assert.equal(service.parseStoredAnswer({ ...legacy, totalExactResults: 1 }), null);
+  assert.deepEqual(service.parseStoredAnswer({ kind: 'CLARIFICATION' }), {
+    kind: 'CLARIFICATION',
+    reason: 'MISSING_NUMERIC_VALUE',
+  });
 
   const boundaryAnswer = structuredClone(legacy);
   boundaryAnswer.exactResults[0].distanceMeters = 2_001.5;
@@ -1180,7 +1351,7 @@ test('Assistant T02 fake Luna planner extracts supported Platforma conditions wi
   ]);
 });
 
-test('Assistant T02 fake Luna planner keeps absent optional filters nullable for clarification', async () => {
+test('FIX-GEO2 fake Luna planner keeps absent optional filters nullable without clarification', async () => {
   const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
 
   const result = await planner.plan({ messages: ['Найди подходящий объект'], context: null });
@@ -1188,7 +1359,7 @@ test('Assistant T02 fake Luna planner keeps absent optional filters nullable for
   assert.equal(result.intent.hardFilters.district, null);
   assert.equal(result.intent.hardFilters.metro, null);
   assert.equal(result.intent.hardFilters.developer, null);
-  assert.equal(result.intent.needsClarification, true);
+  assert.equal(result.intent.needsClarification, false);
   assert.equal(result.telemetry.length, 1);
 });
 
@@ -1368,18 +1539,408 @@ test('Assistant T02 answer service skips search for clarification and legal boun
   let searchCalls = 0;
   const search = { async search() { searchCalls += 1; return { exact: [], alternatives: [] }; } };
   const service = new AssistantAnswerService(
-    new AssistantQueryPlanner({ async plan() { return validIntent(); } }),
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
     search,
   );
 
-  const clarification = await service.answer({ messages: ['Нужна квартира'], context: null });
+  const clarification = await service.answer({ messages: ['Нужна квартира пешком до метро'], context: null });
   assert.equal(clarification.answer.kind, 'CLARIFICATION');
-  assert.match(clarification.content, /бюджет/iu);
+  assert.match(clarification.content, /время/iu);
 
   const legal = await service.answer({ messages: ['Какой налог будет по договору?'], context: null });
   assert.equal(legal.answer.kind, 'SAFE_BOUNDARY');
   assert.match(legal.content, /не заменяет консультацию/iu);
   assert.equal(searchCalls, 0);
+});
+
+test('FIX-GEO2 execution boundary forwards the complete raw dialog with roles', async () => {
+  const calls = [];
+  let messageQuery;
+  const execution = new AssistantExecutionModule({
+    assistantRun: {
+      async findUniqueOrThrow() {
+        return {
+          ownerUserId: '20000000-0000-4000-8000-000000000001',
+          conversationId: '10000000-0000-4000-8000-000000000001',
+          userMessage: {
+            id: '30000000-0000-4000-8000-000000000002',
+            createdAt: new Date('2026-09-03T12:00:00.000Z'),
+            contextJson: null,
+            geoContextJson: null,
+          },
+        };
+      },
+    },
+    assistantMessage: {
+      async findMany(query) {
+        messageQuery = query;
+        return [
+          { role: 'USER', content: 'Нет, внутри Садового кольца' },
+          { role: 'ASSISTANT', content: 'Уточните место.' },
+          { role: 'USER', content: 'Найди квартиры внутри Арбата и до пяти минут пешком до метро' },
+        ];
+      },
+    },
+  }, {
+    async answer(input) {
+      calls.push(input);
+      return { ok: true };
+    },
+  }, {
+    async reconcileExpiredReservations() {},
+  });
+  const deadlineAt = new Date(Date.now() + 15_000);
+
+  await execution.execute('30000000-0000-4000-8000-000000000001', deadlineAt);
+
+  assert.deepEqual(calls[0].messages, [
+    'Найди квартиры внутри Арбата и до пяти минут пешком до метро',
+    'Нет, внутри Садового кольца',
+  ]);
+  assert.deepEqual(calls[0].dialog, [
+    { role: 'USER', content: 'Найди квартиры внутри Арбата и до пяти минут пешком до метро' },
+    { role: 'ASSISTANT', content: 'Уточните место.' },
+    { role: 'USER', content: 'Нет, внутри Садового кольца' },
+  ]);
+  assert.equal(messageQuery.where.role, undefined);
+  assert.deepEqual(messageQuery.where.OR, [
+    { createdAt: { lt: new Date('2026-09-03T12:00:00.000Z') } },
+    {
+      createdAt: new Date('2026-09-03T12:00:00.000Z'),
+      id: { lte: '30000000-0000-4000-8000-000000000002' },
+    },
+  ]);
+  assert.equal(messageQuery.take, undefined);
+  assert.equal(calls[0].deadlineAt, deadlineAt);
+  assert.equal(calls[0].actorUserId, '20000000-0000-4000-8000-000000000001');
+});
+
+test('FIX-GEO2 ambiguous planned place asks one bounded clarification without Terra', async () => {
+  let searchCalls = 0;
+  let resolveCalls = 0;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    { async search() { searchCalls += 1; throw new Error('UNEXPECTED_SEARCH'); } },
+    undefined,
+    {
+      async findAdministrativeDistrict() { return null; },
+      async resolve() {
+        resolveCalls += 1;
+        return {
+          status: 'AMBIGUOUS',
+          placeQuery: 'Садовое кольцо',
+          candidates: [],
+          mode: 'INSIDE',
+          slotId: 'geo-1',
+          sourceText: 'внутри Садового кольца',
+          sourceSpan: { start: 0, end: 24 },
+        };
+      },
+    },
+  );
+
+  const result = await service.answer({
+    messages: ['Найди квартиры внутри Садового кольца не более пяти минут пешком до метро'],
+    context: null,
+  });
+
+  assert.deepEqual(result.answer, { kind: 'CLARIFICATION', reason: 'AMBIGUOUS_PLACE' });
+  assert.equal(resolveCalls, 1);
+  assert.equal(searchCalls, 0);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['gpt-5.6-luna']);
+});
+
+test('FIX-GEO2 missing walking routes returns structured UNAVAILABLE without Terra', async () => {
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search() {
+        throw new AssistantMetroTravelTimeUnavailableError('ASSISTANT_METRO_ROUTER_UNAVAILABLE');
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict() { return null; },
+      async resolve() {
+        return {
+          status: 'RESOLVED',
+          placeQuery: 'Садовое кольцо',
+          candidates: [{
+            id: '11111111-1111-4111-8111-111111111111',
+            label: 'Садовое кольцо',
+            kind: 'AREA',
+            mode: 'INSIDE',
+            city: 'Москва',
+            countryCode: 'ru',
+            source: 'PLACE',
+          }],
+          mode: 'INSIDE',
+          slotId: 'geo-1',
+          sourceText: 'внутри Садового кольца',
+          sourceSpan: { start: 0, end: 24 },
+        };
+      },
+    },
+  );
+
+  const result = await service.answer({
+    messages: ['Найди квартиры внутри Садового кольца не более пяти минут пешком до метро'],
+    context: null,
+  });
+
+  assert.deepEqual(result.answer, { kind: 'UNAVAILABLE', reason: 'ROUTING' });
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['gpt-5.6-luna']);
+});
+
+test('FIX-GEO2 planner provider failure returns structured UNAVAILABLE without Terra', async () => {
+  let plannerCalls = 0;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner({
+      async plan() {
+        plannerCalls += 1;
+        throw new Error('provider offline');
+      },
+    }),
+    { async search() { throw new Error('UNEXPECTED_SEARCH'); } },
+  );
+
+  const result = await service.answer({ messages: ['Покажи доступные квартиры'], context: null });
+
+  assert.deepEqual(result.answer, { kind: 'UNAVAILABLE', reason: 'PROVIDER' });
+  assert.equal(plannerCalls, 1);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['gpt-5.6-luna']);
+});
+
+test('FIX-GEO2 settles known planner usage even when planning or execution exhausts the deadline', async () => {
+  for (const expiresDuring of ['planner', 'execution']) {
+    const receipts = [];
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const planner = new AssistantQueryPlanner({
+      async plan() {
+        if (expiresDuring === 'planner') deadlineAt.setTime(0);
+        return { output: validLogicalIntent(), provider: 'openai', inputTokens: 120, outputTokens: 30, totalTokens: 150 };
+      },
+    }, {
+      async beforeAttempt() { return 'reservation'; },
+      async afterAttempt(reservation, telemetry) { receipts.push({ reservation, telemetry }); },
+    });
+    await assert.rejects(planner.planWithValidation({
+      messages: ['Покажи квартиры'], context: null, deadlineAt,
+    }, async () => { deadlineAt.setTime(0); return {}; }),
+    (error) => error.code === 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED');
+    assert.equal(receipts.length, 1, expiresDuring);
+    assert.equal(receipts[0].telemetry.totalTokens, 150);
+    assert.equal(receipts[0].reservation, 'reservation');
+  }
+});
+
+test('FIX-GEO2 enforces the execution deadline across planning and terminal branches', async () => {
+  let plannerCalls = 0;
+  let searchCalls = 0;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner({
+      async plan() {
+        plannerCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return validLogicalIntent();
+      },
+    }),
+    { async search() { searchCalls += 1; throw new Error('UNEXPECTED_SEARCH'); } },
+  );
+
+  const latePlan = await service.answer({
+    messages: ['Покажи доступные квартиры'],
+    context: null,
+    deadlineAt: new Date(Date.now() + 5),
+  });
+  const expiredLegal = await service.answer({
+    messages: ['Какой налог будет по договору?'],
+    context: null,
+    deadlineAt: new Date(Date.now() - 1),
+  });
+
+  assert.deepEqual(latePlan.answer, { kind: 'UNAVAILABLE', reason: 'DEADLINE' });
+  assert.deepEqual(expiredLegal.answer, { kind: 'UNAVAILABLE', reason: 'DEADLINE' });
+  assert.equal(plannerCalls, 1);
+  assert.equal(searchCalls, 0);
+});
+
+test('FIX-GEO2 maps district data failure but does not hide an unexpected search bug', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+  const districtFailure = new AssistantAnswerService(
+    planner,
+    { async search() { throw new Error('UNEXPECTED_SEARCH'); } },
+    undefined,
+    { async findAdministrativeDistrict() { throw new Error('DATABASE_UNAVAILABLE'); } },
+  );
+  const districtResult = await districtFailure.answer({
+    messages: ['Покажи квартиры в районе Хамовники'],
+    context: null,
+  });
+  assert.deepEqual(districtResult.answer, { kind: 'UNAVAILABLE', reason: 'DATA' });
+
+  const programmerError = new Error('PROGRAMMER_BUG');
+  const searchFailure = new AssistantAnswerService(
+    planner,
+    { async search() { throw programmerError; } },
+  );
+  await assert.rejects(
+    searchFailure.answer({ messages: ['Покажи доступные квартиры'], context: null }),
+    (error) => error === programmerError,
+  );
+});
+
+test('FIX-GEO2 shares the three-object on-demand limit across comparison searches', async () => {
+  let routeCalls = 0;
+  const service = new AssistantMetroTravelTimeService({
+    async $queryRaw() { return [{ id: 'metro', stationName: 'Таганская', datasetVersion: 'v1', latitude: 55.74, longitude: 37.62 }]; },
+    assistantObjectMetroRouteFact: { async upsert() {} },
+  }, { async getWalkingRoutes() {
+    routeCalls += 1;
+    return { routes: [{ destinationIndex: 0, durationSeconds: 240, distanceMeters: 300 }] };
+  } });
+  const object = (id) => ({ id, latitude: 55.75, longitude: 37.61 });
+  const onDemandObjectIds = new Set();
+  await service.ensureFacts([object('a'), object('b')], undefined, onDemandObjectIds);
+  await assert.rejects(service.ensureFacts([object('c'), object('d')], undefined, onDemandObjectIds),
+    (error) => error.code === 'ASSISTANT_METRO_ROUTE_COVERAGE_GAP');
+  assert.equal(routeCalls, 2);
+});
+
+test('FIX-GEO2 stops waiting for an unresponsive router at the execution deadline', async () => {
+  const service = new AssistantMetroTravelTimeService({
+    async $queryRaw() { return [{ id: 'metro', stationName: 'Таганская', datasetVersion: 'v1', latitude: 55.74, longitude: 37.62 }]; },
+    assistantObjectMetroRouteFact: { async upsert() { throw new Error('MUST_NOT_PERSIST'); } },
+  }, { async getWalkingRoutes() { return new Promise(() => {}); } });
+  await assert.rejects(service.ensureFacts(
+    [{ id: 'a', latitude: 55.75, longitude: 37.61 }], new Date(Date.now() + 10),
+  ), (error) => error.code === 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED');
+});
+
+test('FIX-GEO2 null object coordinates and a route past deadline fail closed', async () => {
+  let routeCalls = 0;
+  const withoutCoordinates = new AssistantMetroTravelTimeService({}, {
+    async getWalkingRoutes() { routeCalls += 1; return { routes: [] }; },
+  });
+  await assert.rejects(
+    withoutCoordinates.ensureFacts([{ id: 'object-null', latitude: null, longitude: null }]),
+    (error) => error.code === 'ASSISTANT_OBJECT_COORDINATES_UNAVAILABLE',
+  );
+  assert.equal(routeCalls, 0);
+
+  const afterDeadline = new AssistantMetroTravelTimeService({
+    async $queryRaw() {
+      return [{
+        id: 'metro-1', stationName: 'Таганская', datasetVersion: 'v1',
+        latitude: 55.74, longitude: 37.62,
+      }];
+    },
+    assistantObjectMetroRouteFact: {
+      async upsert() { throw new Error('UNEXPECTED_PERSIST'); },
+    },
+  }, {
+    async getWalkingRoutes() {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { routes: [{ destinationIndex: 0, durationSeconds: 240, distanceMeters: 300 }] };
+    },
+  });
+  await assert.rejects(
+    afterDeadline.ensureFacts(
+      [{ id: 'object-late', latitude: 55.75, longitude: 37.61 }],
+      new Date(Date.now() + 2),
+    ),
+    (error) => error.code === 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED',
+  );
+});
+
+test('FIX-GEO2 empty grounded search is a normal NO_RESULTS answer', async () => {
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search() {
+        return {
+          exact: [], totalExactResults: 0, alternatives: [], geo: null,
+          summary: { minimumPriceRub: null, completion: [], metros: [] },
+        };
+      },
+    },
+  );
+  const result = await service.answer({ messages: ['Покажи доступные квартиры'], context: null });
+  assert.equal(result.answer.kind, 'SEARCH_RESULTS');
+  assert.equal(result.answer.totalExactResults, 0);
+});
+
+test('FIX-GEO2 resolves a raw legacy NEAR clause on the backend after immediate submit', async () => {
+  let searchedGeo = null;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search(_intent, _context, geo) {
+        searchedGeo = geo;
+        return {
+          exact: [], totalExactResults: 0, alternatives: [], geo: null,
+          summary: { minimumPriceRub: null, completion: [], metros: [] },
+        };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict() { return null; },
+      async resolve(input) {
+        assert.equal(input.content, 'Найди двушку рядом с Павелецкая Плаза в радиусе 2 км');
+        return {
+          status: 'RESOLVED',
+          placeQuery: 'Павелецкая Плаза',
+          candidates: [{
+            id: '11111111-1111-4111-8111-111111111111',
+            label: 'Павелецкая Плаза',
+            kind: 'POINT',
+            mode: 'NEAR',
+            distanceMeters: 2_000,
+            point: { latitude: 55.7312, longitude: 37.6364 },
+            city: 'Москва',
+            countryCode: 'ru',
+            source: 'PLACE',
+          }],
+          mode: 'NEAR',
+          distanceMeters: 2_000,
+          slotId: 'geo-1',
+          sourceText: 'Павелецкая Плаза',
+          sourceSpan: { start: 20, end: 58 },
+        };
+      },
+    },
+  );
+
+  await service.answer({
+    messages: ['Найди двушку рядом с Павелецкая Плаза в радиусе 2 км'],
+    context: null,
+  });
+
+  assert.deepEqual(searchedGeo, {
+    kind: 'POINT',
+    mode: 'NEAR',
+    label: 'Павелецкая Плаза',
+    point: { latitude: 55.7312, longitude: 37.6364 },
+    distanceMeters: 2_000,
+    source: 'LANDMARK',
+    landmarkId: '11111111-1111-4111-8111-111111111111',
+    slotId: 'geo-1',
+    sourceSpan: { start: 20, end: 58 },
+  });
+});
+
+test('FIX-GEO2 card exposes the materialized nearest-metro walking fact', () => {
+  const answer = buildAssistantSearchAnswer(
+    validIntent(),
+    [candidate('11111111-1111-4111-8111-111111111111', {
+      walkingMetro: { stationName: 'Таганская', durationSeconds: 240 },
+    })],
+    [],
+    new Date('2026-08-24T12:00:00.000Z'),
+    1,
+  );
+  assert.equal(answer.exactResults[0].facts[0], '4 мин пешком до метро «Таганская»');
 });
 
 test('Assistant T02 answer service forwards trusted geo provenance to the planner', async () => {
@@ -1659,6 +2220,16 @@ function validIntent(overrides = {}) {
     requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
     needsClarification: false,
     clarificationQuestion: null,
+    ...overrides,
+  };
+}
+
+function validLogicalIntent(overrides = {}) {
+  return {
+    ...validIntent(),
+    schemaVersion: 'AssistantLogicalPlanV1',
+    predicates: [],
+    clarificationReason: null,
     ...overrides,
   };
 }

@@ -54,7 +54,7 @@ export const assistantEvalZeroToleranceViolations = [
 
 type AssistantEvalCategory = (typeof assistantEvalCategories)[number];
 type AssistantEvalViolation = (typeof assistantEvalZeroToleranceViolations)[number];
-type AssistantAnswerKind = 'SEARCH_RESULTS' | 'OBJECT_RESULTS' | 'COMPARISON_RESULTS' | 'KNOWLEDGE_RESULTS' | 'CLARIFICATION' | 'REFUSAL' | 'SAFE_BOUNDARY';
+type AssistantAnswerKind = 'SEARCH_RESULTS' | 'OBJECT_RESULTS' | 'COMPARISON_RESULTS' | 'KNOWLEDGE_RESULTS' | 'CLARIFICATION' | 'UNAVAILABLE' | 'REFUSAL' | 'SAFE_BOUNDARY';
 
 type AssistantEvalExpectation = {
   answerKinds: AssistantAnswerKind[];
@@ -213,6 +213,7 @@ const answerKinds = new Set<AssistantAnswerKind>([
   'COMPARISON_RESULTS',
   'KNOWLEDGE_RESULTS',
   'CLARIFICATION',
+  'UNAVAILABLE',
   'REFUSAL',
   'SAFE_BOUNDARY',
 ]);
@@ -1222,7 +1223,16 @@ function intentMatchesFrozenExpectation(
   intent: ReturnType<typeof parseAssistantStructuredIntent>,
   expected: NonNullable<AssistantEvalExpectation['expectedIntent']>,
 ) {
-  return stableSerialize(intent) === stableSerialize(expected);
+  if (expected.schemaVersion === 'AssistantLogicalPlanV1') {
+    return stableSerialize(intent) === stableSerialize(expected);
+  }
+  const {
+    schemaVersion: _schemaVersion,
+    predicates: _predicates,
+    clarificationReason: _clarificationReason,
+    ...legacyIntent
+  } = intent;
+  return stableSerialize(legacyIntent) === stableSerialize(expected);
 }
 
 function alternativeMatchesPersistedDeviation(

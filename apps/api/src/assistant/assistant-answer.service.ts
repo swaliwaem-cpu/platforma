@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import type {
   AssistantAnswer,
+  AssistantGeoCandidate,
   AssistantGeoConstraint,
+  AssistantGeoResolution,
+  AssistantGeoResolutionSlot,
   AssistantGeoSearchContext,
   AssistantGeoSearchSelection,
   AssistantGeoView,
@@ -9,8 +12,12 @@ import type {
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import {
+  AssistantPlannerError,
   AssistantQueryPlanner,
+  createEmptyAssistantSearchFilters,
+  extractAssistantLogicalPredicates,
   extractAssistantExplicitHardFilters,
+  type AssistantDialogMessage,
   type AssistantPlannerTelemetry,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
@@ -21,6 +28,7 @@ import {
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
 import type { AssistantGeoSearchResult } from './assistant-search.service';
+import { AssistantMetroTravelTimeUnavailableError } from './geo/assistant-metro-travel-time.service';
 import { buildAssistantComparisonAnswer } from './assistant-comparison-answer';
 import {
   buildAssistantObjectAnswer,
@@ -30,7 +38,7 @@ import {
 import { AssistantPlatformCatalogService } from './catalog/assistant-platform-catalog.service';
 import {
   AssistantPlaceResolverService,
-  stripAssistantGeoClauses,
+  parseResolveInputs,
 } from './geo/assistant-place-resolver.service';
 import { buildAssistantKnowledgeAnswer } from './sources/assistant-knowledge-answer';
 import {
@@ -68,19 +76,33 @@ export class AssistantAnswerService {
 
   async answer(input: {
     messages: string[];
+    dialog?: AssistantDialogMessage[];
     context: AssistantPageContext | null;
     geo?: AssistantGeoSearchSelection | null;
     operationRunId?: string;
     executionId?: string;
+    actorUserId?: string;
     now?: Date;
     deadlineAt?: Date;
   }): Promise<AssistantAnswerResult> {
     const now = input.now ?? new Date();
-    const plannerMessages = input.messages.map((message) => stripAssistantGeoClauses(message));
-    const districtResolution = await this.resolveDistrict(plannerMessages, input.geo ?? null);
+    const plannerMessages = input.messages;
+    const searchExecution = { deadlineAt: input.deadlineAt, onDemandObjectIds: new Set<string>() };
+    if (deadlineExpired(input.deadlineAt)) {
+      return completeUnavailableResult(plannerMessages, 'DEADLINE');
+    }
+    let districtResolution;
+    try {
+      districtResolution = await this.resolveDistrict(plannerMessages, input.geo ?? null);
+    } catch (error) {
+      if (!isPrismaRuntimeError(error)
+        && (!(error instanceof Error) || error.message !== 'DATABASE_UNAVAILABLE')) throw error;
+      return completeUnavailableResult(plannerMessages, 'DATA');
+    }
     const planned = await this.planner.planWithValidation(
       {
         messages: plannerMessages,
+        dialog: input.dialog,
         context: input.geo || districtResolution
           ? {
               pageContext: input.context,
@@ -90,6 +112,7 @@ export class AssistantAnswerService {
           : input.context,
         operationRunId: input.operationRunId,
         executionId: input.executionId,
+        deadlineAt: input.deadlineAt,
       },
       async (intent, request, attempts) => {
         if (intent.taskType === 'LEGAL_TAX') {
@@ -106,11 +129,18 @@ export class AssistantAnswerService {
         if (intent.needsClarification) {
           return {
             content: intent.clarificationQuestion!,
-            answer: { kind: 'CLARIFICATION' } as const,
+            answer: {
+              kind: 'CLARIFICATION',
+              reason: intent.clarificationReason ?? 'MISSING_NUMERIC_VALUE',
+            } as const,
             evidence: [] as AssistantSearchEvidence[],
             candidateEvidence: [] as AssistantSearchEvidence[],
           };
         }
+
+        const plannedGeo = await this.resolvePlannedGeo(intent, input);
+        if ('terminal' in plannedGeo) return plannedGeo.terminal;
+        const effectiveGeo = plannedGeo.geo;
 
         const query = createAssistantKnowledgeQueryContext(plannerMessages, input.context);
         let knowledgeContext = createAssistantKnowledgePageContext(plannerMessages, input.context);
@@ -223,13 +253,18 @@ export class AssistantAnswerService {
           const comparisonContext = input.context?.kind === 'CATALOG_FILTERS'
             ? input.context
             : null;
-          const comparisonResults = await Promise.all(intent.comparisonTargets.map((target, index) => (
-            this.search.search({
-              ...intent,
-              comparisonTargets: [target],
-              comparisonTargetModes: [intent.comparisonTargetModes?.[index] ?? 'EXACT'],
-            }, comparisonContext, input.geo ?? null)
-          )));
+          let comparisonResults;
+          try {
+            comparisonResults = await Promise.all(intent.comparisonTargets.map((target, index) => (
+              this.search.search({
+                ...intent,
+                comparisonTargets: [target],
+                comparisonTargetModes: [intent.comparisonTargetModes?.[index] ?? 'EXACT'],
+              }, comparisonContext, effectiveGeo, searchExecution)
+            )));
+          } catch (error) {
+            return unavailableFromExecutionError(error);
+          }
           const grounded = buildAssistantComparisonAnswer(intent, comparisonResults.map((result, index) => ({
             target: intent.comparisonTargets[index]!,
             evidence: result.exact,
@@ -251,8 +286,18 @@ export class AssistantAnswerService {
           };
         }
 
-        const searchResult = await this.search.search(intent, input.context, input.geo ?? null);
-        if (!input.geo && searchResult.exact.length === 0 && this.knowledge) {
+        let searchResult;
+        try {
+          searchResult = await this.search.search(
+            intent,
+            input.context,
+            effectiveGeo,
+            searchExecution,
+          );
+        } catch (error) {
+          return unavailableFromExecutionError(error);
+        }
+        if (!effectiveGeo && !intent.predicates?.length && searchResult.exact.length === 0 && this.knowledge) {
           const knowledgeEvidence = await this.knowledge.retrieve({
             query,
             intent,
@@ -285,16 +330,6 @@ export class AssistantAnswerService {
           now,
           searchResult.totalExactResults,
         );
-        if (grounded.exactResults.length === 0
-          && grounded.alternatives.length === 0
-          && !searchResult.geo) {
-          return {
-            content: grounded.content,
-            answer: { kind: 'REFUSAL' } as const,
-            evidence: [] as AssistantSearchEvidence[],
-            candidateEvidence: evidence,
-          };
-        }
         const selectedIds = new Set([
           ...grounded.exactResults.map(({ unitId }) => unitId),
           ...grounded.additionalExactResults.map(({ unitId }) => unitId),
@@ -326,13 +361,104 @@ export class AssistantAnswerService {
           candidateEvidence: evidence,
         };
       },
-    );
+    ).catch((error: unknown) => {
+      if (!(error instanceof AssistantPlannerError)) throw error;
+      if (error.code === 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED') {
+        return plannedUnavailableResult(plannerMessages, 'DEADLINE', error.telemetry);
+      }
+      if (error.telemetry.at(-1)?.outcome === 'PROVIDER_ERROR') {
+        return plannedUnavailableResult(plannerMessages, 'PROVIDER', error.telemetry);
+      }
+      if (error.pipelineCause !== undefined) {
+        return {
+          intent: createUnavailableIntent(plannerMessages),
+          value: unavailableFromExecutionError(error.pipelineCause),
+          telemetry: error.telemetry,
+        };
+      }
+      throw error;
+    });
 
     return {
       ...planned.value,
       intent: planned.intent,
       telemetry: planned.telemetry,
     };
+  }
+
+  private async resolvePlannedGeo(
+    intent: AssistantStructuredIntent,
+    input: {
+      messages: string[];
+      geo?: AssistantGeoSearchSelection | null;
+      actorUserId?: string;
+      deadlineAt?: Date;
+    },
+  ): Promise<
+    | { geo: AssistantGeoSearchSelection | null }
+    | { terminal: Omit<AssistantAnswerResult, 'intent' | 'telemetry'> }
+  > {
+    if (input.geo) return { geo: input.geo };
+    const predicate = intent.predicates?.find((item) => item.type === 'SPATIAL');
+    if (!predicate) {
+      const latestMessage = input.messages.at(-1);
+      if (!latestMessage) return { geo: null };
+      try {
+        if (parseResolveInputs({ content: latestMessage }).constraints.length === 0) {
+          return { geo: null };
+        }
+      } catch {
+        return { terminal: unavailableResult('PLACE_RESOLUTION') };
+      }
+      return this.resolveGeoText(latestMessage, input);
+    }
+    return this.resolveGeoText(`внутри «${predicate.place}»`, input);
+  }
+
+  private async resolveGeoText(
+    content: string,
+    input: {
+      actorUserId?: string;
+      deadlineAt?: Date;
+    },
+  ): Promise<
+    | { geo: AssistantGeoSearchSelection | null }
+    | { terminal: Omit<AssistantAnswerResult, 'intent' | 'telemetry'> }
+  > {
+    if (input.deadlineAt && input.deadlineAt.getTime() <= Date.now()) {
+      return { terminal: unavailableResult('DEADLINE') };
+    }
+    if (!this.places) return { terminal: unavailableResult('PLACE_RESOLUTION') };
+
+    let resolution;
+    try {
+      resolution = await this.places.resolve({
+        content,
+        locale: 'ru',
+        country: 'ru',
+      }, input.actorUserId ?? null);
+    } catch {
+      return { terminal: unavailableResult('PROVIDER') };
+    }
+    const converted = resolutionToGeoSelection(resolution);
+    if (converted.status === 'AMBIGUOUS') {
+      return {
+        terminal: {
+          content: 'Уточните, какое именно место вы имеете в виду.',
+          answer: { kind: 'CLARIFICATION', reason: 'AMBIGUOUS_PLACE' },
+          evidence: [],
+          candidateEvidence: [],
+        },
+      };
+    }
+    if (converted.status !== 'RESOLVED') {
+      return {
+        terminal: unavailableResult(
+          converted.status === 'UNAVAILABLE' ? 'PROVIDER' : 'PLACE_RESOLUTION',
+        ),
+      };
+    }
+    return { geo: converted.geo };
   }
 
   private async resolveDistrict(messages: string[], geo: AssistantGeoSearchSelection | null) {
@@ -354,6 +480,151 @@ export class AssistantAnswerService {
     }
     return null;
   }
+}
+
+function resolutionToGeoSelection(resolution: AssistantGeoResolution):
+  | { status: 'RESOLVED'; geo: AssistantGeoSearchSelection }
+  | { status: 'AMBIGUOUS' | 'NOT_FOUND' | 'UNAVAILABLE' } {
+  if (resolution.status === 'NOT_APPLICABLE') return { status: 'NOT_FOUND' };
+  if (resolution.status === 'COMPOSITE') {
+    const failure = resolution.constraints.find(({ status }) => status !== 'RESOLVED');
+    if (failure) return { status: resolutionFailureStatus(failure.status) };
+    const constraints = resolution.constraints.flatMap((slot) => {
+      if (slot.status !== 'RESOLVED') return [];
+      const candidate = slot.candidates[0];
+      const constraint = candidate ? candidateToSelection(candidate, slot) : null;
+      return constraint ? [constraint] : [];
+    });
+    if (constraints.length !== resolution.constraints.length) return { status: 'NOT_FOUND' };
+    return { status: 'RESOLVED', geo: { operator: 'ALL', constraints } };
+  }
+  if (resolution.status !== 'RESOLVED') {
+    return { status: resolutionFailureStatus(resolution.status) };
+  }
+  const candidate = resolution.candidates[0];
+  const constraint = candidate ? candidateToSelection(candidate, resolution) : null;
+  return constraint
+    ? { status: 'RESOLVED', geo: constraint }
+    : { status: 'NOT_FOUND' };
+}
+
+function resolutionFailureStatus(status: AssistantGeoResolutionSlot['status']) {
+  if (status === 'UNAVAILABLE') return 'UNAVAILABLE' as const;
+  if (status === 'AMBIGUOUS' || status === 'REFINE_REQUIRED') return 'AMBIGUOUS' as const;
+  return 'NOT_FOUND' as const;
+}
+
+function candidateToSelection(
+  candidate: AssistantGeoCandidate,
+  metadata: {
+    mode: 'NEAR' | 'INSIDE';
+    distanceMeters?: number;
+    slotId?: string;
+    sourceSpan?: { start: number; end: number };
+  },
+): AssistantGeoConstraint | null {
+  const common = {
+    label: candidate.label,
+    source: 'LANDMARK' as const,
+    landmarkId: candidate.id,
+    slotId: metadata.slotId,
+    sourceSpan: metadata.sourceSpan,
+  };
+  if (metadata.mode === 'INSIDE') {
+    return candidate.kind === 'AREA'
+      ? { ...common, kind: 'AREA', mode: 'INSIDE' }
+      : null;
+  }
+  const distanceMeters = candidate.distanceMeters ?? metadata.distanceMeters;
+  if (!distanceMeters) return null;
+  if (candidate.kind === 'POINT') {
+    const point = candidate.point ?? (typeof candidate.latitude === 'number'
+      && typeof candidate.longitude === 'number'
+      ? { latitude: candidate.latitude, longitude: candidate.longitude }
+      : null);
+    return point ? { ...common, kind: 'POINT', mode: 'NEAR', point, distanceMeters } : null;
+  }
+  return { ...common, kind: candidate.kind, mode: 'NEAR', distanceMeters };
+}
+
+function unavailableResult(
+  reason: Extract<AssistantAnswer, { kind: 'UNAVAILABLE' }>['reason'],
+): Omit<AssistantAnswerResult, 'intent' | 'telemetry'> {
+  return {
+    content: 'Не удалось выполнить запрос по подтверждённым данным. Попробуйте позже.',
+    answer: { kind: 'UNAVAILABLE', reason },
+    evidence: [],
+    candidateEvidence: [],
+  };
+}
+
+function unavailableFromExecutionError(error: unknown) {
+  if (error instanceof AssistantMetroTravelTimeUnavailableError) {
+    return unavailableResult(error.code === 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED'
+      ? 'DEADLINE'
+      : 'ROUTING');
+  }
+  if (error instanceof Error && error.message === 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED') {
+    return unavailableResult('DEADLINE');
+  }
+  if (isPrismaRuntimeError(error)) return unavailableResult('DATA');
+  throw error;
+}
+
+function isPrismaRuntimeError(error: unknown) {
+  return error instanceof Error && new Set([
+    'PrismaClientInitializationError',
+    'PrismaClientKnownRequestError',
+    'PrismaClientRustPanicError',
+    'PrismaClientUnknownRequestError',
+  ]).has(error.constructor.name);
+}
+
+function deadlineExpired(deadlineAt?: Date) {
+  return Boolean(deadlineAt && deadlineAt.getTime() <= Date.now());
+}
+
+function completeUnavailableResult(
+  messages: string[],
+  reason: Extract<AssistantAnswer, { kind: 'UNAVAILABLE' }>['reason'],
+): AssistantAnswerResult {
+  return {
+    ...unavailableResult(reason),
+    intent: createUnavailableIntent(messages),
+    telemetry: [],
+  };
+}
+
+function plannedUnavailableResult(
+  messages: string[],
+  reason: Extract<AssistantAnswer, { kind: 'UNAVAILABLE' }>['reason'],
+  telemetry: AssistantPlannerTelemetry[],
+) {
+  return {
+    intent: createUnavailableIntent(messages),
+    value: unavailableResult(reason),
+    telemetry,
+  };
+}
+
+function createUnavailableIntent(messages: string[]): AssistantStructuredIntent {
+  const logical = extractAssistantLogicalPredicates(messages);
+  return {
+    schemaVersion: 'AssistantLogicalPlanV1',
+    taskType: 'SEARCH',
+    comparisonTargets: [],
+    comparisonTargetModes: [],
+    hardFilters: {
+      ...createEmptyAssistantSearchFilters(),
+      ...extractAssistantExplicitHardFilters(messages),
+    },
+    softPreferences: createEmptyAssistantSearchFilters(),
+    requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
+    needsClarification: false,
+    clarificationQuestion: null,
+    predicates: logical.predicates,
+    clarificationReason: null,
+  };
 }
 
 function isStaleKnowledgeEvidence(evidence: AssistantKnowledgeEvidence, now: Date) {

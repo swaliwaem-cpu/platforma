@@ -26,7 +26,7 @@ if (!databaseUrl) {
   process.env.TRAINING_MODULE_ENABLED = 'false';
 
   const { AppModule } = require('../dist/app.module.js');
-  const { AssistantRunProcessor } = require('../dist/assistant/assistant-run.processor.js');
+  const { AssistantExecutionModule } = require('../dist/assistant/assistant-execution.module.js');
   const { createEmptyAssistantSearchFilters } = require('../dist/assistant/assistant-query-planner.js');
   const { buildAssistantSearchAnswer } = require('../dist/assistant/assistant-search-ranking.js');
   const { AssistantSearchService } = require('../dist/assistant/assistant-search.service.js');
@@ -118,9 +118,8 @@ if (!databaseUrl) {
         ['ANSWERING', 'Формирую ответ'],
       ],
     );
-    assert.match(completed.assistantMessage.content, /максимальный бюджет/iu);
-    assert.match(completed.assistantMessage.content, /комнатность/iu);
-    assert.equal(completed.assistantMessage.answer.kind, 'CLARIFICATION');
+    assert.equal(completed.assistantMessage.answer.kind, 'SEARCH_RESULTS');
+    assert.deepEqual(completed.assistantMessage.answer.exactResults, []);
 
     const replay = await sendMessage(created.body.conversation.id, input, idempotencyKey);
     assert.equal(replay.status, 202);
@@ -136,7 +135,7 @@ if (!databaseUrl) {
     );
     assert.deepEqual(detail.body.conversation.messages[0].context, input.context);
     assert.equal(detail.body.conversation.messages[1].context, null);
-    assert.equal(detail.body.conversation.messages[1].answer.kind, 'CLARIFICATION');
+    assert.equal(detail.body.conversation.messages[1].answer.kind, 'SEARCH_RESULTS');
 
     const conflict = await sendMessage(
       created.body.conversation.id,
@@ -663,12 +662,12 @@ if (!databaseUrl) {
 
     const recovered = await waitForRun(staleRun.id, ownerToken);
     assert.equal(recovered.status, 'COMPLETED');
-    assert.equal(recovered.assistantMessage.answer.kind, 'CLARIFICATION');
+    assert.equal(recovered.assistantMessage.answer.kind, 'SEARCH_RESULTS');
   });
 
   test('a long grounded answer renews its PostgreSQL lease until completion', async () => {
-    const processor = app.get(AssistantRunProcessor);
-    const answerService = processor.answerService;
+    const execution = app.get(AssistantExecutionModule);
+    const answerService = execution.answerService;
     const originalAnswer = answerService.answer;
     let answerCalls = 0;
     let markAnswerStarted;

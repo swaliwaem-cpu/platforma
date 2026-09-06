@@ -42,6 +42,10 @@ export type AssistantSearchEvidence = {
   latitude?: number | null;
   longitude?: number | null;
   distanceMeters?: number | null;
+  walkingMetro?: {
+    stationName: string;
+    durationSeconds: number;
+  } | null;
   pdfs: AssistantCandidatePdf[];
   deviations: AssistantAlternativeDeviation[];
 };
@@ -386,6 +390,9 @@ function createFacts(candidate: AssistantSearchEvidence) {
       ? `${candidate.completionYear} год`
       : `${candidate.completionQuarter} кв. ${candidate.completionYear}`;
   return [
+    candidate.walkingMetro
+      ? `${Math.ceil(candidate.walkingMetro.durationSeconds / 60)} мин пешком до метро «${candidate.walkingMetro.stationName}»`
+      : null,
     candidate.district,
     candidate.metros.length > 0 ? `м. ${candidate.metros.join(', ')}` : null,
     candidate.developer,

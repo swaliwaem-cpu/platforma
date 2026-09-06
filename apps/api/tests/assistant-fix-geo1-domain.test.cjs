@@ -34,6 +34,9 @@ const {
   AssistantGeoUsageLedgerError,
 } = require('../dist/assistant/geo/assistant-geo-usage-ledger.service.js');
 const {
+  selectAssistantGeoProviderCandidates,
+} = require('../dist/assistant/geo/assistant-geo-landmark-identity.js');
+const {
   AssistantOverpassCollector,
   AssistantOverpassError,
 } = require('../dist/assistant/geo/assistant-overpass-collector.js');
@@ -70,6 +73,32 @@ test('FIX-GEO1 browser accepts only a trusted landmark id or a validated manual 
   ]) {
     assert.throws(() => parseAssistantGeoBrowserInput(invalid), /ASSISTANT_GEO_INPUT_INVALID/u);
   }
+});
+
+test('FIX-GEO2 fake INSIDE selection accepts only areas or genuinely closed line boundaries', () => {
+  const base = {
+    id: 'fake-ring', label: 'Садовое кольцо', latitude: 55.75, longitude: 37.61,
+    city: 'Москва', countryCode: 'ru', geometryKind: 'LINE', geometryComplete: true,
+  };
+  const closed = {
+    ...base,
+    referenceGeometry: {
+      type: 'LineString',
+      coordinates: [[37.5, 55.7], [37.7, 55.7], [37.7, 55.8], [37.5, 55.7]],
+    },
+  };
+  const open = {
+    ...base,
+    id: 'fake-open-road',
+    referenceGeometry: {
+      type: 'LineString',
+      coordinates: [[37.5, 55.7], [37.7, 55.7], [37.7, 55.8]],
+    },
+  };
+
+  assert.deepEqual(selectAssistantGeoProviderCandidates(
+    [closed, open], { mode: 'INSIDE' }, 'fake',
+  ), [closed]);
 });
 
 test('Assistant composite geo accepts a bounded ALL set and rejects duplicate or oversized input', () => {
@@ -1048,11 +1077,12 @@ test('ZAEBAL1 sanitizer preserves a comma-delimited district between composite g
   }
 });
 
-test('ZAEBAL1 direct geo-bearing message fails before persistence without canonical geo', async () => {
+test('FIX-GEO2 direct geo-bearing message proceeds to persistence without browser geo', async () => {
   let sideEffects = 0;
+  const afterGuard = new Error('AFTER_RAW_MESSAGE_GUARD');
   const fail = async () => {
     sideEffects += 1;
-    throw new Error('UNEXPECTED_SIDE_EFFECT');
+    throw afterGuard;
   };
   const service = new AssistantService({
     assistantRun: { findUnique: fail },
@@ -1065,8 +1095,8 @@ test('ZAEBAL1 direct geo-bearing message fails before persistence without canoni
     ownerUserId: '20000000-0000-4000-8000-000000000001',
     idempotencyKey: '30000000-0000-4000-8000-000000000001',
     body: { content: 'в 900 м от Белорусского вокзала' },
-  }), /ASSISTANT_GEO_CONTEXT_REQUIRED/u);
-  assert.equal(sideEffects, 0);
+  }), (error) => error === afterGuard);
+  assert.equal(sideEffects, 1);
 });
 
 test('ZAEBAL1 message boundary preserves source spans when content contains repeated whitespace', async () => {

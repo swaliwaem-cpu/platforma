@@ -1,5 +1,6 @@
 import {
   createEmptyAssistantSearchFilters,
+  extractAssistantLogicalPredicates,
   extractAssistantComparisonTargets,
   extractAssistantExplicitHardFilters,
   isAssistantCurrentOfferRequest,
@@ -9,15 +10,16 @@ import {
   type AssistantPlannerGateway,
   type AssistantPlannerGatewayResult,
   type AssistantPlannerRequest,
-  type AssistantStructuredIntent,
+  type AssistantLogicalPlanV1,
 } from './assistant-query-planner';
 import { ASSISTANT_AI_SERVICE_TIER } from './operations/assistant-ai-cost';
+import { assistantFiltersHaveConflict } from './assistant-plan-grounding';
 
 type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type AssistantAiMode = 'fake' | 'openai';
 
 const assistantPlannerSchema = createAssistantPlannerSchema();
-export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-query-planner-v2';
+export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-logical-plan-v1';
 
 export class AssistantPlannerGatewayError extends Error {
   readonly provider = 'openai' as const;
@@ -82,8 +84,15 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
   ) {}
 
   async plan(request: AssistantPlannerRequest): Promise<AssistantPlannerGatewayResult> {
+    const remainingMs = request.deadlineAt
+      ? request.deadlineAt.getTime() - Date.now()
+      : this.timeoutMs;
+    if (remainingMs <= 0) {
+      throw new AssistantPlannerGatewayError('ASSISTANT_EXECUTION_DEADLINE_EXCEEDED');
+    }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const deadlineLimitsRequest = remainingMs <= this.timeoutMs;
+    const timeout = setTimeout(() => controller.abort(), Math.min(this.timeoutMs, remainingMs));
     const clientRequestId = createClientRequestId(request);
     try {
       const response = await this.fetchImplementation(`${this.baseUrl.replace(/\/$/u, '')}/responses`, {
@@ -140,7 +149,9 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
     } catch (error) {
       if (error instanceof AssistantPlannerGatewayError) throw error;
       throw new AssistantPlannerGatewayError(controller.signal.aborted
-        ? 'ASSISTANT_OPENAI_TIMEOUT'
+        ? deadlineLimitsRequest
+          ? 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED'
+          : 'ASSISTANT_OPENAI_TIMEOUT'
         : 'ASSISTANT_OPENAI_NETWORK_ERROR');
     } finally {
       clearTimeout(timeout);
@@ -194,6 +205,7 @@ export function createAssistantPlannerSchema() {
     type: 'object',
     additionalProperties: false,
     required: [
+      'schemaVersion',
       'taskType',
       'comparisonTargets',
       'hardFilters',
@@ -201,8 +213,11 @@ export function createAssistantPlannerSchema() {
       'requiredFacts',
       'needsClarification',
       'clarificationQuestion',
+      'clarificationReason',
+      'predicates',
     ],
     properties: {
+      schemaVersion: { type: 'string', enum: ['AssistantLogicalPlanV1'] },
       taskType: { type: 'string', enum: ['SEARCH', 'OBJECT', 'COMPARE', 'FACT', 'LEGAL_TAX'] },
       comparisonTargets: {
         type: 'array',
@@ -221,6 +236,42 @@ export function createAssistantPlannerSchema() {
       },
       needsClarification: { type: 'boolean' },
       clarificationQuestion: { type: ['string', 'null'], minLength: 1, maxLength: 300 },
+      clarificationReason: {
+        type: ['string', 'null'],
+        enum: ['AMBIGUOUS_PLACE', 'MISSING_NUMERIC_VALUE', 'CONFLICTING_HARD_CONDITIONS', null],
+      },
+      predicates: {
+        type: 'array',
+        maxItems: 2,
+        items: {
+          oneOf: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['type', 'relation', 'referenceType', 'place'],
+              properties: {
+                type: { type: 'string', enum: ['SPATIAL'] },
+                relation: { type: 'string', enum: ['INSIDE'] },
+                referenceType: { type: 'string', enum: ['PLACE'] },
+                place: { type: 'string', minLength: 1, maxLength: 240 },
+              },
+            },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['type', 'mode', 'destination', 'operator', 'value', 'unit'],
+              properties: {
+                type: { type: 'string', enum: ['TRAVEL_TIME'] },
+                mode: { type: 'string', enum: ['WALK'] },
+                destination: { type: 'string', enum: ['NEAREST_METRO'] },
+                operator: { type: 'string', enum: ['LTE'] },
+                value: { type: 'integer', minimum: 1, maximum: 240 },
+                unit: { type: 'string', enum: ['MINUTES'] },
+              },
+            },
+          ],
+        },
+      },
     },
   };
 }
@@ -235,16 +286,20 @@ export function createAssistantPlannerRequestBody(request: AssistantPlannerReque
     instructions: [
       `Contract: ${ASSISTANT_PLANNER_PROMPT_VERSION}.`,
       'Ты Query Planner внутренней Platforma по недвижимости.',
-      'Преобразуй русскоязычный запрос в строгий structured intent.',
+      'Преобразуй полный сырой русскоязычный диалог в строгий AssistantLogicalPlanV1.',
       'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
-      'Не выдумывай названия, цены, наличие, координаты, ссылки или факты: их проверит сервер по базе.',
+      'Не возвращай SQL, координаты или цепочку tool calls.',
+      'Не выдумывай названия, числа, единицы, цены, наличие, ссылки или факты: все значения плана должны присутствовать в диалоге.',
+      'Для поиска внутри названного места используй только SPATIAL/INSIDE/PLACE.',
+      'Для ограничения пешего времени до ближайшего метро используй только TRAVEL_TIME/WALK/NEAREST_METRO/LTE и минуты.',
       'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
       'Для общего поиска, списка или обзорной карточки объектов, ЖК, БЦ и МФК по внутреннему каталогу Platforma выбери OBJECT.',
       'Для текущих квартир, лотов, цен и наличия выбери SEARCH.',
       'Для ипотеки, рассрочки, акций, архитектуры, инфраструктуры и иных подтверждаемых фактов о проекте выбери FACT.',
       'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны только для SEARCH и COMPARE; для OBJECT requiredFacts пуст.',
       'Для явного сравнения двух ЖК или застройщиков заполни comparisonTargets двумя точными названиями.',
-      'Если критичных условий поиска не хватает, задай один короткий составной clarificationQuestion.',
+      'Не требуй бюджет, комнатность или локацию, если пользователь их не указал.',
+      'Уточнение допустимо только для неоднозначного места, отсутствующего числового значения или конфликтующих hard conditions.',
     ].join(' '),
     input: [{
       role: 'user',
@@ -252,7 +307,8 @@ export function createAssistantPlannerRequestBody(request: AssistantPlannerReque
         type: 'input_text',
         text: JSON.stringify({
           trust_boundary: 'UNTRUSTED_USER_TEXT',
-          messages: request.messages,
+          dialog: request.dialog
+            ?? request.messages.map((content) => ({ role: 'USER', content })),
           page_context: request.context,
         }),
       }],
@@ -268,15 +324,17 @@ export function createAssistantPlannerRequestBody(request: AssistantPlannerReque
   };
 }
 
-function createDeterministicIntent(messages: string[]): AssistantStructuredIntent {
+function createDeterministicIntent(messages: string[]): AssistantLogicalPlanV1 {
   const text = messages.join('\n').replace(/ё/giu, 'е');
   const normalized = text.toLocaleLowerCase('ru-RU');
+  const logical = extractAssistantLogicalPredicates(messages);
   const hardFilters = {
     ...createEmptyAssistantSearchFilters(),
     ...extractAssistantExplicitHardFilters(messages),
   };
+  const conflicting = assistantFiltersHaveConflict(hardFilters);
 
-  const taskType: AssistantStructuredIntent['taskType'] = /(?:налог\p{L}*|юрид\p{L}*|договор\p{L}*|закон\p{L}*)/iu.test(normalized)
+  const taskType: AssistantLogicalPlanV1['taskType'] = /(?:налог\p{L}*|юрид\p{L}*|договор\p{L}*|закон\p{L}*)/iu.test(normalized)
       ? 'LEGAL_TAX'
       : /сравн\p{L}*/iu.test(normalized)
         ? 'COMPARE'
@@ -287,6 +345,7 @@ function createDeterministicIntent(messages: string[]): AssistantStructuredInten
             ? 'OBJECT'
             : 'SEARCH';
   return {
+    schemaVersion: 'AssistantLogicalPlanV1',
     taskType,
     comparisonTargets: extractAssistantComparisonTargets(messages) ?? [],
     hardFilters,
@@ -294,8 +353,15 @@ function createDeterministicIntent(messages: string[]): AssistantStructuredInten
     requiredFacts: taskType === 'SEARCH' || taskType === 'COMPARE'
       ? ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK']
       : [],
-    needsClarification: false,
-    clarificationQuestion: null,
+    predicates: logical.predicates,
+    needsClarification: conflicting || logical.missingTravelValue,
+    clarificationQuestion: conflicting
+      ? 'Минимальное значение превышает максимальное. Уточните нужный диапазон.'
+      : logical.missingTravelValue
+      ? 'Укажите максимальное время пешком до ближайшего метро.'
+      : null,
+    clarificationReason: conflicting ? 'CONFLICTING_HARD_CONDITIONS'
+      : logical.missingTravelValue ? 'MISSING_NUMERIC_VALUE' : null,
   };
 }
 

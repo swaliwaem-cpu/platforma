@@ -623,6 +623,45 @@ model AssistantGeoProviderDailyUsage {
   @@map("assistant_geo_provider_daily_usage")
 }
 
+model AssistantMetroAccessPoint {
+  id               String   @id @default(uuid()) @db.Uuid
+  sourceExternalId String   @map("source_external_id") @db.VarChar(160)
+  stationName      String   @map("station_name") @db.VarChar(200)
+  datasetVersion   String   @map("dataset_version") @db.VarChar(80)
+  latitude         Decimal  @db.Decimal(9, 6)
+  longitude        Decimal  @db.Decimal(9, 6)
+  location         Unsupported("geography(Point, 4326)")
+  sourceProperties Json     @default("{}") @map("source_properties")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  routeFacts AssistantObjectMetroRouteFact[]
+
+  @@unique([datasetVersion, sourceExternalId])
+  @@map("assistant_metro_access_points")
+}
+
+model AssistantObjectMetroRouteFact {
+  objectId             String   @id @map("object_id") @db.Uuid
+  metroAccessPointId   String   @map("metro_access_point_id") @db.Uuid
+  objectLatitude       Decimal  @map("object_latitude") @db.Decimal(9, 6)
+  objectLongitude      Decimal  @map("object_longitude") @db.Decimal(9, 6)
+  accessDatasetVersion String   @map("access_dataset_version") @db.VarChar(80)
+  routingProfile       String   @map("routing_profile") @db.VarChar(80)
+  durationSeconds      Int      @map("duration_seconds")
+  distanceMeters       Int      @map("distance_meters")
+  calculatedAt         DateTime @map("calculated_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  object           RealEstateObject         @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  metroAccessPoint AssistantMetroAccessPoint @relation(fields: [metroAccessPointId], references: [id], onDelete: Restrict)
+
+  @@index([metroAccessPointId])
+  @@map("assistant_object_metro_route_facts")
+}
+
 model AssistantRun {
   id                 String             @id @default(uuid()) @db.Uuid
   ownerUserId        String             @map("owner_user_id") @db.Uuid
@@ -1167,6 +1206,7 @@ model RealEstateObject {
   projectPresentationDocumentItems ProjectPresentationDocumentObject[]
   trainingProjects                  TrainingProject[]
   trainingQuestionGenerationArtifacts TrainingQuestionGenerationArtifact[]
+  assistantMetroRouteFact             AssistantObjectMetroRouteFact?
 
   @@index([status])
   @@index([type])

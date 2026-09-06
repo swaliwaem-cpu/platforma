@@ -34,6 +34,10 @@ process.env.JWT_ACCESS_SECRET = 'assistant-t05-postgres-secret';
 const { createEmptyAssistantSearchFilters } = require('../dist/assistant/assistant-query-planner.js');
 const { AssistantSearchService } = require('../dist/assistant/assistant-search.service.js');
 const { AssistantGeoLandmarkService } = require('../dist/assistant/geo/assistant-geo-landmark.service.js');
+const {
+  AssistantMetroTravelTimeService,
+  AssistantMetroTravelTimeUnavailableError,
+} = require('../dist/assistant/geo/assistant-metro-travel-time.service.js');
 
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 const landmarks = new AssistantGeoLandmarkService(prisma);
@@ -65,6 +69,12 @@ before(async () => {
 });
 
 after(async () => {
+  await prisma.assistantObjectMetroRouteFact.deleteMany({
+    where: { object: { slug: { startsWith: `assistant-t05-${suffix}-` } } },
+  });
+  await prisma.assistantMetroAccessPoint.deleteMany({
+    where: { datasetVersion: { startsWith: `assistant-t05-${suffix}-` } },
+  });
   await prisma.$executeRaw(Prisma.sql`
     DELETE FROM assistant_geo_landmarks
     WHERE id IN (
@@ -244,6 +254,349 @@ test('Assistant FIX-GEO1 uses the full area boundary for NEAR and ST_Covers for 
   ]));
   assert.equal(inside.exact.every(({ distanceMeters }) => distanceMeters === null), true);
   assert.deepEqual(inside.geo.searchArea, inside.geo.referenceGeometry);
+});
+
+test('FIX-GEO2 materializes three-nearest metro routes, filters at 300 seconds, and invalidates stale facts', { concurrency: false }, async () => {
+  let routeCalls = 0;
+  const inside500Latitude = Number(fixture.objects.inside500.latitude);
+  const routing = {
+    async getWalkingRoutes({ origin, destinations }) {
+      routeCalls += 1;
+      const duration = Math.abs(origin[0] - inside500Latitude) < 0.00001 ? 240 : 301;
+      return {
+        routes: destinations.map((_, destinationIndex) => ({
+          destinationIndex,
+          durationSeconds: duration + destinationIndex * 10,
+          distanceMeters: 300 + destinationIndex * 20,
+        })),
+      };
+    },
+  };
+  const metroTravelTimes = new AssistantMetroTravelTimeService(prisma, routing);
+  const travelSearch = new AssistantSearchService(prisma, landmarks, metroTravelTimes);
+  const geoJson = {
+    type: 'FeatureCollection',
+    features: [
+      ['node/1', 'Таганская', 37.62, 55.74],
+      ['node/2', 'Марксистская', 37.64, 55.74],
+      ['node/3', 'Павелецкая', 37.63, 55.73],
+    ].map(([id, name, longitude, latitude]) => ({
+      type: 'Feature',
+      id,
+      properties: { name, osm_id: id },
+      geometry: { type: 'Point', coordinates: [longitude, latitude] },
+    })),
+  };
+  const version1 = `assistant-t05-${suffix}-v1`;
+  const version2 = `assistant-t05-${suffix}-v2`;
+  const intent = {
+    ...createIntent({}),
+    schemaVersion: 'AssistantLogicalPlanV1',
+    predicates: [{
+      type: 'TRAVEL_TIME', mode: 'WALK', destination: 'NEAREST_METRO',
+      operator: 'LTE', value: 5, unit: 'MINUTES',
+    }],
+    clarificationReason: null,
+  };
+  const areaGeo = {
+    kind: 'AREA', mode: 'INSIDE', label: 'Тестовый район',
+    landmarkId: landmarkIds.area, source: 'LANDMARK',
+  };
+  const originalLatitude = Number(fixture.objects.inside500.latitude);
+
+  try {
+    await metroTravelTimes.importAccessPoints(geoJson, version1);
+    await metroTravelTimes.importAccessPoints(geoJson, version1);
+    assert.equal(await prisma.assistantMetroAccessPoint.count({
+      where: { datasetVersion: version1, isActive: true },
+    }), 3);
+    const changedDataset = structuredClone(geoJson);
+    changedDataset.features[0].geometry.coordinates[0] += 0.01;
+    await assert.rejects(
+      metroTravelTimes.importAccessPoints(changedDataset, version1),
+      (error) => error instanceof AssistantMetroTravelTimeUnavailableError
+        && error.code === 'ASSISTANT_METRO_DATASET_VERSION_CONFLICT',
+    );
+    await assert.rejects(
+      metroTravelTimes.refreshPublishedObjects(),
+      (error) => error instanceof AssistantMetroTravelTimeUnavailableError
+        && error.code === 'ASSISTANT_METRO_PUBLISHED_COORDINATES_INCOMPLETE',
+    );
+
+    const initial = await travelSearch.search(intent, null, areaGeo);
+    assert.deepEqual(initial.exact.map(({ unitId }) => unitId), [fixture.units.inside500.id]);
+    assert.deepEqual(initial.exact[0].walkingMetro, {
+      stationName: 'Таганская',
+      durationSeconds: 240,
+    });
+    assert.equal(routeCalls, 2);
+
+    const materializedFact = await prisma.assistantObjectMetroRouteFact.findUniqueOrThrow({
+      where: { objectId: fixture.objects.inside500.id },
+      select: { metroAccessPointId: true },
+    });
+    await prisma.$executeRawUnsafe('ANALYZE assistant_metro_access_points');
+    await prisma.$executeRawUnsafe('ANALYZE assistant_object_metro_route_facts');
+    const indexPlans = await prisma.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+      return Promise.all([
+        transaction.$queryRawUnsafe(`
+          EXPLAIN (FORMAT JSON)
+          SELECT id FROM assistant_metro_access_points
+          WHERE is_active = TRUE
+          ORDER BY location <-> ST_SetSRID(ST_MakePoint(37.62, 55.74), 4326)::geography
+          LIMIT 3
+        `),
+        transaction.$queryRaw(Prisma.sql`
+          EXPLAIN (FORMAT JSON)
+          SELECT object_id FROM assistant_object_metro_route_facts
+          WHERE metro_access_point_id = ${materializedFact.metroAccessPointId}::uuid
+        `),
+      ]);
+    });
+    assert.equal(findPlanIndex(
+      indexPlans[0][0]['QUERY PLAN'][0].Plan,
+      'assistant_metro_access_points_location_gist_idx',
+    ), true);
+    assert.equal(findPlanIndex(
+      indexPlans[1][0]['QUERY PLAN'][0].Plan,
+      'assistant_object_metro_route_facts_metro_access_point_id_idx',
+    ), true);
+
+    await metroTravelTimes.importAccessPoints(geoJson, version2);
+    await travelSearch.search(intent, null, areaGeo);
+    assert.equal(routeCalls, 4);
+    const versionedFacts = await prisma.assistantObjectMetroRouteFact.findMany({
+      where: { objectId: { in: [fixture.objects.inside500.id, fixture.objects.inside1000.id] } },
+      select: { accessDatasetVersion: true },
+    });
+    assert.equal(versionedFacts.every(({ accessDatasetVersion }) => accessDatasetVersion === version2), true);
+
+    await prisma.realEstateObject.update({
+      where: { id: fixture.objects.inside500.id },
+      data: { latitude: originalLatitude + 0.000001 },
+    });
+    await travelSearch.search(intent, null, areaGeo);
+    assert.equal(routeCalls, 5);
+
+    await prisma.assistantObjectMetroRouteFact.update({
+      where: { objectId: fixture.objects.inside500.id },
+      data: { routingProfile: 'obsolete-profile' },
+    });
+    await travelSearch.search(intent, null, areaGeo);
+    assert.equal(routeCalls, 6);
+
+    const concurrentImportSearch = new AssistantSearchService(prisma, landmarks, {
+      async ensureFacts(objects, deadlineAt, budget) {
+        await metroTravelTimes.ensureFacts(objects, deadlineAt, budget);
+        await metroTravelTimes.importAccessPoints(geoJson, version1);
+      },
+    });
+    await assert.rejects(
+      concurrentImportSearch.search(intent, null, areaGeo),
+      (error) => error.code === 'ASSISTANT_METRO_ROUTE_COVERAGE_GAP',
+      'a dataset change between coverage and the result snapshot must not return partial results',
+    );
+
+    await prisma.assistantObjectMetroRouteFact.deleteMany({
+      where: { object: { slug: { startsWith: `assistant-t05-${suffix}-` } } },
+    });
+    await assert.rejects(
+      travelSearch.search(intent, null, null),
+      (error) => error instanceof AssistantMetroTravelTimeUnavailableError
+        && error.code === 'ASSISTANT_METRO_ROUTE_COVERAGE_GAP',
+    );
+    assert.equal(routeCalls, 6);
+  } finally {
+    await prisma.realEstateObject.update({
+      where: { id: fixture.objects.inside500.id },
+      data: { latitude: originalLatitude },
+    });
+    await prisma.assistantObjectMetroRouteFact.deleteMany({
+      where: { object: { slug: { startsWith: `assistant-t05-${suffix}-` } } },
+    });
+    await prisma.assistantMetroAccessPoint.deleteMany({
+      where: { datasetVersion: { in: [version1, version2] } },
+    });
+  }
+});
+
+test('FIX-GEO2 full metro refresh paginates every published object and fails closed on concurrent drift', { concurrency: false }, async () => {
+  const version = `assistant-t05-${suffix}-refresh`;
+  const geoJson = {
+    type: 'FeatureCollection',
+    features: [
+      ['node/refresh-1', 'Курская', 37.66, 55.76],
+      ['node/refresh-2', 'Чкаловская', 37.66, 55.755],
+      ['node/refresh-3', 'Бауманская', 37.68, 55.77],
+    ].map(([id, name, longitude, latitude]) => ({
+      type: 'Feature',
+      id,
+      properties: { name, osm_id: id },
+      geometry: { type: 'Point', coordinates: [longitude, latitude] },
+    })),
+  };
+  let mutateFirstObject = false;
+  let firstObject;
+  let routeCalls = 0;
+  const metroTravelTimes = new AssistantMetroTravelTimeService(prisma, {
+    async getWalkingRoutes({ destinations }) {
+      routeCalls += 1;
+      if (mutateFirstObject && routeCalls === 1) {
+        await prisma.realEstateObject.update({
+          where: { id: firstObject.id },
+          data: { latitude: Number(firstObject.latitude) + 0.000001 },
+        });
+      }
+      return {
+        routes: destinations.map((_, destinationIndex) => ({
+          destinationIndex,
+          durationSeconds: 180 + destinationIndex * 10,
+          distanceMeters: 200 + destinationIndex * 20,
+        })),
+      };
+    },
+  });
+
+  try {
+    await prisma.realEstateObject.update({
+      where: { id: fixture.objects.nullCoordinates.id },
+      data: { latitude: anchor.latitude, longitude: anchor.longitude },
+    });
+    const published = await prisma.realEstateObject.findMany({
+      where: { status: 'PUBLISHED', deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { id: true, latitude: true },
+    });
+    firstObject = published[0];
+    await metroTravelTimes.importAccessPoints(geoJson, version);
+
+    const complete = await metroTravelTimes.refreshPublishedObjects();
+    assert.deepEqual(complete, { publishedObjects: published.length, refreshed: published.length });
+    assert.equal(routeCalls, published.length);
+
+    routeCalls = 0;
+    mutateFirstObject = true;
+    await assert.rejects(
+      metroTravelTimes.refreshPublishedObjects(),
+      (error) => error instanceof AssistantMetroTravelTimeUnavailableError
+        && error.code === 'ASSISTANT_METRO_ROUTE_COVERAGE_GAP',
+    );
+    assert.equal(routeCalls, published.length);
+  } finally {
+    if (firstObject && firstObject.id !== fixture.objects.nullCoordinates.id) {
+      await prisma.realEstateObject.update({
+        where: { id: firstObject.id },
+        data: { latitude: firstObject.latitude },
+      });
+    }
+    await prisma.realEstateObject.update({
+      where: { id: fixture.objects.nullCoordinates.id },
+      data: { latitude: null, longitude: null },
+    });
+    await prisma.assistantObjectMetroRouteFact.deleteMany({
+      where: { object: { slug: { startsWith: `assistant-t05-${suffix}-` } } },
+    });
+    await prisma.assistantMetroAccessPoint.deleteMany({ where: { datasetVersion: version } });
+  }
+});
+
+test('FIX-GEO2 nearest metro shortlist uses physical geography distance at Moscow latitude', { concurrency: false }, async () => {
+  const version = `assistant-t05-${suffix}-metric`;
+  const latitude = Number(fixture.objects.inside500.latitude);
+  const longitude = Number(fixture.objects.inside500.longitude);
+  let destinations;
+  const metroTravelTimes = new AssistantMetroTravelTimeService(prisma, {
+    async getWalkingRoutes(input) {
+      destinations = input.destinations;
+      return {
+        routes: input.destinations.map((_, destinationIndex) => ({
+          destinationIndex,
+          durationSeconds: 120 + destinationIndex,
+          distanceMeters: 150 + destinationIndex,
+        })),
+      };
+    },
+  });
+  const definitions = [
+    ['metric-a', 'A', longitude + 0.018, latitude],
+    ['metric-b', 'B', longitude, latitude + 0.012],
+    ['metric-c', 'C', longitude, latitude + 0.014],
+    ['metric-d', 'D', longitude + 0.024, latitude],
+  ];
+
+  try {
+    await metroTravelTimes.importAccessPoints({
+      type: 'FeatureCollection',
+      features: definitions.map(([id, name, pointLongitude, pointLatitude]) => ({
+        type: 'Feature',
+        id,
+        properties: { name, osm_id: id },
+        geometry: { type: 'Point', coordinates: [pointLongitude, pointLatitude] },
+      })),
+    }, version);
+    await metroTravelTimes.ensureFacts([fixture.objects.inside500]);
+
+    assert.deepEqual(destinations, [
+      [Number(latitude.toFixed(6)), Number((longitude + 0.018).toFixed(6))],
+      [Number((latitude + 0.012).toFixed(6)), Number(longitude.toFixed(6))],
+      [Number(latitude.toFixed(6)), Number((longitude + 0.024).toFixed(6))],
+    ]);
+  } finally {
+    await prisma.assistantObjectMetroRouteFact.deleteMany({
+      where: { objectId: fixture.objects.inside500.id },
+    });
+    await prisma.assistantMetroAccessPoint.deleteMany({ where: { datasetVersion: version } });
+  }
+});
+
+test('FIX-GEO2 stores a verified closed-ring boundary and its honest AREA separately', async () => {
+  const sourceExternalId = `closed-ring-${suffix}`;
+  const boundary = await landmarks.saveVerified({
+    kind: 'LINE',
+    label: 'Тестовое кольцо',
+    normalizedQuery: `тестовое кольцо ${suffix}`,
+    aliases: [`тестовое кольцо ${suffix}`],
+    locale: 'ru',
+    country: 'ru',
+    city: 'Москва',
+    geometry: {
+      type: 'LineString',
+      coordinates: [[37.5, 55.7], [37.7, 55.7], [37.7, 55.8], [37.5, 55.8], [37.5, 55.7]],
+    },
+    sourceProvider: 'fake',
+    sourceExternalId,
+    retentionMs: 60_000,
+    sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 2 },
+  });
+  try {
+    const area = await landmarks.saveVerifiedAreaFromBoundary(boundary.id, {
+      label: 'Тестовое кольцо',
+      normalizedQuery: `тестовое кольцо ${suffix}`,
+      aliases: [`тестовое кольцо ${suffix}`],
+      locale: 'ru',
+      country: 'ru',
+      city: 'Москва',
+      sourceProvider: 'fake',
+      sourceExternalId: `${sourceExternalId}#area`,
+      retentionMs: 60_000,
+      sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 2 },
+    });
+    const rows = await prisma.$queryRaw(Prisma.sql`
+      SELECT id::text AS id, kind::text AS kind, GeometryType(geometry) AS geometry_type
+      FROM assistant_geo_landmarks
+      WHERE id IN (${boundary.id}::uuid, ${area.id}::uuid)
+      ORDER BY kind
+    `);
+    assert.deepEqual(rows.map(({ kind, geometry_type }) => [kind, geometry_type]), [
+      ['area', 'POLYGON'],
+      ['line', 'LINESTRING'],
+    ]);
+  } finally {
+    await prisma.assistantGeoLandmark.deleteMany({
+      where: { sourceExternalId: { in: [sourceExternalId, `${sourceExternalId}#area`] } },
+    });
+  }
 });
 
 test('Assistant composite geo intersects every landmark constraint with SQL AND semantics', async () => {
@@ -560,7 +913,7 @@ test('Assistant T05 representative radius plan uses the generated geography GiST
   assert.equal(readPlanBuffers(plan) > 0, true);
 });
 
-test('Assistant T05 persists confirmed geo separately and serializes one grounded radius run', { concurrency: false }, async () => {
+test('FIX-GEO2 accepts raw geo text immediately and still serializes confirmed manual geo separately', { concurrency: false }, async () => {
   const { AppModule } = require('../dist/app.module.js');
   const permission = await prisma.permission.upsert({
     where: { key: 'objects:read' },
@@ -605,35 +958,24 @@ test('Assistant T05 persists confirmed geo separately and serializes one grounde
       idempotencyKey: randomUUID(),
     });
     assert.equal(created.status, 201);
-    const beforeBypass = {
-      messages: await prisma.assistantMessage.count({ where: { conversationId: created.body.conversation.id } }),
-      runs: await prisma.assistantRun.count({ where: { conversationId: created.body.conversation.id } }),
-      aiAttempts: await prisma.assistantAiUsageAttempt.count(),
-      geoOperations: await prisma.assistantGeoOperation.count(),
-      geoAttempts: await prisma.assistantGeoUsageAttempt.count(),
-    };
-    for (const content of [
-      'Найди в 900 м от Белорусского вокзала',
-      'Найди в 3 км от ТТК и в 900 м от Москва-Сити',
-      'Найди рядом с МКАД',
-      'Найди внутри района Арбат',
-      'Найди квартиру у воды',
-    ]) {
-      const blocked = await httpJson(
-        baseUrl,
-        `/assistant/conversations/${created.body.conversation.id}/messages`,
-        { method: 'POST', token, idempotencyKey: randomUUID(), body: { content } },
-      );
-      assert.equal(blocked.status, 400, content);
-      assert.equal(blocked.body.message, 'ASSISTANT_GEO_CONTEXT_REQUIRED', content);
-    }
-    assert.deepEqual({
-      messages: await prisma.assistantMessage.count({ where: { conversationId: created.body.conversation.id } }),
-      runs: await prisma.assistantRun.count({ where: { conversationId: created.body.conversation.id } }),
-      aiAttempts: await prisma.assistantAiUsageAttempt.count(),
-      geoOperations: await prisma.assistantGeoOperation.count(),
-      geoAttempts: await prisma.assistantGeoUsageAttempt.count(),
-    }, beforeBypass);
+    const raw = await httpJson(
+      baseUrl,
+      `/assistant/conversations/${created.body.conversation.id}/messages`,
+      {
+        method: 'POST',
+        token,
+        idempotencyKey: randomUUID(),
+        body: { content: 'Покажи доступные квартиры внутри Садового кольца' },
+      },
+    );
+    assert.equal(raw.status, 202);
+    const persistedRaw = await prisma.assistantRun.findUniqueOrThrow({
+      where: { id: raw.body.run.id },
+      select: { userMessage: { select: { content: true, geoContextJson: true } } },
+    });
+    assert.equal(persistedRaw.userMessage.content, 'Покажи доступные квартиры внутри Садового кольца');
+    assert.equal(persistedRaw.userMessage.geoContextJson, null);
+    await waitForRun(baseUrl, raw.body.run.id, token);
     const queued = await httpJson(
       baseUrl,
       `/assistant/conversations/${created.body.conversation.id}/messages`,
@@ -683,7 +1025,14 @@ test('Assistant T05 persists confirmed geo separately and serializes one grounde
       `/assistant/conversations/${created.body.conversation.id}`,
       { token },
     );
-    assert.deepEqual(detail.body.conversation.messages[0].geo, {
+    const rawMessage = detail.body.conversation.messages.find(
+      ({ content }) => content === 'Покажи доступные квартиры внутри Садового кольца',
+    );
+    const manualMessage = detail.body.conversation.messages.find(
+      ({ content }) => content === 'Найди 2-комнатную квартиру до 25 млн рядом с выбранной точкой',
+    );
+    assert.equal(rawMessage.geo, null);
+    assert.deepEqual(manualMessage.geo, {
       kind: 'POINT',
       mode: 'NEAR',
       label: anchor.label,
@@ -694,13 +1043,17 @@ test('Assistant T05 persists confirmed geo separately and serializes one grounde
       distanceMeters: 2_000,
       source: 'MANUAL',
     });
-    assert.deepEqual(detail.body.conversation.messages[1].answer.geo, run.assistantMessage.answer.geo);
+    assert.deepEqual(
+      detail.body.conversation.messages.find(({ answer }) => answer?.geo?.kind === 'POINT').answer.geo,
+      run.assistantMessage.answer.geo,
+    );
     assert.equal(JSON.stringify(detail.body).includes('search_point'), false);
   } finally {
     await app.close();
     await prisma.assistantRun.deleteMany({ where: { ownerUserId: user.id } });
     await prisma.assistantMessage.deleteMany({ where: { conversation: { ownerUserId: user.id } } });
     await prisma.assistantConversation.deleteMany({ where: { ownerUserId: user.id } });
+    await prisma.assistantGeoOperation.deleteMany({ where: { actorUserId: user.id } });
     await prisma.user.delete({ where: { id: user.id } });
     await prisma.role.delete({ where: { id: role.id } });
   }

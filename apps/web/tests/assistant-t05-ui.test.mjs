@@ -22,7 +22,7 @@ test('Assistant T05 picker keeps map movement as draft and searches only from ex
   );
   assert.match(
     chatSource,
-    /geoPickerTarget\?\.kind !== 'PENDING_SLOT'[\s\S]*geoPickerTarget\?\.kind === 'ACTIVE_CONSTRAINT'[\s\S]*draft\.trim\(\)\.length > 0/u,
+    /geoPickerTarget\?\.kind === 'ACTIVE_CONSTRAINT'[\s\S]*draft\.trim\(\)\.length > 0/u,
   );
   assert.match(
     chatSource,
@@ -31,29 +31,31 @@ test('Assistant T05 picker keeps map movement as draft and searches only from ex
   assert.match(chatSource, /openGeoPicker[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u);
 });
 
-test('ZAEBAL1 UI sends the shared prepared body and preserves composite slot metadata', () => {
-  assert.match(chatSource, /mapAssistantProductSubmission\([\s\S]*beginSubmission\(productDecision\.body\)/u);
+test('FIX-GEO2 UI submits raw text immediately and preserves explicit map context', () => {
+  const submitSource = chatSource.match(/const handleSubmit =[\s\S]*?\n  \};/u)?.[0] ?? '';
+  assert.match(
+    submitSource,
+    /beginSubmission\(\{ content, geo: activeGeo \? geoToBrowserInput\(activeGeo\) : null \}\)/u,
+  );
+  assert.doesNotMatch(submitSource, /resolveAssistantGeo|mapAssistantProductSubmission/u);
   assert.match(
     chatSource,
     /const replacement = withGeoSlotMetadata\([\s\S]*labelManualGeoConstraint\(geo, current\.label\)[\s\S]*current/u,
   );
   assert.match(chatSource, /constraint\.mode === 'NEAR'[\s\S]*editGeoPicker\(index\)/u);
-  assert.match(chatSource, /allowsManualPoint = resolution\.mode === 'NEAR'/u);
+  assert.doesNotMatch(chatSource, /AssistantGeoResolutionPanel|resolveAssistantGeo/u);
 });
 
-test('ZAEBAL1 generic resolver errors stay fail closed without an unbound manual point', () => {
-  assert.match(chatSource, /Не удалось проверить географическое условие/u);
-  assert.doesNotMatch(
-    chatSource,
-    /assistant-geo-resolution--error[\s\S]{0,500}openGeoPicker/u,
-  );
+test('FIX-GEO2 removes the browser resolver error path without creating an unbound manual point', () => {
+  assert.doesNotMatch(chatSource, /resolveAssistantGeo|AssistantGeoResolutionPanel/u);
+  assert.match(chatSource, /setError\(readErrorMessage\(sendError\)\)/u);
+  assert.match(chatSource, /setActiveGeo\(geo\)/u);
 });
 
-test('Assistant T05 browser keeps LocationIQ backend-only and exposes explicit degraded actions', () => {
+test('Assistant T05 browser keeps LocationIQ backend-only and preserves explicit manual-map entry', () => {
   assert.match(apiSource, /'\/assistant\/geo\/resolve'/u);
   assert.doesNotMatch(`${chatSource}\n${pickerSource}\n${apiSource}`, /LOCATIONIQ_API_KEY|locationiq\.com/iu);
-  assert.match(chatSource, /Указать на карте/u);
-  assert.match(chatSource, /Уточнить название/u);
+  assert.match(chatSource, /aria-label="Выбрать точку на карте"/u);
   assert.match(chatSource, /PROPERTY_SEARCH_UNAVAILABLE|readErrorMessage/u);
 });
 
@@ -97,25 +99,25 @@ test('Assistant composite geo keeps separate constraint chips and renders every 
   assert.match(resultMapSource, /assistant-search-area-\$\{index\}/u);
   assert.match(resultMapSource, /подходит под все географические условия/u);
   assert.match(resultMapSource, /по всем \$\{geo\.constraints\.length\} географическим условиям/u);
-  assert.match(styles, /\.assistant-geo-constraint-list[\s\S]*max-height:[\s\S]*overflow-y: auto/u);
-  assert.match(chatSource, /Все выбранные условия применяются одновременно/u);
+  assert.match(chatSource, /activeGeo \? geoConstraints\(activeGeo\)\.map/u);
   assert.match(chatSource, /labelManualGeoConstraint/u);
   assert.match(chatSource, /hasDuplicateGeoConstraints/u);
 });
 
-test('Assistant composite geo isolates pending resolution state between conversations', () => {
+test('FIX-GEO2 keeps the composer free of pending browser-resolution state between conversations', () => {
   assert.match(
     chatSource,
-    /const loadConversation[\s\S]*setIsResolvingGeo\(false\)[\s\S]*setGeoResolution\(null\)[\s\S]*setPendingGeoSubmission\(null\)[\s\S]*setPendingGeoSelections\(\{\}\)/u,
+    /const loadConversation[\s\S]*setPendingGeoSubmission\(null\)[\s\S]*setGeoPickerTarget\(null\)/u,
   );
   assert.match(
     chatSource,
-    /disabled=\{isConversationLoading \|\| isResolvingGeo \|\| geoResolution !== null \|\| geoError !== null\}/u,
+    /disabled=\{isConversationLoading\}/u,
   );
   assert.match(
     chatSource,
-    /if \(!slotId\) \{[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u,
+    /const openGeoPicker = \(\) => \{[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u,
   );
+  assert.doesNotMatch(chatSource, /isResolvingGeo|geoResolution|pendingGeoSelections/u);
   assert.doesNotMatch(
     chatSource,
     /setConversation\(detail\.conversation\);[\s\S]{0,160}setActiveGeo\(null\)/u,

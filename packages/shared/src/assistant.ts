@@ -359,6 +359,18 @@ export type AssistantComparisonResultsAnswer = {
   geo?: AssistantGeoView;
 };
 
+export type AssistantClarificationReason =
+  | 'AMBIGUOUS_PLACE'
+  | 'MISSING_NUMERIC_VALUE'
+  | 'CONFLICTING_HARD_CONDITIONS';
+
+export type AssistantUnavailableReason =
+  | 'PLACE_RESOLUTION'
+  | 'ROUTING'
+  | 'DEADLINE'
+  | 'PROVIDER'
+  | 'DATA';
+
 export type AssistantAnswer =
   | AssistantLegacySearchResultsAnswer
   | AssistantExpandedSearchResultsAnswer
@@ -369,7 +381,8 @@ export type AssistantAnswer =
       facts: AssistantKnowledgeFactCard[];
       externalLots: AssistantExternalLotCard[];
     }
-  | { kind: 'CLARIFICATION' }
+  | { kind: 'CLARIFICATION'; reason: AssistantClarificationReason }
+  | { kind: 'UNAVAILABLE'; reason: AssistantUnavailableReason }
   | { kind: 'REFUSAL'; code?: 'SOURCE_NOT_CONNECTED' }
   | { kind: 'SAFE_BOUNDARY' };
 
