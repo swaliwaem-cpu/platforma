@@ -232,6 +232,9 @@ export class AssistantQueryPlanner {
   ) {
     assertPlannerDeadline(input.deadlineAt);
     const messages = normalizeMessages(input.messages);
+    if (extractAssistantLogicalPredicates(messages).unsupportedTravelConstraint) {
+      throw new AssistantPlannerError('ASSISTANT_TRAVEL_CONSTRAINT_UNSUPPORTED');
+    }
     const dialog = normalizeAssistantDialog(input.dialog, messages);
     const operationRunId = input.operationRunId ?? randomUUID();
     const executionId = input.executionId ?? randomUUID();

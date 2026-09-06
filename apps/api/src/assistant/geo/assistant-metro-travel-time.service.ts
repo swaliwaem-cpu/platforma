@@ -140,6 +140,7 @@ export class AssistantMetroTravelTimeService {
     }
 
     let refreshed = 0;
+    let publishedObjects = 0;
     let afterId: string | undefined;
     while (true) {
       const batch = await this.prisma.realEstateObject.findMany({
@@ -155,8 +156,24 @@ export class AssistantMetroTravelTimeService {
         select: { id: true, latitude: true, longitude: true },
       });
       if (batch.length === 0) break;
-      await this.ensureFacts(batch, deadlineAt);
-      refreshed += batch.length;
+      this.assertDeadline(deadlineAt);
+      const currentFacts = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT o.id::text AS id
+        FROM real_estate_objects o
+        JOIN assistant_object_metro_route_facts fact ON fact.object_id = o.id
+        JOIN assistant_metro_access_points access ON access.id = fact.metro_access_point_id
+        WHERE o.id IN (${Prisma.join(batch.map(({ id }) => Prisma.sql`${id}::uuid`))})
+          AND fact.object_latitude = o.latitude
+          AND fact.object_longitude = o.longitude
+          AND fact.access_dataset_version = access.dataset_version
+          AND fact.routing_profile = ${assistantMetroRoutingProfile}
+          AND access.is_active = TRUE
+      `);
+      const currentIds = new Set(currentFacts.map(({ id }) => id));
+      const missing = batch.filter(({ id }) => !currentIds.has(id));
+      await this.ensureFacts(missing, deadlineAt);
+      refreshed += missing.length;
+      publishedObjects += batch.length;
       afterId = batch.at(-1)!.id;
     }
     this.assertDeadline(deadlineAt);
@@ -187,7 +204,7 @@ export class AssistantMetroTravelTimeService {
     if (coverageGap.length > 0) {
       throw new AssistantMetroTravelTimeUnavailableError('ASSISTANT_METRO_ROUTE_COVERAGE_GAP');
     }
-    return { publishedObjects: refreshed, refreshed };
+    return { publishedObjects, refreshed };
   }
 
   private async refreshObject(object: RouteObject, deadlineAt?: Date) {
@@ -238,7 +255,7 @@ export class AssistantMetroTravelTimeService {
       const distanceMeters = route.distanceMeters;
       return accessPoint
         && typeof durationSeconds === 'number'
-        && Number.isInteger(durationSeconds) && durationSeconds > 0
+        && Number.isInteger(durationSeconds) && durationSeconds >= 0
         && typeof distanceMeters === 'number'
         && Number.isInteger(distanceMeters) && distanceMeters >= 0
         ? [{ accessPoint, durationSeconds, distanceMeters }]

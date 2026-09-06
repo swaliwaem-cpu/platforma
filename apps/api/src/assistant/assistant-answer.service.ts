@@ -363,6 +363,9 @@ export class AssistantAnswerService {
       },
     ).catch((error: unknown) => {
       if (!(error instanceof AssistantPlannerError)) throw error;
+      if (error.code === 'ASSISTANT_TRAVEL_CONSTRAINT_UNSUPPORTED') {
+        return plannedUnavailableResult(plannerMessages, 'ROUTING', error.telemetry);
+      }
       if (error.code === 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED') {
         return plannedUnavailableResult(plannerMessages, 'DEADLINE', error.telemetry);
       }
@@ -401,16 +404,16 @@ export class AssistantAnswerService {
     if (input.geo) return { geo: input.geo };
     const predicate = intent.predicates?.find((item) => item.type === 'SPATIAL');
     if (!predicate) {
-      const latestMessage = input.messages.at(-1);
-      if (!latestMessage) return { geo: null };
-      try {
-        if (parseResolveInputs({ content: latestMessage }).constraints.length === 0) {
-          return { geo: null };
+      for (const message of [...input.messages].reverse()) {
+        try {
+          if (parseResolveInputs({ content: message }).constraints.length > 0) {
+            return this.resolveGeoText(message, input);
+          }
+        } catch {
+          return { terminal: unavailableResult('PLACE_RESOLUTION') };
         }
-      } catch {
-        return { terminal: unavailableResult('PLACE_RESOLUTION') };
       }
-      return this.resolveGeoText(latestMessage, input);
+      return { geo: null };
     }
     return this.resolveGeoText(`внутри «${predicate.place}»`, input);
   }

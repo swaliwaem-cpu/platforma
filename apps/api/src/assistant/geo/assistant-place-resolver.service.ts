@@ -29,7 +29,7 @@ import {
   type AssistantVerifiedLandmarkInput,
 } from './assistant-geo-landmark.service';
 import {
-  isExpectedAssistantGeoAdministrativeBounds,
+  isExpectedAssistantGeoCityBounds,
   normalizeAssistantGeoIdentityText,
   resolveAssistantGeoLandmarkIdentity,
   selectAssistantGeoProviderCandidates,
@@ -418,7 +418,7 @@ export class AssistantPlaceResolverService {
         viewbox: input.providerViewbox,
       }).then((cityLookup) => {
         calls += cityLookup.providerCallCount;
-        const areas = cityLookup.candidates.filter((item) => isExpectedAssistantGeoAdministrativeBounds(item, {
+        const areas = cityLookup.candidates.filter((item) => isExpectedAssistantGeoCityBounds(item, {
           expectedCity: city,
           expectedCountry: input.expectedCountry ?? input.country,
           expectedBounds: input.providerViewbox,

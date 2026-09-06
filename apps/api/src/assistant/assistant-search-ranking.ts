@@ -391,7 +391,7 @@ function createFacts(candidate: AssistantSearchEvidence) {
       : `${candidate.completionQuarter} кв. ${candidate.completionYear}`;
   return [
     candidate.walkingMetro
-      ? `${Math.ceil(candidate.walkingMetro.durationSeconds / 60)} мин пешком до метро «${candidate.walkingMetro.stationName}»`
+      ? `${Math.max(1, Math.ceil(candidate.walkingMetro.durationSeconds / 60))} мин пешком до метро «${candidate.walkingMetro.stationName}»`
       : null,
     candidate.district,
     candidate.metros.length > 0 ? `м. ${candidate.metros.join(', ')}` : null,

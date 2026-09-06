@@ -34,6 +34,7 @@ process.env.JWT_ACCESS_SECRET = 'assistant-t05-postgres-secret';
 const { createEmptyAssistantSearchFilters } = require('../dist/assistant/assistant-query-planner.js');
 const { AssistantSearchService } = require('../dist/assistant/assistant-search.service.js');
 const { AssistantGeoLandmarkService } = require('../dist/assistant/geo/assistant-geo-landmark.service.js');
+const { AssistantOverpassCollector } = require('../dist/assistant/geo/assistant-overpass-collector.js');
 const {
   AssistantMetroTravelTimeService,
   AssistantMetroTravelTimeUnavailableError,
@@ -476,6 +477,11 @@ test('FIX-GEO2 full metro refresh paginates every published object and fails clo
     assert.equal(routeCalls, published.length);
 
     routeCalls = 0;
+    assert.deepEqual(await metroTravelTimes.refreshPublishedObjects(), { publishedObjects: published.length, refreshed: 0 });
+    assert.equal(routeCalls, 0, 'unchanged materialized facts must not consume routing calls on resume');
+    await prisma.assistantObjectMetroRouteFact.deleteMany({
+      where: { objectId: { in: published.map(({ id }) => id) } },
+    });
     mutateFirstObject = true;
     await assert.rejects(
       metroTravelTimes.refreshPublishedObjects(),
@@ -550,6 +556,38 @@ test('FIX-GEO2 nearest metro shortlist uses physical geography distance at Mosco
   }
 });
 
+test('FIX-GEO2 a confirmed zero-second route is the nearest metro and satisfies five minutes', async () => {
+  const version = `assistant-t05-${suffix}-zero`;
+  const object = fixture.objects.inside500;
+  const service = new AssistantMetroTravelTimeService(prisma, {
+    async getWalkingRoutes() {
+      return { routes: [
+        { destinationIndex: 0, durationSeconds: 0, distanceMeters: 0 },
+        { destinationIndex: 1, durationSeconds: 400, distanceMeters: 400 },
+        { destinationIndex: 2, durationSeconds: 500, distanceMeters: 500 },
+      ] };
+    },
+  });
+  try {
+    await service.importAccessPoints({ type: 'FeatureCollection', features: [0, 1, 2].map(index => ({
+      type: 'Feature', id: `zero-${index}`, properties: { name: `Станция ${index}` },
+      geometry: { type: 'Point', coordinates: [Number(object.longitude) + index * 0.001, Number(object.latitude)] },
+    })) }, version);
+    await service.ensureFacts([object]);
+    const fact = await prisma.assistantObjectMetroRouteFact.findUniqueOrThrow({ where: { objectId: object.id } });
+    assert.equal(fact.durationSeconds, 0);
+    const intent = { ...createIntent({}), predicates: [{ type: 'TRAVEL_TIME', mode: 'WALK',
+      destination: 'NEAREST_METRO', operator: 'LTE', value: 5, unit: 'MINUTES' }] };
+    const result = await new AssistantSearchService(prisma, landmarks, service).search(intent, null, {
+      anchor: { ...anchor, latitude: Number(object.latitude), longitude: Number(object.longitude) }, radiusMeters: 10,
+    });
+    assert.equal(result.exact[0].walkingMetro.durationSeconds, 0);
+  } finally {
+    await prisma.assistantObjectMetroRouteFact.deleteMany({ where: { accessDatasetVersion: version } });
+    await prisma.assistantMetroAccessPoint.deleteMany({ where: { datasetVersion: version } });
+  }
+});
+
 test('FIX-GEO2 stores a verified closed-ring boundary and its honest AREA separately', async () => {
   const sourceExternalId = `closed-ring-${suffix}`;
   const boundary = await landmarks.saveVerified({
@@ -596,6 +634,114 @@ test('FIX-GEO2 stores a verified closed-ring boundary and its honest AREA separa
     await prisma.assistantGeoLandmark.deleteMany({
       where: { sourceExternalId: { in: [sourceExternalId, `${sourceExternalId}#area`] } },
     });
+  }
+});
+
+test('FIX-GEO2 split nested road rings preserve both LINE contours and use only the inner AREA', async () => {
+  const outer = [[37.5, 55.7], [37.7, 55.7], [37.7, 55.8], [37.5, 55.8], [37.5, 55.7]];
+  const inner = [[37.55, 55.72], [37.65, 55.72], [37.65, 55.78], [37.55, 55.78], [37.55, 55.72]];
+  const lines = [outer.slice(0, 3), outer.slice(2).reverse(), inner.slice(0, 3), inner.slice(2).reverse()];
+  const collector = new AssistantOverpassCollector({
+    ASSISTANT_OVERPASS_ENABLED: 'true',
+    ASSISTANT_OVERPASS_URL: 'http://127.0.0.1:3010/api/interpreter',
+  }, async () => new Response(JSON.stringify({ elements: [{
+    type: 'relation', id: 100, tags: { type: 'route', route: 'road', name: 'Тестовое кольцо' },
+    members: lines.map((line, index) => ({ type: 'way', ref: index + 1,
+      geometry: line.map(([lon, lat]) => ({ lon, lat })) })),
+  }] }), { status: 200 }), Date.now, undefined, undefined,
+  (geometry) => landmarks.isClosedRoadBoundary(geometry));
+  const collected = await collector.collect({ name: 'Тестовое кольцо', relationIds: ['100'],
+    city: 'Москва', cityBounds: [37, 55, 38, 56] });
+  assert.deepEqual(collected.geometry, { type: 'MultiLineString', coordinates: lines });
+  const sourceExternalId = `nested-ring-${suffix}`;
+  const input = { label: 'Тестовое кольцо', normalizedQuery: sourceExternalId, aliases: [],
+    locale: 'ru', country: 'ru', city: 'Москва', sourceProvider: 'fake', sourceExternalId,
+    retentionMs: 60_000, sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 2 } };
+  try {
+    const boundary = await landmarks.saveVerified({ ...input, kind: 'LINE', geometry: collected.geometry });
+    const area = await landmarks.saveVerifiedAreaFromBoundary(boundary.id, {
+      ...input, sourceExternalId: `${sourceExternalId}#area`,
+    });
+    const [row] = await prisma.$queryRaw(Prisma.sql`
+      SELECT ST_Equals(geometry, ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify({ type: 'Polygon', coordinates: [inner] })}), 4326)) AS exact,
+        ST_Covers(geometry, ST_SetSRID(ST_Point(37.6, 55.75), 4326)) AS center,
+        ST_Covers(geometry, ST_SetSRID(ST_Point(37.55, 55.75), 4326)) AS boundary,
+        ST_Covers(geometry, ST_SetSRID(ST_Point(37.52, 55.75), 4326)) AS carriageway
+      FROM assistant_geo_landmarks WHERE id = ${area.id}::uuid
+    `);
+    assert.deepEqual(row, { exact: true, center: true, boundary: true, carriageway: false });
+    const lookup = { normalizedQuery: sourceExternalId, locale: 'ru', country: 'ru' };
+    assert.deepEqual((await landmarks.findTrustedByQuery({ ...lookup, mode: 'NEAR' })).map(({ id }) => id), [boundary.id]);
+    assert.deepEqual((await landmarks.findTrustedByQuery({ ...lookup, mode: 'INSIDE' })).map(({ id }) => id), [area.id]);
+    const result = await search.search(createIntent({}), null, {
+      kind: 'AREA', mode: 'INSIDE', landmarkId: area.id, label: input.label, source: 'LANDMARK',
+    });
+    assert.ok(result.exact.some(({ unitId }) => unitId === fixture.units.inside500.id));
+  } finally {
+    await prisma.assistantGeoLandmark.deleteMany({ where: { sourceExternalId: { in: [sourceExternalId, `${sourceExternalId}#area`] } } });
+  }
+});
+
+test('FIX-GEO2 road boundary validation accepts split rings but rejects broken or ambiguous topology', async () => {
+  const ring = [[37, 55], [38, 55], [38, 56], [37, 56], [37, 55]];
+  assert.equal(await landmarks.isClosedRoadBoundary({ type: 'MultiLineString', coordinates: [ring.slice(0, 3), ring.slice(2)] }), true);
+  const invalid = [
+    ['gap', [ring.slice(0, 4)]],
+    ['disjoint', [ring, ring.map(([x, y]) => [x + 2, y])]],
+    ['crossing', [ring, ring.map(([x, y]) => [x + 0.5, y + 0.5])]],
+    ['touching', [ring, [[37, 55.2], [37.8, 55.2], [37.8, 55.8], [37, 55.8], [37, 55.2]]]],
+    ['self-intersection', [[[37, 55], [38, 56], [38, 55], [37, 56], [37, 55]]]],
+    ['degenerate', [[[37, 55], [38, 55], [37, 55]]]],
+    ['branch', [ring, [[37, 55], [36, 54]]]],
+    ['duplicate', [ring, ring]],
+  ];
+  for (const [name, coordinates] of invalid) {
+    assert.equal(await landmarks.isClosedRoadBoundary({ type: 'MultiLineString', coordinates }), false, name);
+    const sourceExternalId = `invalid-ring-${suffix}-${name}`;
+    const input = { label: name, normalizedQuery: sourceExternalId, aliases: [], locale: 'ru', country: 'ru',
+      city: 'Москва', sourceProvider: 'fake', sourceExternalId, retentionMs: 60_000,
+      sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 2 } };
+    try {
+      const boundary = await landmarks.saveVerified({ ...input, kind: 'LINE', geometry: { type: 'MultiLineString', coordinates } });
+      await assert.rejects(landmarks.saveVerifiedAreaFromBoundary(boundary.id, {
+        ...input, sourceExternalId: `${sourceExternalId}#area`,
+      }), /ASSISTANT_GEO_LANDMARK_GEOMETRY_INVALID/, name);
+    } finally {
+      await prisma.assistantGeoLandmark.deleteMany({ where: { sourceExternalId: { in: [sourceExternalId, `${sourceExternalId}#area`] } } });
+    }
+  }
+});
+
+test('FIX-GEO2 recorded OSM Garden Ring relation retains all 225 ways and derives its exact inner contour', async () => {
+  // Public OSM response captured 2026-09-06; attribution is retained in osm3s.copyright.
+  // Offline replay only: the fetcher below cannot make any external request.
+  const payload = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/assistant/garden-ring-overpass.json'), 'utf8'));
+  const collector = new AssistantOverpassCollector({
+    ASSISTANT_OVERPASS_ENABLED: 'true', ASSISTANT_OVERPASS_URL: 'http://127.0.0.1:3010/api/interpreter',
+  }, async () => new Response(JSON.stringify(payload), { status: 200 }), Date.now, undefined, undefined,
+  (geometry) => landmarks.isClosedRoadBoundary(geometry));
+  const collected = await collector.collect({ name: 'Садовое кольцо', relationIds: ['2094267'],
+    city: 'Москва', cityBounds: [37.1, 55.1, 38.1, 56.1] });
+  assert.equal(collected.externalId, 'relation/2094267');
+  assert.equal(collected.geometry.type, 'MultiLineString');
+  assert.equal(collected.geometry.coordinates.length, 225);
+  const sourceExternalId = `recorded-garden-ring-${suffix}`;
+  const input = { label: 'Садовое кольцо', normalizedQuery: sourceExternalId, aliases: [],
+    locale: 'ru', country: 'ru', city: 'Москва', sourceProvider: 'fake', sourceExternalId,
+    retentionMs: 60_000, sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 2 } };
+  try {
+    const boundary = await landmarks.saveVerified({ ...input, kind: 'LINE', geometry: collected.geometry });
+    const area = await landmarks.saveVerifiedAreaFromBoundary(boundary.id, { ...input, sourceExternalId: `${sourceExternalId}#area` });
+    const [row] = await prisma.$queryRaw(Prisma.sql`
+      SELECT ST_Area(geometry::geography) AS meters, ST_NPoints(geometry)::int AS points,
+        ST_NumInteriorRings(geometry)::int AS holes, ST_IsValid(geometry) AS valid,
+        ST_Covers(geometry, ST_SetSRID(ST_Point(37.6176, 55.752), 4326)) AS center
+      FROM assistant_geo_landmarks WHERE id = ${area.id}::uuid
+    `);
+    assert.ok(Math.abs(row.meters - 18620979.535389587) < 1);
+    assert.deepEqual({ ...row, meters: undefined }, { meters: undefined, points: 400, holes: 0, valid: true, center: true });
+  } finally {
+    await prisma.assistantGeoLandmark.deleteMany({ where: { sourceExternalId: { in: [sourceExternalId, `${sourceExternalId}#area`] } } });
   }
 });
 

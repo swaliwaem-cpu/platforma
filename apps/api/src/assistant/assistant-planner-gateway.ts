@@ -358,7 +358,7 @@ function createDeterministicIntent(messages: string[]): AssistantLogicalPlanV1 {
     clarificationQuestion: conflicting
       ? 'Минимальное значение превышает максимальное. Уточните нужный диапазон.'
       : logical.missingTravelValue
-      ? 'Укажите максимальное время пешком до ближайшего метро.'
+      ? 'Укажите максимальное время пешком до ближайшего метро в минутах.'
       : null,
     clarificationReason: conflicting ? 'CONFLICTING_HARD_CONDITIONS'
       : logical.missingTravelValue ? 'MISSING_NUMERIC_VALUE' : null,

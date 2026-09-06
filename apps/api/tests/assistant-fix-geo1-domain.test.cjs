@@ -882,8 +882,8 @@ test('PIDAFIX2 resolver uses canonical provider query and persists bounded ident
               countryCode: 'ru',
               geometryKind: 'AREA',
               geometryComplete: false,
-              entityClass: 'boundary',
-              entityType: 'administrative',
+              entityClass: 'place',
+              entityType: 'city',
               osmType: 'relation',
               osmId: '2555133',
               boundingBox: [37.3, 55.5, 37.9, 55.9],
@@ -1562,8 +1562,8 @@ test('FIX-GEO1 Overpass outage is UNAVAILABLE, counted and never negative-cached
               countryCode: 'ru',
               geometryKind: 'AREA',
               geometryComplete: false,
-              entityClass: 'boundary',
-              entityType: 'administrative',
+              entityClass: 'place',
+              entityType: 'city',
               osmType: 'relation',
               osmId: '2555133',
               boundingBox: [37.3, 55.5, 37.9, 55.9],
@@ -1605,7 +1605,7 @@ test('PIDAFIX2 resolver owns one tracked operation and memoizes city and Overpas
           candidates: [{
             id: 'moscow', label: 'Москва, Россия', latitude: 55.75, longitude: 37.62,
             city: null, countryCode: 'ru', geometryKind: 'AREA', geometryComplete: false,
-            entityClass: 'boundary', entityType: 'administrative', osmType: 'relation',
+            entityClass: 'place', entityType: 'city', osmType: 'relation',
             osmId: '2555133', names: ['Москва'],
             boundingBox: [37.3, 55.5, 37.9, 55.9],
           }],
@@ -1943,6 +1943,143 @@ test('FIX-GEO1 GeoJSON validator is exact, bounded and fail-closed', () => {
   }
 });
 
+test('FIX-GEO2 resolves Garden Ring through Moscow place/city bounds without using its bbox as geometry', async () => {
+  const requests = [];
+  const collected = [];
+  const writes = [];
+  const ring = {
+    type: 'LineString',
+    coordinates: [[37.58, 55.74], [37.65, 55.74], [37.65, 55.77], [37.58, 55.74]],
+  };
+  // OSM relation 2555133 is place=city, not boundary=administrative.
+  // https://github.com/komoot/photon/issues/309
+  const adapter = new LocationIqGeoProvider({
+    LOCATIONIQ_API_KEY: 'test-only-key',
+    LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
+    ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
+  }, async (url) => {
+    const request = new URL(url);
+    requests.push(request);
+    assert.equal(request.searchParams.has('polygon_geojson'), false);
+    const city = request.searchParams.get('q') === 'Москва';
+    return new Response(JSON.stringify([city ? {
+      place_id: 'moscow-city', display_name: 'Москва, Россия',
+      lat: '55.7507178', lon: '37.6176606',
+      class: 'place', type: 'city', osm_type: 'relation', osm_id: '2555133',
+      boundingbox: ['55.4913076', '55.9574097', '37.290502', '37.9674277'],
+      address: { city: 'Москва', country_code: 'ru' }, namedetails: { name: 'Москва' },
+    } : {
+      place_id: 'road-fragment', display_name: 'Садовое кольцо, Москва',
+      lat: '55.75', lon: '37.62', class: 'highway', type: 'primary',
+      osm_type: 'way', osm_id: '100', address: { city: 'Москва', country_code: 'ru' },
+    }]), { status: 200 });
+  });
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    {
+      getProviderName: () => 'locationiq', getCacheRetentionMs: () => 3_600_000,
+      searchWithTelemetry: async (request) => ({
+        providerCallCount: 1, candidates: await adapter.search(request),
+      }),
+    },
+    {
+      findTrustedByQuery: async () => [], findTrustedById: async () => null,
+      async saveVerified(input) {
+        writes.push(input);
+        return { id: landmarkId, kind: 'LINE', label: input.label, source: 'PLACE',
+          city: input.city, countryCode: input.country };
+      },
+      async saveVerifiedAreaFromBoundary(boundaryId, input) {
+        assert.equal(boundaryId, landmarkId);
+        assert.deepEqual(input.geometry, ring);
+        return { id: '22222222-2222-4222-8222-222222222222', kind: 'AREA',
+          label: input.label, source: 'PLACE', city: input.city, countryCode: input.country };
+      },
+    },
+    {
+      async collect(request) {
+        collected.push(request);
+        return { geometry: ring, externalId: 'relation/2094267', entityType: 'road' };
+      },
+    },
+  );
+  const result = await resolver.resolve({
+    content: 'Найди квартиру внутри Садового кольца', locale: 'ru', country: 'ru',
+  });
+  assert.equal(result.status, 'RESOLVED');
+  assert.equal(result.candidates[0].kind, 'AREA');
+  assert.deepEqual(requests.map((url) => url.searchParams.get('q')), ['садовое кольцо', 'Москва']);
+  assert.equal(collected.length, 1);
+  assert.deepEqual(collected[0].cityBounds, [37.290502, 55.4913076, 37.9674277, 55.9574097]);
+  assert.deepEqual(collected[0].relationIds, ['2094267']);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].geometry, ring);
+  assert.equal(writes[0].sourceProvider, 'overpass');
+});
+
+test('FIX-GEO2 Moscow bounds reject wrong identities and invalid bounds before Overpass', async (t) => {
+  const city = {
+    place_id: 'moscow-city', display_name: 'Москва, Россия', lat: '55.75', lon: '37.62',
+    class: 'place', type: 'city', osm_type: 'relation', osm_id: '2555133',
+    boundingbox: ['55.4913076', '55.9574097', '37.290502', '37.9674277'],
+    address: { city: 'Москва', country_code: 'ru' }, namedetails: { name: 'Москва' },
+  };
+  for (const [name, overrides] of [
+    ['wrong relation', { osm_id: '102269' }],
+    ['old incorrect administrative fixture', { class: 'boundary', type: 'administrative' }],
+    ['point instead of relation', { osm_type: 'node' }],
+    ['wrong place type', { type: 'village' }],
+    ['wrong name', { display_name: 'Другой город, Россия', namedetails: {} }],
+    ['wrong city', { address: { city: 'Тула', country_code: 'ru' } }],
+    ['wrong country', { address: { city: 'Москва', country_code: 'us' } }],
+    ['missing country', { address: { city: 'Москва' } }],
+    ['out of scope', { lat: '59.9', lon: '30.3' }],
+    ['missing bounds', { boundingbox: undefined }],
+    ['inverted bounds', { boundingbox: ['55.9', '55.5', '37.3', '37.9'] }],
+  ]) {
+    await t.test(name, async () => {
+      const operations = [];
+      let calls = 0;
+      const adapter = new LocationIqGeoProvider({
+        LOCATIONIQ_API_KEY: 'test-only-key',
+        LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
+        ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
+      }, async (url) => {
+        calls += 1;
+        const isCity = new URL(url).searchParams.get('q') === 'Москва';
+        return new Response(JSON.stringify([isCity ? { ...city, ...overrides } : {
+          place_id: 'road', display_name: 'Садовое кольцо, Москва', lat: '55.75', lon: '37.62',
+          class: 'highway', type: 'primary', osm_type: 'way', osm_id: '100',
+          address: { city: 'Москва', country_code: 'ru' },
+        }]), { status: 200 });
+      });
+      const resolver = new AssistantPlaceResolverService(
+        createResolverPrisma({
+          onCacheWrite: () => assert.fail('Rejected bounds must not be cached'),
+          onOperation: (operation) => operations.push(operation),
+        }),
+        {
+          getProviderName: () => 'locationiq', getCacheRetentionMs: () => 3_600_000,
+          searchWithTelemetry: async (request) => ({
+            providerCallCount: 1, candidates: await adapter.search(request),
+          }),
+        },
+        {
+          findTrustedByQuery: async () => [], findTrustedById: async () => null,
+          saveVerified: async () => assert.fail('Rejected bounds must not be persisted'),
+        },
+        { collect: async () => assert.fail('Rejected bounds must not reach Overpass') },
+      );
+      const result = await resolver.resolve({
+        content: 'Найди квартиру внутри Садового кольца', locale: 'ru', country: 'ru',
+      });
+      assert.equal(result.status, 'UNAVAILABLE');
+      assert.equal(calls, 2);
+      assert.equal(operations.at(-1).data.errorCode, 'ASSISTANT_OVERPASS_CITY_AREA_UNAVAILABLE');
+    });
+  }
+});
+
 test('ZAEBAL5 LocationIQ request purpose bounds polygon, metadata and Moscow bounds lookups', async () => {
   const requestedUrls = [];
   const provider = new LocationIqGeoProvider({
@@ -1978,8 +2115,8 @@ test('ZAEBAL5 LocationIQ request purpose bounds polygon, metadata and Moscow bou
         display_name: 'Москва, Россия',
         lat: '55.75',
         lon: '37.62',
-        class: 'boundary',
-        type: 'administrative',
+        class: 'place',
+        type: 'city',
         osm_type: 'relation',
         osm_id: '2555133',
         boundingbox: ['55.5', '55.9', '37.3', '37.9'],
@@ -2035,6 +2172,15 @@ test('ZAEBAL5 LocationIQ request purpose bounds polygon, metadata and Moscow bou
   assert.equal(bounds[0].geometryKind, 'AREA');
   assert.equal(bounds[0].geometryComplete, false);
   assert.deepEqual(bounds[0].boundingBox, [37.3, 55.5, 37.9, 55.9]);
+  assert.equal(bounds[0].referenceGeometry, undefined);
+  // BOUNDS metadata must not promote a city relation to trusted geometry in other purposes.
+  for (const purpose of ['METADATA', 'FULL_GEOMETRY']) {
+    const cityWithoutGeometry = await provider.search({
+      purpose, expectedKind: 'AREA', query: 'Москва', locale: 'ru', country: 'ru', viewbox: null,
+    });
+    assert.equal(cityWithoutGeometry[0].geometryKind, 'POINT');
+    assert.equal(cityWithoutGeometry[0].referenceGeometry, undefined);
+  }
   assert.deepEqual(area[0].names, ['Арбат', 'район Арбат']);
 
   await assert.rejects(provider.search({
@@ -2477,6 +2623,7 @@ test('PIDAFIX2 Overpass uses exact allowlisted tags and one complete road relati
     ASSISTANT_OVERPASS_TIMEOUT_MS: '1000',
   }, async (_url, init) => {
     fetchCalls += 1;
+    assert.equal(new Headers(init.headers).get('user-agent'), 'Platforma/0.1 (server-side geo resolver)');
     postedQuery = new URLSearchParams(init.body).get('data');
     await new Promise((resolve) => setTimeout(resolve, 5));
     return new Response(JSON.stringify({
@@ -2510,6 +2657,9 @@ test('PIDAFIX2 Overpass uses exact allowlisted tags and one complete road relati
   assert.equal(first.externalId, 'relation/100');
   assert.match(postedQuery, /\[out:json\]\[timeout:\d+\]\[maxsize:\d+\]/u);
   assert.match(postedQuery, /\(55\.5,37\.3,55\.9,37\.9\)/u);
+  const selectors = [...postedQuery.matchAll(/relation[^;]+;/gu)].map(([selector]) => selector);
+  assert.equal(selectors.length, 20);
+  assert.ok(selectors.every((selector) => selector.includes('(id:100)')));
   for (const key of ['name', 'official_name', 'short_name', 'alt_name', 'ref']) {
     assert.match(postedQuery, new RegExp(`relation\\["${key}"="ТТК"\\]`, 'u'));
   }

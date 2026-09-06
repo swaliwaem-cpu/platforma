@@ -224,11 +224,13 @@ test('PIDAFIX2 real resolver uses local HTTP stubs, persisted provenance and pro
     budgets,
     integrationLedger,
   );
+  const landmarkRepository = new AssistantGeoLandmarkService(prisma);
   const resolver = new AssistantPlaceResolverService(
     prisma,
     policy,
-    new AssistantGeoLandmarkService(prisma),
-    new AssistantOverpassCollector(environment, fetch, Date.now, async () => {}, integrationLedger),
+    landmarkRepository,
+    new AssistantOverpassCollector(environment, fetch, Date.now, async () => {}, integrationLedger,
+      (geometry) => landmarkRepository.isClosedRoadBoundary(geometry)),
     integrationLedger,
   );
 

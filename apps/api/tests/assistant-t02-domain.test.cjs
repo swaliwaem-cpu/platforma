@@ -211,6 +211,51 @@ test('FIX-GEO2 logical predicates use the latest corrected place without losing 
   });
 });
 
+test('FIX-GEO2 walking constraints preserve numeric answers, word order and the strictest bound', async () => {
+  const cases = [
+    [['Найди квартиру пешком до метро', '5 минут'], 5, null],
+    [['Найди квартиру пешком до метро', '5'], 5, null],
+    [['Найди квартиру в пяти минутах пешком до метро, на машине езжу на работу'], 5, null],
+    [['Найди квартиру внутри Садового кольца, пешком до метро 5 минут'], 5, 'Садовое кольцо'],
+    [['Найди квартиру внутри Садового кольца и в пяти минутах пешком до метро'], 5, 'Садовое кольцо'],
+    [['Найди квартиру до 5 минут пешком до метро, не более 3 минут пешком до метро'], 3, null],
+    [['Найди квартиру до пяти минут пешком до метро', 'Теперь без ограничения по метро'], null, null],
+    [['Найди квартиру внутри парка', 'Парка Горького в Москве'], null, 'Парка Горького в Москве'],
+  ];
+  for (const [messages, minutes, place] of cases) {
+    const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+    const { intent } = await planner.plan({ messages, context: null });
+    assert.equal(intent.predicates.find(p => p.type === 'TRAVEL_TIME')?.value ?? null, minutes, messages.join(' / '));
+    assert.equal(intent.predicates.find(p => p.type === 'SPATIAL')?.place ?? null, place, messages.join(' / '));
+    assert.equal(intent.needsClarification, false, messages.join(' / '));
+  }
+});
+
+test('FIX-GEO2 does not replace a driving condition with WALK or a broad search', async () => {
+  let calls = 0;
+  const service = new AssistantAnswerService(new AssistantQueryPlanner({
+    async plan() { calls += 1; throw new Error('unexpected planner call'); },
+  }), { async search() { throw new Error('unexpected search'); } });
+  for (const messages of [
+    ['Найди квартиру до 5 минут на машине до метро'],
+    ['Найди квартиру до 5 минут до метро'],
+    ['Найди квартиру не менее 5 минут пешком до метро'],
+    ['Найди квартиру в 2,5 минутах пешком до метро'],
+    ['Найди квартиру в 2.5 минутах пешком до метро'],
+    ['Найди квартиру до 5 минут пешком до метро и 2 минуты до школы'],
+    ['До метро до пяти минут пешком, до школы до двух минут пешком'],
+    ['До 5 минут пешком до метро', 'Не менее 3 минут'],
+    ['До 5 минут пешком до метро', 'Не менее 3'],
+    ['До 5 минут пешком до метро', '2,5'],
+    ['До 5 минут на машине до метро', '10 минут'],
+    ['Найди квартиру от 3 до 5 минут пешком до метро'],
+  ]) {
+    const result = await service.answer({ messages, context: null });
+    assert.deepEqual(result.answer, { kind: 'UNAVAILABLE', reason: 'ROUTING' }, messages.join(' / '));
+  }
+  assert.equal(calls, 0);
+});
+
 test('FIX-GEO2 rejects an invented planner clarification and uses Terra only as local-plan fallback', async () => {
   const calls = [];
   const planner = new AssistantQueryPlanner({
@@ -1933,17 +1978,44 @@ test('FIX-GEO2 resolves a raw legacy NEAR clause on the backend after immediate 
   });
 });
 
-test('FIX-GEO2 card exposes the materialized nearest-metro walking fact', () => {
-  const answer = buildAssistantSearchAnswer(
-    validIntent(),
-    [candidate('11111111-1111-4111-8111-111111111111', {
-      walkingMetro: { stationName: 'Таганская', durationSeconds: 240 },
-    })],
-    [],
-    new Date('2026-08-24T12:00:00.000Z'),
-    1,
+test('FIX-GEO2 legacy NEAR survives a budget follow-up after raw submit', async () => {
+  const first = 'Найди квартиру не дальше 500 м от Садового кольца';
+  let resolvedText;
+  let searchGeo;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    { async search(intent, context, geo) {
+      searchGeo = geo;
+      assert.equal(intent.hardFilters.budgetMaxRub, 30_000_000);
+      return { exact: [], alternatives: [], totalExactResults: 0 };
+    } }, undefined,
+    { async findAdministrativeDistrict() { return null; }, async resolve({ content }) {
+      resolvedText = content;
+      return { status: 'RESOLVED', placeQuery: 'Садовое кольцо', mode: 'NEAR', distanceMeters: 500,
+        candidates: [{ id: '11111111-1111-4111-8111-111111111111', kind: 'LINE', mode: 'NEAR',
+          label: 'Садовое кольцо', city: 'Москва', countryCode: 'ru', source: 'PLACE' }] };
+    } },
   );
-  assert.equal(answer.exactResults[0].facts[0], '4 мин пешком до метро «Таганская»');
+  const result = await service.answer({ messages: [first, 'Бюджет до 30 млн'], geo: null, context: null });
+  assert.equal(result.answer.kind, 'SEARCH_RESULTS');
+  assert.equal(resolvedText, first);
+  assert.equal(searchGeo.kind, 'LINE');
+  assert.equal(searchGeo.distanceMeters, 500);
+});
+
+test('FIX-GEO2 card exposes the materialized nearest-metro walking fact', () => {
+  for (const [durationSeconds, displayedMinutes] of [[240, 4], [0, 1]]) {
+    const answer = buildAssistantSearchAnswer(
+      validIntent(),
+      [candidate('11111111-1111-4111-8111-111111111111', {
+        walkingMetro: { stationName: 'Таганская', durationSeconds },
+      })],
+      [],
+      new Date('2026-08-24T12:00:00.000Z'),
+      1,
+    );
+    assert.equal(answer.exactResults[0].facts[0], `${displayedMinutes} мин пешком до метро «Таганская»`);
+  }
 });
 
 test('Assistant T02 answer service forwards trusted geo provenance to the planner', async () => {

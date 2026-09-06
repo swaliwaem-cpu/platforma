@@ -407,7 +407,13 @@ function normalizeProviderCandidates(
       : null;
     const geometry = request.purpose === 'FULL_GEOMETRY'
       ? parseLocationIqGeometry(entry.geojson)
-      : { kind: inferMetadataGeometryKind(entityClass, request.expectedKind) };
+      : {
+          // A city relation can supply lookup bounds, but never a trusted AREA geometry.
+          kind: request.purpose === 'BOUNDS'
+            && entityClass === 'place' && entityType === 'city' && osmType === 'relation'
+            ? 'AREA' as const
+            : inferMetadataGeometryKind(entityClass, request.expectedKind),
+        };
     const geometryKind = normalizeText(entityClass ?? '') === 'highway' ? 'LINE' : geometry.kind;
     const candidate: AssistantGeoProviderCandidate = {
       id,

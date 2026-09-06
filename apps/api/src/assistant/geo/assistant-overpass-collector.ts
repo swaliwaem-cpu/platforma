@@ -56,6 +56,7 @@ export class AssistantOverpassCollector {
     private readonly now: () => number = Date.now,
     private readonly delay: (milliseconds: number) => Promise<void> = wait,
     private readonly usageLedger?: Pick<AssistantGeoUsageLedgerService, 'reserve' | 'settle'>,
+    private readonly boundaryValidator?: (geometry: AssistantGeoLineGeometry) => Promise<boolean>,
   ) {
     this.enabled = readBoolean(environment.ASSISTANT_OVERPASS_ENABLED, false);
     this.endpoint = readEndpoint(environment.ASSISTANT_OVERPASS_URL ?? defaultEndpoint);
@@ -136,6 +137,7 @@ export class AssistantOverpassCollector {
         method: 'POST',
         headers: {
           accept: 'application/json',
+          'user-agent': 'Platforma/0.1 (server-side geo resolver)',
           'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
         },
         body: new URLSearchParams({ data: query }),
@@ -159,7 +161,10 @@ export class AssistantOverpassCollector {
       } catch {
         throw new AssistantOverpassError('ASSISTANT_OVERPASS_RESPONSE_INVALID', false);
       }
-      const result = parseOverpassResult(payload, request);
+      const result = parseOverpassResult(payload, request, this.boundaryValidator !== undefined);
+      if (this.boundaryValidator && !await this.boundaryValidator(result.geometry)) {
+        throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE', false);
+      }
       this.consecutiveFailures = 0;
       outcome = 'SUCCESS';
       return result;
@@ -221,12 +226,13 @@ export function createOverpassQuery(
   const normalized = normalizeRequest(request);
   const [west, south, east, north] = normalized.cityBounds;
   const timeoutSeconds = Math.max(1, Math.ceil(timeoutMs / 1_000));
+  const ids = normalized.relationIds === null ? '' : `(id:${normalized.relationIds.join(',')})`;
   const selectors = normalized.tagValues!.flatMap((value) => exactIdentityTagKeys.flatMap((key) => {
     const tag = `["${key}"=${JSON.stringify(value)}]`;
     const bounds = `(${south},${west},${north},${east})`;
     return [
-      `relation${tag}["type"="route"]["route"="road"]${bounds};`,
-      `relation${tag}["type"="road"]${bounds};`,
+      `relation${tag}["type"="route"]["route"="road"]${bounds}${ids};`,
+      `relation${tag}["type"="road"]${bounds}${ids};`,
     ];
   }));
   return [
@@ -238,7 +244,11 @@ export function createOverpassQuery(
   ].join('');
 }
 
-function parseOverpassResult(value: unknown, request: AssistantOverpassRequest): AssistantOverpassResult {
+function parseOverpassResult(
+  value: unknown,
+  request: AssistantOverpassRequest,
+  validateNestedContours: boolean,
+): AssistantOverpassResult {
   if (!isRecord(value) || typeof value.remark === 'string' || !Array.isArray(value.elements)) {
     throw new AssistantOverpassError('ASSISTANT_OVERPASS_RESPONSE_INVALID', false);
   }
@@ -282,7 +292,7 @@ function parseOverpassResult(value: unknown, request: AssistantOverpassRequest):
     }
     const fingerprint = [...members.keys()].sort().join('|');
     const lines = [...members.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, line]) => line);
-    assertClosedMemberGraph(lines);
+    assertClosedMemberGraph(lines, validateNestedContours);
     const previous = relations.get(fingerprint);
     if (previous && JSON.stringify(previous.lines) !== JSON.stringify(lines)) {
       throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_AMBIGUOUS', false);
@@ -350,7 +360,7 @@ function hasExpectedIdentityTag(tags: Record<string, unknown>, expectedValues: S
   ));
 }
 
-function assertClosedMemberGraph(lines: [number, number][][]) {
+function assertClosedMemberGraph(lines: [number, number][][], validateNestedContours: boolean) {
   const degrees = new Map<string, number>();
   const adjacent = new Map<string, Set<string>>();
   for (const line of lines) {
@@ -374,7 +384,8 @@ function assertClosedMemberGraph(lines: [number, number][][]) {
     visited.add(current);
     for (const neighbor of adjacent.get(current) ?? []) pending.push(neighbor);
   }
-  if (visited.size !== degrees.size) {
+  // Multiple closed carriageways are accepted only after the caller's strict topology check.
+  if (visited.size !== degrees.size && !validateNestedContours) {
     throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE', false);
   }
 }

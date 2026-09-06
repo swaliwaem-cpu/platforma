@@ -36,7 +36,7 @@ type FixedIdentity = Omit<AssistantGeoLandmarkIdentity, 'userAlias'> & {
 
 export const assistantGeoMoscowViewbox = [37.3, 55.5, 37.9, 55.9] as const;
 
-export const assistantGeoMoscowBoundaryIdentity = Object.freeze({
+export const assistantGeoMoscowCityBoundsIdentity = Object.freeze({
   names: ['Москва'],
   osmType: 'relation',
   osmIds: ['2555133'],
@@ -296,7 +296,7 @@ export function selectAssistantGeoProviderCandidates(
   return selectLegacyGeometryCandidates(candidates, input.mode);
 }
 
-export function isExpectedAssistantGeoAdministrativeBounds(
+export function isExpectedAssistantGeoCityBounds(
   candidate: AssistantGeoProviderCandidate,
   input: {
     expectedCity: string;
@@ -305,19 +305,30 @@ export function isExpectedAssistantGeoAdministrativeBounds(
   },
 ) {
   const isMoscow = normalizeAssistantGeoIdentityText(input.expectedCity)
-    === normalizeAssistantGeoIdentityText(assistantGeoMoscowBoundaryIdentity.names[0]!);
-  return candidate.geometryKind === 'AREA'
+    === normalizeAssistantGeoIdentityText(assistantGeoMoscowCityBoundsIdentity.names[0]!);
+  const hasBounds = candidate.geometryKind === 'AREA'
     && candidate.geometryComplete === false
     && candidate.referenceGeometry === undefined
-    && Boolean(candidate.boundingBox)
-    && candidateMatchesAdministrativeRelationIdentity(candidate, {
-      expectedNames: isMoscow ? [...assistantGeoMoscowBoundaryIdentity.names] : [input.expectedCity],
-      expectedCity: input.expectedCity,
-      expectedCountry: input.expectedCountry,
-      allowMissingCity: true,
-      expectedBounds: input.expectedBounds,
-      allowedOsmIds: isMoscow ? [...assistantGeoMoscowBoundaryIdentity.osmIds] : null,
-    });
+    && Boolean(candidate.boundingBox);
+  if (!hasBounds) return false;
+  if (isMoscow) {
+    // 2555133 describes Moscow as place=city, not the administrative boundary.
+    return candidate.entityClass === 'place' && candidate.entityType === 'city'
+      && candidate.osmType === assistantGeoMoscowCityBoundsIdentity.osmType
+      && assistantGeoMoscowCityBoundsIdentity.osmIds.includes(candidate.osmId ?? '')
+      && candidateHasExpectedName(candidate, new Set(
+        assistantGeoMoscowCityBoundsIdentity.names.map(normalizeAssistantGeoIdentityText),
+      ))
+      && matchesExpectedScope(candidate, input.expectedCity, input.expectedCountry, true, input.expectedBounds);
+  }
+  return candidateMatchesAdministrativeRelationIdentity(candidate, {
+    expectedNames: [input.expectedCity],
+    expectedCity: input.expectedCity,
+    expectedCountry: input.expectedCountry,
+    allowMissingCity: true,
+    expectedBounds: input.expectedBounds,
+    allowedOsmIds: null,
+  });
 }
 
 function selectStrictIdentityCandidates(

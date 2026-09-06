@@ -66,9 +66,10 @@ import { AssistantMetroTravelTimeService } from './geo/assistant-metro-travel-ti
     },
     {
       provide: AssistantOverpassCollector,
-      inject: [AssistantGeoUsageLedgerService],
-      useFactory: (usageLedger: AssistantGeoUsageLedgerService) => (
-        new AssistantOverpassCollector(process.env, undefined, undefined, undefined, usageLedger)
+      inject: [AssistantGeoUsageLedgerService, AssistantGeoLandmarkService],
+      useFactory: (usageLedger: AssistantGeoUsageLedgerService, landmarks: AssistantGeoLandmarkService) => (
+        new AssistantOverpassCollector(process.env, undefined, undefined, undefined, usageLedger,
+          (geometry) => landmarks.isClosedRoadBoundary(geometry))
       ),
     },
     AssistantPlaceResolverService,

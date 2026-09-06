@@ -4,6 +4,7 @@ import type {
   AssistantGeoBrowserConstraint,
   AssistantGeoBrowserInput,
   AssistantGeoKind,
+  AssistantGeoLineGeometry,
   AssistantGeoReferenceGeometry,
   AssistantGeoSearchContext,
   AssistantGeoSearchSelection,
@@ -90,6 +91,7 @@ export type AssistantVerifiedLandmarkInput = {
     identityVersion?: 1 | 2;
     userAlias?: string;
     providerQuery?: string;
+    boundaryMode?: 'INNERMOST';
   };
 };
 
@@ -223,6 +225,7 @@ export class AssistantGeoLandmarkService {
         AND l."locale" = ${input.locale}
         AND (${input.country ?? ''} = '' OR l."country" = ${input.country ?? ''})
         AND (${input.mode} = 'NEAR' OR l."kind" = 'area')
+        AND (${input.mode} = 'INSIDE' OR COALESCE(l."source_metadata"->>'boundaryMode', '') <> 'INNERMOST')
         ${input.viewbox
           ? Prisma.sql`AND ST_Intersects(
               l."geometry",
@@ -359,6 +362,7 @@ export class AssistantGeoLandmarkService {
       ...(input.sourceMetadata.identityVersion ? { identityVersion: input.sourceMetadata.identityVersion } : {}),
       ...(input.sourceMetadata.userAlias ? { userAlias: input.sourceMetadata.userAlias } : {}),
       ...(input.sourceMetadata.providerQuery ? { providerQuery: input.sourceMetadata.providerQuery } : {}),
+      ...(input.sourceMetadata.boundaryMode ? { boundaryMode: input.sourceMetadata.boundaryMode } : {}),
     });
     let rows: LandmarkRow[];
     try {
@@ -423,22 +427,22 @@ export class AssistantGeoLandmarkService {
     return existing;
   }
 
+  async isClosedRoadBoundary(geometry: AssistantGeoLineGeometry): Promise<boolean> {
+    const parsed = parseAssistantReferenceGeometry(geometry, 'LINE');
+    const rows = await this.prisma.$queryRaw<Array<{ geometry: string }>>(innerRoadBoundaryAreaQuery(
+      Prisma.sql`ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(parsed)}), 4326)`,
+    ));
+    return rows.length === 1;
+  }
+
   async saveVerifiedAreaFromBoundary(
     boundaryId: string,
     input: AssistantVerifiedAreaFromBoundaryInput,
   ) {
-    const rows = await this.prisma.$queryRaw<Array<{ geometry: string }>>(Prisma.sql`
-      SELECT ST_AsGeoJSON(
-        ST_CollectionExtract(ST_MakeValid(ST_BuildArea(ST_Node("geometry"))), 3),
-        7
-      ) AS geometry
-      FROM assistant_geo_landmarks
-      WHERE id = ${boundaryId}::uuid
-        AND kind = 'line'::assistant_geo_landmark_kind
-        AND ST_IsClosed("geometry")
-        AND NOT ST_IsEmpty(ST_BuildArea(ST_Node("geometry")))
-      LIMIT 1
-    `);
+    const rows = await this.prisma.$queryRaw<Array<{ geometry: string }>>(innerRoadBoundaryAreaQuery(
+      Prisma.sql`(SELECT geometry FROM assistant_geo_landmarks
+        WHERE id = ${boundaryId}::uuid AND kind = 'line'::assistant_geo_landmark_kind)`,
+    ));
     if (!rows[0]?.geometry) throw new AssistantGeoLandmarkGeometryError();
     let geometry: unknown;
     try {
@@ -450,6 +454,7 @@ export class AssistantGeoLandmarkService {
       ...input,
       kind: 'AREA',
       geometry: parseAssistantReferenceGeometry(geometry, 'AREA'),
+      sourceMetadata: { ...input.sourceMetadata, boundaryMode: 'INNERMOST' },
     });
   }
 
@@ -545,6 +550,32 @@ function readVerifiedExpiry(input: Pick<AssistantVerifiedLandmarkInput, 'expires
   }
   if (input.retentionMs === undefined) throw new Error('ASSISTANT_GEO_LANDMARK_RETENTION_REQUIRED');
   return new Date(Date.now() + readRetentionMs(input.retentionMs));
+}
+
+function innerRoadBoundaryAreaQuery(geometry: Prisma.Sql) {
+  // Join exact endpoints only. Never node, snap, repair or polygonize partial linework.
+  // A road boundary is one ring or two strictly nested carriageways; INSIDE uses the inner one.
+  return Prisma.sql`
+    WITH rings AS MATERIALIZED (
+      SELECT (ST_Dump(ST_LineMerge(${geometry}))).*
+    ), polygons AS MATERIALIZED (
+      SELECT path, CASE WHEN ST_NPoints(geom) >= 4 AND ST_IsRing(geom)
+        THEN ST_MakePolygon(geom) ELSE NULL END AS area
+      FROM rings
+      WHERE (SELECT COUNT(*) FROM rings) BETWEEN 1 AND 2
+    ), valid_polygons AS MATERIALIZED (
+      SELECT path, area FROM polygons
+      WHERE area IS NOT NULL AND ST_IsValid(area) AND NOT ST_IsEmpty(area)
+    )
+    SELECT ST_AsGeoJSON(candidate.area, 15) AS geometry
+    FROM valid_polygons candidate
+    WHERE (SELECT COUNT(*) FROM valid_polygons) = (SELECT COUNT(*) FROM rings)
+      AND NOT EXISTS (
+        SELECT 1 FROM valid_polygons other
+        WHERE other.path <> candidate.path
+          AND NOT ST_ContainsProperly(other.area, candidate.area)
+      )
+  `;
 }
 
 function toTrustedLandmark(row: LandmarkRow): AssistantTrustedLandmark {

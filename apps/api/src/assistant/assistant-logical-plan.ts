@@ -21,8 +21,17 @@ export function extractAssistantLogicalPredicates(messages: string[]) {
   let travel: ReturnType<typeof extractWalkingTimeToMetro> = { mentioned: false, minutes: null };
   for (const message of messages) {
     const text = message.replace(/\u00a0/gu, ' ');
-    spatial = extractInsidePlace(text) ?? spatial;
-    const nextTravel = extractWalkingTimeToMetro(text, travel.mentioned);
+    const nextPlace = extractInsidePlace(text);
+    if (nextPlace) spatial = nextPlace;
+    else if (spatial && /^(?:парк\p{L}*|район\p{L}*|кольц\p{L}*)$/iu.test(spatial)
+      && /^(?:парк\p{L}*|район\p{L}*|кольц\p{L}*)\s+\p{L}/iu.test(text.trim())) {
+      spatial = text.trim().replace(/[.!?]+$/u, '');
+    }
+    if (/(?:без\s+ограничени\p{L}*\s+(?:по|до)\s+метро|(?:метро|время\s+до\s+метро)\s+(?:не\s*важ\p{L}*|не\s+учитыв\p{L}*))/iu.test(text)) {
+      travel = { mentioned: false, minutes: null };
+      continue;
+    }
+    const nextTravel = extractWalkingTimeToMetro(text, travel.mentioned && !travel.unsupportedMode);
     if (nextTravel.mentioned) travel = nextTravel;
   }
 
@@ -45,25 +54,69 @@ export function extractAssistantLogicalPredicates(messages: string[]) {
       unit: 'MINUTES',
     });
   }
-  return { predicates, missingTravelValue: travel.mentioned && travel.minutes === null };
+  return {
+    predicates,
+    missingTravelValue: travel.mentioned && travel.minutes === null,
+    ...(travel.unsupportedMode ? { unsupportedTravelConstraint: true } : {}),
+  };
 }
 
 function extractInsidePlace(text: string) {
-  const match = text.match(
-    /(?:^|[\s,;])внутри\s+[«"]?(.+?)[»"]?(?=\s*(?:,|;|\.|\?|!|\s+и\s+)?\s*(?:(?:до|не\s+более|не\s+больше|максимум)\s+(?:\d+|одн\p{L}*|дв\p{L}*|три|трех|трёх|четыр\p{L}*|пят\p{L}*|шест\p{L}*|сем\p{L}*|восем\p{L}*|девят\p{L}*|десят\p{L}*)\s+мин\p{L}*[^.!?\r\n]{0,60}метро|$))/iu,
-  );
-  return match?.[1]?.trim().replace(/^[«"]|[»"]$/gu, '') || null;
+  const match = text.match(/(?:^|[\s,;])внутри\s+(?:[«"]([^»"]+)[»"]|([^.!?;\r\n]+))/iu);
+  if (!match) return null;
+  if (match[1]) return match[1].trim();
+  return match[2]!.split(/,|\s+(?:и\s+)?(?=(?:пешком|(?:до|не\s+более|не\s+больше|максимум|в)\s+(?:\d+|[\p{L}-]+)\s+мин\p{L}*))/iu)[0]!.trim() || null;
 }
 
-function extractWalkingTimeToMetro(text: string, hasPriorMetroConstraint = false) {
-  const mentioned = /(?:пешком[^.!?\r\n]{0,60}(?:ближайш\p{L}*\s+)?метро|(?:ближайш\p{L}*\s+)?метро[^.!?\r\n]{0,60}пешком)/iu.test(text);
-  const match = text.match(
-    /(?:до|не\s+более|не\s+больше|максимум)\s+(\d{1,3}|[\p{L}-]+)\s+мин\p{L}*[^.!?\r\n]{0,60}(?:ближайш\p{L}*\s+)?метро/iu,
-  ) ?? (hasPriorMetroConstraint ? text.match(
-    /(?:^|[,;]\s*)(?:нет[,;]?\s*)?(?:до|не\s+более|не\s+больше|максимум)\s+(\d{1,3}|[\p{L}-]+)\s+мин\p{L}*\s*[.!?]?$/iu,
-  ) : null);
-  if (!match) return { mentioned, minutes: null };
-  return { mentioned: true, minutes: parseRussianCount(match[1]!) };
+function extractWalkingTimeToMetro(text: string, hasPriorMetroConstraint = false): {
+  mentioned: boolean; minutes: number | null; unsupportedMode?: boolean;
+} {
+  const unsupported = { mentioned: true, minutes: null, unsupportedMode: true };
+  const metroContext = hasPriorMetroConstraint || /метро/iu.test(text);
+  if (!metroContext) return { mentioned: false, minutes: null };
+  // V1 can represent only integer upper bounds. Do not turn the fractional
+  // tail or a lower bound into a different, apparently grounded condition.
+  if (/\d+[.,]\d+\s*мин\p{L}*/iu.test(text)
+    || /(?:не\s+(?:менее|меньше)|минимум|ровно|от)\s+(?:\d+|[\p{L}-]+)(?:\s+до\s+(?:\d+|[\p{L}-]+))?\s+мин\p{L}*/iu.test(text)
+    || (hasPriorMetroConstraint && /^(?:\d+[.,]\d+|(?:не\s+(?:менее|меньше)|минимум|ровно|от)\s+(?:\d+|[\p{L}-]+))\s*[.!?]?$/iu.test(text.trim()))) return unsupported;
+
+  const numericReply = (clause: string) => clause.trim().match(
+    /^(?:нет\s+)?(?:(?:до|не\s+более|не\s+больше|максимум)\s+)?(\d+|[\p{L}-]+)(?:\s+мин\p{L}*)?$/iu,
+  );
+  const clauses = text.split(/[,;.!?\r\n]+|\s+и\s+/iu).map((clause) => clause.trim()).filter(Boolean);
+  const values: Array<number | null> = [];
+  let mentioned = false;
+  for (const clause of clauses) {
+    const metro = /метро/iu.test(clause);
+    const minutes = /(?:^|\s)мин\p{L}*/iu.test(clause);
+    const reply = numericReply(clause);
+    if (!metro) {
+      if ((hasPriorMetroConstraint || /метро/iu.test(text)) && reply
+        && (minutes || hasPriorMetroConstraint) && parseRussianCount(reply[1]!) !== null) {
+        mentioned = true;
+        values.push(parseRussianCount(reply[1]!));
+      } else if (minutes) {
+        // A time to school/work cannot be assigned to NEAREST_METRO or dropped.
+        return unsupported;
+      }
+      continue;
+    }
+    if (/(?:на\s+(?:машин|автомобил|велосипед|транспорт)\p{L}*)/iu.test(clause)) return unsupported;
+    const walking = /пешком/iu.test(clause) || hasPriorMetroConstraint;
+    if (minutes && !walking) return unsupported;
+    if (!walking) continue;
+    mentioned = true;
+    // Reject additional destinations even when punctuation was omitted.
+    const destinations = [...clause.matchAll(/(?:^|\s)до\s+([\p{L}\p{N}-]+)/giu)];
+    if (minutes && destinations.some((match) => !/^(?:метро|ближайш\p{L}*)$/iu.test(match[1]!)
+      && parseRussianCount(match[1]!) === null)) return unsupported;
+    values.push(...[...clause.matchAll(/(?:^|[^\p{L}\p{N}])(\d+|[\p{L}-]+)\s+мин\p{L}*/giu)]
+      .map((match) => parseRussianCount(match[1]!)));
+  }
+  return {
+    mentioned,
+    minutes: values.length > 0 && values.every((value) => value !== null) ? Math.min(...values as number[]) : null,
+  };
 }
 
 function parseRussianCount(value: string) {

@@ -313,7 +313,7 @@ async function handleOverpassStub(request, response, config, activeCase, counts)
     type: 'relation', id: activeCase.relationId, tags: { type: 'route', route: 'road', ref: activeCase.tagValue },
     members: [
       { type: 'way', ref: memberRef + 1, geometry: [{ lat: 55.7, lon: 37.5 }, { lat: 55.8, lon: 37.7 }] },
-      { type: 'way', ref: memberRef + 2, geometry: [{ lat: 55.8, lon: 37.7 }, { lat: 55.7, lon: 37.5 }] },
+      { type: 'way', ref: memberRef + 2, geometry: [{ lat: 55.8, lon: 37.7 }, { lat: 55.7, lon: 37.7 }, { lat: 55.7, lon: 37.5 }] },
     ],
   }] });
 }
@@ -429,8 +429,8 @@ function parseNullSeparated(buffer) {
 }
 
 function moscowAreaFixture() {
-  return { place_id: 'moscow-area', display_name: 'Москва, Россия', lat: '55.75', lon: '37.62', class: 'boundary',
-    type: 'administrative', osm_type: 'relation', osm_id: '2555133', boundingbox: ['55.5', '55.9', '37.3', '37.9'],
+  return { place_id: 'moscow-area', display_name: 'Москва, Россия', lat: '55.75', lon: '37.62', class: 'place',
+    type: 'city', osm_type: 'relation', osm_id: '2555133', boundingbox: ['55.5', '55.9', '37.3', '37.9'],
     address: { country_code: 'ru' }, namedetails: { name: 'Москва' } };
 }
 function arbatAreaFixture() {
