@@ -25,6 +25,7 @@ const {
   createT07OwnershipFilters,
   installTerminationHandlers,
   isExpectedT07ApiNavigationAbort,
+  isExpectedT07MetroTileAbort,
   removeT07OwnedDockerResources,
   runCommand: runRuntimeCommand,
 } = require('../scripts/assistant-pidafix3-runtime.cjs');
@@ -1773,6 +1774,7 @@ async function userJourney(fixtures) {
     )), true);
     assert.deepEqual(failedRequestUrls.filter((failure) => (
       !isExpectedT07ApiNavigationAbort(failure, apiOrigin)
+      && !isExpectedT07MetroTileAbort(failure, webOrigin)
       && !/\.(?:woff2?|ttf)(?:\?.*)?$/u.test(failure.url)
       && !((
         failure.url.startsWith('https://map-fixtures.test/tiles/')

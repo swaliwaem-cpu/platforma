@@ -20,6 +20,7 @@ const {
   createUnverifiedProviderEvidence,
   installTerminationHandlers,
   isExpectedT07ApiNavigationAbort,
+  isExpectedT07MetroTileAbort,
   removeT07OwnedDockerResources,
   runBoundedOperation,
   runCommand,
@@ -337,6 +338,21 @@ test('PIDAFIX3 T07 only tolerates navigation-aborted assistant reads', () => {
   ]) {
     assert.equal(isExpectedT07ApiNavigationAbort(failure, apiOrigin), false);
   }
+});
+
+test('FIX-GEO2 T07 only tolerates cancellation of the exact local metro tile GET', () => {
+  const webOrigin = 'http://127.0.0.1:61014';
+  const expected = { method: 'GET', url: `${webOrigin}/__map_fixture__/metro.pbf`, errorText: 'net::ERR_ABORTED' };
+  assert.equal(isExpectedT07MetroTileAbort(expected, webOrigin), true);
+  for (const failure of [
+    { ...expected, method: 'POST' },
+    { ...expected, errorText: 'net::ERR_CONNECTION_RESET' },
+    { ...expected, errorText: 'net::ERR_FAILED' },
+    { ...expected, url: 'http://127.0.0.1:61015/__map_fixture__/metro.pbf' },
+    { ...expected, url: 'https://external.example/__map_fixture__/metro.pbf' },
+    { ...expected, url: `${webOrigin}/__map_fixture__/other.pbf` },
+    { ...expected, url: `${webOrigin}/assistant/messages` },
+  ]) assert.equal(isExpectedT07MetroTileAbort(failure, webOrigin), false);
 });
 
 test('PIDAFIX3 T07 ownership cleanup removes every exact-label container and verifies absence', async () => {

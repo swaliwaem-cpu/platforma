@@ -201,6 +201,12 @@ function isExpectedT07ApiNavigationAbort(failure, apiOrigin) {
     );
 }
 
+function isExpectedT07MetroTileAbort(failure, webOrigin) {
+  return failure?.method === 'GET'
+    && failure?.errorText === 'net::ERR_ABORTED'
+    && failure.url === `${webOrigin}/__map_fixture__/metro.pbf`;
+}
+
 async function removeT07OwnedDockerResources(kind, ownership, runDocker, options = {}) {
   assert.ok(['container', 'network'].includes(kind));
   assert.equal(typeof runDocker, 'function');
@@ -342,6 +348,7 @@ module.exports = {
   createUnverifiedProviderEvidence,
   installTerminationHandlers,
   isExpectedT07ApiNavigationAbort,
+  isExpectedT07MetroTileAbort,
   removeT07OwnedDockerResources,
   runBoundedOperation,
   runCommand,
