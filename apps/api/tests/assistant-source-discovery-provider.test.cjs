@@ -28,10 +28,11 @@ test('Assistant source discovery provider boundary owns retry, ledger and phase 
   const executionId = randomUUID();
   const boundary = new AssistantSourceDiscoveryProviderBoundary({
     environment: {
-      OPENAI_API_KEY: 'bounded-local-stub',
-      ASSISTANT_AI_MODE: 'openai',
+      ALIBABA_API_KEY: 'bounded-local-stub',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     },
     async fetchImplementation(_url, init) {
       providerCalls += 1;
@@ -75,35 +76,35 @@ test('Assistant source discovery provider boundary owns retry, ledger and phase 
   ));
 
   assert.deepEqual(events, [
-    'reserve:1:gpt-5.6-luna',
-    'http:1:gpt-5.6-luna',
+    'reserve:1:qwen-plus',
+    'http:1:qwen-plus',
     'settle:1:ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED',
-    'reserve:2:gpt-5.6-luna',
-    'http:2:gpt-5.6-luna',
+    'reserve:2:qwen-plus',
+    'http:2:qwen-plus',
     'settle:2:PROVIDER_SUCCESS',
   ]);
-  assert.equal(result.value.model, 'gpt-5.6-luna');
+  assert.equal(result.value.model, 'qwen-plus');
   assert.equal(result.phaseTelemetries.length, 2);
-  assert.deepEqual(result.phaseTelemetries.map(({ webSearchCalls }) => webSearchCalls), [null, 1]);
+  assert.deepEqual(result.phaseTelemetries.map(({ webSearchCalls }) => webSearchCalls), [null, 0]);
   assert.deepEqual(result.phaseTelemetry, {
     phase: 'DEVELOPER',
     attemptOrdinal: 2,
-    provider: 'openai',
-    model: 'gpt-5.6-luna',
+    provider: 'alibaba',
+    model: 'qwen-plus',
     requestId: 'request-provider-boundary',
     responseId: 'response-provider-boundary',
     httpStatus: 200,
     inputTokens: 20,
     cachedInputTokens: 4,
-    cacheWriteInputTokens: 2,
+    cacheWriteInputTokens: 0,
     outputTokens: 10,
     reasoningTokens: 3,
     totalTokens: 30,
-    webSearchCalls: 1,
+    webSearchCalls: 0,
   });
 });
 
-test('ZAEBAL4 source discovery settles two returned Web Search calls before rejecting the candidate', async () => {
+test('ZAEBAL4 source discovery settles provider search citations with zero reserved web search calls', async () => {
   const events = [];
   const reservations = [];
   const settlements = [];
@@ -111,15 +112,19 @@ test('ZAEBAL4 source discovery settles two returned Web Search calls before reje
   const executionId = randomUUID();
   const boundary = new AssistantSourceDiscoveryProviderBoundary({
     environment: {
-      OPENAI_API_KEY: 'bounded-local-stub',
-      ASSISTANT_AI_MODE: 'openai',
+      ALIBABA_API_KEY: 'bounded-local-stub',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     },
     async fetchImplementation(_url, init) {
       providerBodies.push(JSON.parse(init.body));
       events.push('http');
-      return developerResponse(2);
+      return developerResponse([
+        'https://developer.example/',
+        'https://developer.example/projects',
+      ]);
     },
     serviceOptions: {
       usageBudgets: {
@@ -153,33 +158,34 @@ test('ZAEBAL4 source discovery settles two returned Web Search calls before reje
     validatorVersion: 'assistant-source-discovery-validator-v3',
   });
 
-  await assert.rejects(
-    boundary.withProject(project.projectKey, () => (
-      boundary.requestCandidate({ phase: 'DEVELOPER', project })
-    )),
-    (error) => error instanceof AssistantSourceDiscoveryError
-      && error.code === 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
-  );
+  const result = await boundary.withProject(project.projectKey, () => (
+    boundary.requestCandidate({ phase: 'DEVELOPER', project })
+  ));
 
   assert.deepEqual(events, ['reserve', 'http', 'settle']);
   assert.equal(providerBodies.length, 1);
-  assert.equal(providerBodies[0].max_tool_calls, 1);
+  assert.equal(providerBodies[0].max_tokens, 1_600);
+  assert.equal(
+    providerBodies[0].response_format.json_schema.name,
+    'platforma_official_developer_candidate',
+  );
+  assert.equal('tools' in providerBodies[0], false);
+  assert.equal('max_tool_calls' in providerBodies[0], false);
+  assert.equal('tool_choice' in providerBodies[0], false);
   assert.equal(reservations.length, 1);
   assert.equal(settlements.length, 1);
-  assert.equal(settlements[0].webSearchCalls, 2);
-  assert.equal(settlements[0].outcome, 'PROVIDER_CONTRACT_VIOLATION');
-  assert.equal(
-    settlements[0].errorCode,
-    'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
-  );
+  assert.equal(settlements[0].webSearchCalls, 0);
+  assert.equal(settlements[0].outcome, 'PROVIDER_SUCCESS');
+  assert.equal(settlements[0].errorCode, null);
+  assert.equal(result.phaseTelemetry.webSearchCalls, 0);
   const conservativeReservation = estimateAssistantAiCallCost({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     requestBytes: Buffer.byteLength(JSON.stringify(createDeveloperDiscoveryRequestBody(
-      'gpt-5.6-luna',
+      'qwen-plus',
       project,
     )), 'utf8'),
     maxOutputTokens: 1_600,
-    maxWebSearchCalls: 2,
+    maxWebSearchCalls: 0,
   });
   assert.equal(reservations[0].reservedCostUsd, conservativeReservation.estimatedUsd);
 });
@@ -211,34 +217,28 @@ test('Assistant source discovery provider reader stops before buffering an overs
   assert.equal(cancelled, true);
 });
 
-function developerResponse(webSearchCallCount = 1) {
+function developerResponse(citations = ['https://developer.example/']) {
   return new Response(JSON.stringify({
     id: 'response-provider-boundary',
-    model: 'gpt-5.6-luna',
-    output: [
-      {
-        type: 'message',
-        content: [{
-          type: 'output_text',
-          text: JSON.stringify({
-            status: 'FOUND',
-            canonicalUrl: 'https://developer.example/',
-            officialDeveloperName: 'ФСК',
-            reason: 'Официальный сайт найден.',
-          }),
-        }],
+    model: 'qwen-plus',
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: JSON.stringify({
+          status: 'FOUND',
+          canonicalUrl: 'https://developer.example/',
+          officialDeveloperName: 'ФСК',
+          reason: 'Официальный сайт найден.',
+        }),
+        annotations: citations.map((url) => ({ type: 'url_citation', url })),
       },
-      ...Array.from({ length: webSearchCallCount }, (_, index) => ({
-        type: 'web_search_call',
-        id: `search-provider-boundary-${index + 1}`,
-        action: { sources: [{ url: 'https://developer.example/' }] },
-      })),
-    ],
+    }],
     usage: {
-      input_tokens: 20,
-      input_tokens_details: { cached_tokens: 4, cache_write_tokens: 2 },
-      output_tokens: 10,
-      output_tokens_details: { reasoning_tokens: 3 },
+      prompt_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 4 },
+      completion_tokens: 10,
+      completion_tokens_details: { reasoning_tokens: 3 },
       total_tokens: 30,
     },
   }), {

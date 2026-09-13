@@ -92,7 +92,7 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
   };
   const telemetry = [{
     provider: 'fake',
-    model: 'gpt-5.6-terra',
+    model: 'qwen-max',
     reasoningEffort: 'medium',
     outcome: 'ACCEPTED',
     errorCode: null,
@@ -342,7 +342,7 @@ test('Assistant T06 planner completes safe telemetry when downstream validation 
           needsClarification: false,
           clarificationQuestion: null,
         },
-        provider: 'openai',
+        provider: 'alibaba',
         requestId: 'safe-request-id',
         responseId: 'safe-response-id',
         httpStatus: 200,

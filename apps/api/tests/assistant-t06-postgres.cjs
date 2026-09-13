@@ -131,7 +131,7 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
   assert.equal(detail.body.run.structuredIntent.taskType, 'SEARCH');
   assert.equal(detail.body.run.audit.rankingDecisions[0].outcome, 'PRIMARY');
   assert.equal(detail.body.run.evidence[0].feedUnitId, 'unit-t06');
-  assert.equal(detail.body.run.telemetry[0].model, 'gpt-5.6-luna');
+  assert.equal(detail.body.run.telemetry[0].model, 'qwen-plus');
   assert.equal(JSON.stringify(detail.body).includes('rawPayload'), false);
   assert.equal(JSON.stringify(detail.body).includes('credential'), false);
 
@@ -689,7 +689,7 @@ async function createFixtures() {
   await prisma.assistantUsageMetric.create({
     data: {
       provider: `fixture-${suffix}`,
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       window: 'DAY',
       windowStartedAt: new Date('2026-08-26T00:00:00.000Z'),
       requestCount: 2,
@@ -805,7 +805,7 @@ async function createRun(ownerUserId, at, query, answer, conversationId = null) 
       evidenceJson: [{ feedUnitId: 'unit-t06', sourceRevision: 'feed:2026-08-26T11:00:00.000Z' }],
       telemetryJson: [{
         provider: 'fake',
-        model: 'gpt-5.6-luna',
+        model: 'qwen-plus',
         reasoningEffort: 'low',
         outcome: 'ACCEPTED',
         isFallback: false,

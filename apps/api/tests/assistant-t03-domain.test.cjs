@@ -161,15 +161,15 @@ test('Assistant T03 fake embedding gateway batches changed chunks deterministica
   assert.notDeepEqual(first.vectors[0], first.vectors[1]);
 });
 
-test('Assistant T03 production OpenAI embeddings require the exact reproducible benchmark winner', () => {
+test('Assistant T03 production Alibaba embeddings require the exact reproducible benchmark winner', () => {
   const environment = {
-    ASSISTANT_EMBEDDING_MODE: 'openai',
+    ASSISTANT_EMBEDDING_MODE: 'alibaba',
     ASSISTANT_EMBEDDING_LIVE: 'true',
-    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-3-small',
+    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-v4',
     ASSISTANT_EMBEDDING_DIMENSIONS: '256',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-    OPENAI_API_KEY: 'test-only',
+    ALIBABA_API_KEY: 'test-only',
     DEPLOYMENT_ENV: 'production',
   };
   assert.throws(
@@ -181,23 +181,23 @@ test('Assistant T03 production OpenAI embeddings require the exact reproducible 
   const gateway = new AssistantEmbeddingGateway({
     ...environment,
     ASSISTANT_EMBEDDING_BENCHMARK_WINNER:
-      `text-embedding-3-small:256:${assistantEmbeddingBenchmarkDatasetSha256}`,
+      `text-embedding-v4:256:${assistantEmbeddingBenchmarkDatasetSha256}`,
   });
-  assert.equal(gateway.getModel(), 'text-embedding-3-small');
+  assert.equal(gateway.getModel(), 'text-embedding-v4');
   assert.equal(gateway.getDimensions(), 256);
 });
 
-test('Assistant T03 OpenAI embedding gateway validates the configured benchmark winner and response shape', async () => {
+test('Assistant T03 Alibaba embedding gateway validates the configured benchmark winner and response shape', async () => {
   const calls = [];
   const ledgerEvents = [];
   const gateway = new AssistantEmbeddingGateway({
-    ASSISTANT_EMBEDDING_MODE: 'openai',
+    ASSISTANT_EMBEDDING_MODE: 'alibaba',
     ASSISTANT_EMBEDDING_LIVE: 'true',
-    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-3-small',
+    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-v4',
     ASSISTANT_EMBEDDING_DIMENSIONS: '3',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-    OPENAI_API_KEY: 'test-only',
+    ALIBABA_API_KEY: 'test-only',
   }, async (url, init) => {
     ledgerEvents.push('fetch');
     calls.push({ url, init });
@@ -206,7 +206,7 @@ test('Assistant T03 OpenAI embedding gateway validates the configured benchmark 
         { index: 1, embedding: [0, 1, 0] },
         { index: 0, embedding: [1, 0, 0] },
       ],
-      model: 'text-embedding-3-small',
+      model: 'text-embedding-v4',
       usage: { prompt_tokens: 4, total_tokens: 4 },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   }, embeddingBudgetStub(ledgerEvents));
@@ -215,10 +215,10 @@ test('Assistant T03 OpenAI embedding gateway validates the configured benchmark 
 
   assert.deepEqual(result.vectors, [[1, 0, 0], [0, 1, 0]]);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'https://api.openai.com/v1/embeddings');
+  assert.equal(calls[0].url, 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/embeddings');
   const body = JSON.parse(calls[0].init.body);
   assert.deepEqual(body, {
-    model: 'text-embedding-3-small',
+    model: 'text-embedding-v4',
     input: ['первый', 'второй'],
     dimensions: 3,
     encoding_format: 'float',
@@ -226,13 +226,13 @@ test('Assistant T03 OpenAI embedding gateway validates the configured benchmark 
   assert.deepEqual(ledgerEvents, ['reserve', 'fetch', 'settle']);
 
   const invalid = new AssistantEmbeddingGateway({
-    ASSISTANT_EMBEDDING_MODE: 'openai',
+    ASSISTANT_EMBEDDING_MODE: 'alibaba',
     ASSISTANT_EMBEDDING_LIVE: 'true',
-    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-3-small',
+    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-v4',
     ASSISTANT_EMBEDDING_DIMENSIONS: '3',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-    OPENAI_API_KEY: 'test-only',
+    ALIBABA_API_KEY: 'test-only',
   }, async () => new Response(JSON.stringify({ data: [{ index: 0, embedding: [1, 2] }] }), { status: 200 }),
   embeddingBudgetStub([]));
   await assert.rejects(
@@ -244,14 +244,14 @@ test('Assistant T03 OpenAI embedding gateway validates the configured benchmark 
 test('Assistant T03 embedding timeout remains active while the provider response body is read', async () => {
   const ledgerEvents = [];
   const gateway = new AssistantEmbeddingGateway({
-    ASSISTANT_EMBEDDING_MODE: 'openai',
+    ASSISTANT_EMBEDDING_MODE: 'alibaba',
     ASSISTANT_EMBEDDING_LIVE: 'true',
-    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-3-small',
+    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-v4',
     ASSISTANT_EMBEDDING_DIMENSIONS: '3',
     ASSISTANT_EMBEDDING_TIMEOUT_MS: '100',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-    OPENAI_API_KEY: 'test-only',
+    ALIBABA_API_KEY: 'test-only',
   }, async () => ({
     ok: true,
     status: 200,
@@ -272,13 +272,13 @@ test('Assistant T03 embedding timeout remains active while the provider response
   assert.deepEqual(ledgerEvents, ['reserve', 'settle']);
 });
 
-test('PIDAFIX1 OpenAI embeddings require live, paid, supported pricing and ledger before HTTP', async () => {
+test('PIDAFIX1 Alibaba embeddings require live, paid, supported pricing and ledger before HTTP', async () => {
   const base = {
-    ASSISTANT_EMBEDDING_MODE: 'openai',
-    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-3-small',
+    ASSISTANT_EMBEDDING_MODE: 'alibaba',
+    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-v4',
     ASSISTANT_EMBEDDING_DIMENSIONS: '256',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
-    OPENAI_API_KEY: 'test-only',
+    ALIBABA_API_KEY: 'test-only',
   };
   let fetchCalls = 0;
   let reserveCalls = 0;
@@ -318,13 +318,13 @@ test('PIDAFIX1 OpenAI embeddings require live, paid, supported pricing and ledge
 test('PIDAFIX1 embedding budget conflict prevents the provider HTTP call', async () => {
   let fetchCalls = 0;
   const gateway = new AssistantEmbeddingGateway({
-    ASSISTANT_EMBEDDING_MODE: 'openai',
+    ASSISTANT_EMBEDDING_MODE: 'alibaba',
     ASSISTANT_EMBEDDING_LIVE: 'true',
-    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-3-small',
+    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-v4',
     ASSISTANT_EMBEDDING_DIMENSIONS: '256',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-    OPENAI_API_KEY: 'test-only',
+    ALIBABA_API_KEY: 'test-only',
   }, async () => {
     fetchCalls += 1;
     throw new Error('provider must not be called');
@@ -394,7 +394,7 @@ function embeddingBudgetStub(events) {
         operationRunId: input.operationRunId,
         executionId: input.executionId,
         attemptOrdinal: input.attemptOrdinal,
-        provider: 'openai',
+        provider: 'alibaba',
         model: input.model,
         serviceTier: input.serviceTier,
         usageDate: new Date('2026-08-28T00:00:00.000Z'),

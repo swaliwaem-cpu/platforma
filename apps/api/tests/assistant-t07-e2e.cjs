@@ -93,7 +93,7 @@ let sourceServer;
 let sourceRequests = [];
 let feedSourceRequests = [];
 let feedFixtureMode = 'STUDIO';
-let providerStubRequests = { openai: 0, locationiq: 0, overpass: 0 };
+let providerStubRequests = { alibaba: 0, locationiq: 0, overpass: 0 };
 let deniedOutboundRequests = [];
 const originalFetch = globalThis.fetch;
 const originalDnsLookup = dnsPromises.lookup;
@@ -311,7 +311,7 @@ function configureSafeEnvironment(url) {
     S3_PUBLIC_ENDPOINT: 'http://127.0.0.1:1', S3_REGION: 'us-east-1',
     S3_ACCESS_KEY_ID: 'test-only', S3_SECRET_ACCESS_KEY: 'test-only', MINIO_BUCKET: 'assistant-t07',
   });
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.ALIBABA_API_KEY;
   delete process.env.LOCATIONIQ_API_KEY;
   delete process.env.OPENROUTESERVICE_API_KEY;
 }
@@ -439,7 +439,7 @@ function createStudioFeedXml(projectName) {
 
 function configureProviderStubs(sourceOrigin) {
   Object.assign(process.env, {
-    ASSISTANT_OPENAI_BASE_URL: `${sourceOrigin}/__provider_stub__/openai`,
+    ASSISTANT_ALIBABA_BASE_URL: `${sourceOrigin}/__provider_stub__/alibaba`,
     LOCATIONIQ_API_URL: `${sourceOrigin}/__provider_stub__/locationiq`,
     ASSISTANT_OVERPASS_URL: `${sourceOrigin}/__provider_stub__/overpass`,
     OPENROUTESERVICE_API_URL: `${sourceOrigin}/__routing_fixture__`,
@@ -450,7 +450,7 @@ function configureProviderStubs(sourceOrigin) {
 function installOutboundDenyHook() {
   globalThis.fetch = async (input, init) => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
-    if (/^(?:api\.openai\.com|[^.]+\.locationiq\.com|overpass-api\.de)$/iu.test(url.hostname)) {
+    if (/^(?:dashscope-intl\.aliyuncs\.com|[^.]+\.locationiq\.com|overpass-api\.de)$/iu.test(url.hostname)) {
       const safeTarget = `${url.protocol}//${url.hostname}${url.pathname}`;
       deniedOutboundRequests.push(safeTarget);
       throw new Error(`ASSISTANT_T07_OUTBOUND_DENIED:${safeTarget}`);
@@ -471,20 +471,20 @@ function installSourceDnsStub() {
 }
 
 async function assertOutboundProviderIsolation() {
-  assert.deepEqual(providerStubRequests, { openai: 0, locationiq: 0, overpass: 0 });
+  assert.deepEqual(providerStubRequests, { alibaba: 0, locationiq: 0, overpass: 0 });
   assert.deepEqual(deniedOutboundRequests, []);
   const locationIqAttempts = await prisma.assistantGeoUsageAttempt.count({
     where: { provider: { in: ['locationiq', 'overpass'] } },
   });
-  const openAiAttempts = await prisma.assistantAiUsageAttempt.count({
-    where: { provider: 'openai' },
+  const alibabaAttempts = await prisma.assistantAiUsageAttempt.count({
+    where: { provider: 'alibaba' },
   });
   assert.equal(locationIqAttempts, 0);
-  assert.equal(openAiAttempts, 0);
+  assert.equal(alibabaAttempts, 0);
   return {
     version: 1,
     transportStubCalls: { ...providerStubRequests },
-    persistedUsageAttempts: { openai: openAiAttempts, locationiq: 0, overpass: 0 },
+    persistedUsageAttempts: { alibaba: alibabaAttempts, locationiq: 0, overpass: 0 },
     deniedRemoteRequests: deniedOutboundRequests.length,
   };
 }
@@ -865,7 +865,7 @@ function rolloutEventData(stage, pilotUserIds) {
       version: 'assistant-eval-v1',
       passed: true,
       caseCount: 200,
-      providerMode: 'openai',
+      providerMode: 'alibaba',
       evidenceCoreSha256: 'a'.repeat(64),
       finalizedEvidenceSha256: 'b'.repeat(64),
     },
@@ -2926,7 +2926,7 @@ function crc32(buffer) {
 
 function assertProviderIsolation(urls) {
   assert.deepEqual(urls.filter((url) => (
-    /openai|locationiq|overpass|api-maps\.yandex|yandex\.net\/maps|openfreemap|openrouteservice/iu.test(url)
+    /alibaba|locationiq|overpass|api-maps\.yandex|yandex\.net\/maps|openfreemap|openrouteservice/iu.test(url)
   )), []);
 }
 

@@ -37,7 +37,7 @@ const {
 } = require('../dist/assistant/assistant-query-planner.js');
 const {
   createAssistantPlannerGateway,
-  parseAssistantOpenAiUsage,
+  parseAssistantAlibabaUsage,
 } = require('../dist/assistant/assistant-planner-gateway.js');
 const {
   AssistantSourceDiscoveryError,
@@ -75,7 +75,7 @@ test('FIX-TOKEN cost catalog reproduces the observed discovery bill exactly', ()
     return [
       ...modelCosts,
       calculateAssistantAiCost({
-        model: 'gpt-5.6-luna',
+        model: 'qwen-plus',
         inputTokens: 0,
         cachedInputTokens: 0,
         cacheWriteInputTokens: 0,
@@ -91,7 +91,7 @@ test('FIX-TOKEN cost catalog reproduces the observed discovery bill exactly', ()
 
 test('FIX-TOKEN cost catalog rejects incomplete or contradictory usage instead of underbilling', () => {
   assert.equal(calculateAssistantAiCost({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     inputTokens: 100,
     cachedInputTokens: null,
     cacheWriteInputTokens: 0,
@@ -100,7 +100,7 @@ test('FIX-TOKEN cost catalog rejects incomplete or contradictory usage instead o
   }).status, 'USAGE_INCOMPLETE');
 
   assert.equal(calculateAssistantAiCost({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     inputTokens: 100,
     cachedInputTokens: 80,
     cacheWriteInputTokens: 30,
@@ -111,29 +111,29 @@ test('FIX-TOKEN cost catalog rejects incomplete or contradictory usage instead o
 
 test('FIX-TOKEN cost catalog applies standard and long-context rates at the exact boundary', () => {
   const standard = calculateAssistantAiCost({
-    model: 'gpt-5.6-luna',
-    inputTokens: 272_000,
+    model: 'qwen-plus',
+    inputTokens: 256_000,
     cachedInputTokens: 0,
     cacheWriteInputTokens: 0,
     outputTokens: 0,
     webSearchCalls: 0,
   });
   const long = calculateAssistantAiCost({
-    model: 'gpt-5.6-luna',
-    inputTokens: 272_001,
+    model: 'qwen-plus',
+    inputTokens: 256_001,
     cachedInputTokens: 0,
     cacheWriteInputTokens: 0,
     outputTokens: 0,
     webSearchCalls: 0,
   });
 
-  assert.equal(standard.estimatedUsd, '0.05440000');
-  assert.equal(long.estimatedUsd, '0.10880040');
+  assert.equal(standard.estimatedUsd, '0.10240000');
+  assert.equal(long.estimatedUsd, '0.30720120');
 });
 
 test('FIX-TOKEN cost catalog prices cached, cache-write and Web Search usage separately', () => {
   const priced = calculateAssistantAiCost({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     inputTokens: 1_000_000,
     cachedInputTokens: 500_000,
     cacheWriteInputTokens: 500_000,
@@ -142,43 +142,43 @@ test('FIX-TOKEN cost catalog prices cached, cache-write and Web Search usage sep
     pricingTier: 'standard',
   });
   const conservative = estimateAssistantAiCallCost({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     requestBytes: 1,
     maxOutputTokens: 0,
     maxWebSearchCalls: 0,
   });
 
-  assert.equal(priced.estimatedUsd, '0.14500000');
-  assert.equal(conservative.estimatedUsd, '0.00102425');
+  assert.equal(priced.estimatedUsd, '0.41000000');
+  assert.equal(conservative.estimatedUsd, '0.00163880');
 });
 
 test('PIDAFIX1 embedding catalog prices only supported models and dimensions conservatively', () => {
   assert.deepEqual(calculateAssistantEmbeddingCost({
-    model: 'text-embedding-3-small',
+    model: 'text-embedding-v4',
     inputTokens: 1_000_000,
   }), {
     catalogVersion: ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION,
     status: 'PRICED',
-    estimatedUsd: '0.02000000',
-    estimatedUsdUnits: 2_000_000n,
+    estimatedUsd: '0.07000000',
+    estimatedUsdUnits: 7_000_000n,
   });
   assert.equal(calculateAssistantEmbeddingCost({
-    model: 'text-embedding-3-large',
+    model: 'text-embedding-3-small',
     inputTokens: 1_000_000,
-  }).estimatedUsd, '0.13000000');
+  }).status, 'MODEL_UNPRICED');
   assert.equal(calculateAssistantEmbeddingCost({
     model: 'text-embedding-ada-002',
     inputTokens: 1,
   }).status, 'MODEL_UNPRICED');
 
   assert.equal(estimateAssistantEmbeddingCallCost({
-    model: 'text-embedding-3-small',
-    dimensions: 256,
+    model: 'text-embedding-v4',
+    dimensions: 2_048,
     inputBytes: 4,
-  }).estimatedUsd, '0.00000008');
+  }).estimatedUsd, '0.00000028');
   assert.equal(estimateAssistantEmbeddingCallCost({
-    model: 'text-embedding-3-small',
-    dimensions: 1_537,
+    model: 'text-embedding-v4',
+    dimensions: 2_049,
     inputBytes: 4,
   }).status, 'DIMENSIONS_UNSUPPORTED');
 });
@@ -193,8 +193,8 @@ test('FIX-TOKEN rejects an unsupported service tier before creating a reservatio
   });
 
   await assert.rejects(service.reserve({
-    provider: 'openai',
-    model: 'gpt-5.6-luna',
+    provider: 'alibaba',
+    model: 'qwen-plus',
     serviceTier: 'flex',
     operation: 'PLANNER',
     operationRunId: randomUUID(),
@@ -291,7 +291,7 @@ test('PIDAFIX1 planner never reaches the provider after reservation rejection', 
 test('FIX-TOKEN OpenAI mode requires an explicit daily USD budget', () => {
   assert.throws(
     () => new AssistantModelUsagePolicyService({}, {
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '60',
       ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
     }),
@@ -302,10 +302,10 @@ test('FIX-TOKEN OpenAI mode requires an explicit daily USD budget', () => {
 test('FIX-TOKEN planner refuses paid OpenAI calls without explicit confirmation', () => {
   assert.throws(
     () => createAssistantPlannerGateway({
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_QUERY_PLANNER_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'false',
-      OPENAI_API_KEY: 'key-alone-is-not-permission',
+      ALIBABA_API_KEY: 'key-alone-is-not-permission',
     }),
     /ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED/u,
   );
@@ -316,10 +316,10 @@ test('FIX-TOKEN planner refuses paid OpenAI calls without its explicit live flag
 
   assert.throws(
     () => createAssistantPlannerGateway({
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_QUERY_PLANNER_LIVE: 'false',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-      OPENAI_API_KEY: 'key-and-confirmation-are-not-live-permission',
+      ALIBABA_API_KEY: 'key-and-confirmation-are-not-live-permission',
     }, async () => {
       httpCalls += 1;
       throw new Error('HTTP must not be reached without the planner live flag');
@@ -337,10 +337,10 @@ test('FIX-TOKEN local apply guard rejects NODE_ENV production before application
       argv: ['--live', '--apply'],
       environment: {
         NODE_ENV: 'production',
-        ASSISTANT_AI_MODE: 'openai',
+        ASSISTANT_AI_MODE: 'alibaba',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
-        OPENAI_API_KEY: 'bounded-local-stub',
+        ALIBABA_API_KEY: 'bounded-local-stub',
         DATABASE_URL: 'postgresql://user:password@postgres:5432/platforma?schema=public',
       },
       silent: true,
@@ -356,27 +356,23 @@ test('FIX-TOKEN local apply guard rejects NODE_ENV production before application
   assert.equal(applicationContextCalls, 0);
 });
 
-test('FIX-TOKEN usage parser keeps cache categories and counts actual Web Search calls', () => {
-  assert.deepEqual(parseAssistantOpenAiUsage({
+test('FIX-TOKEN usage parser keeps cache categories and reports zero Web Search calls', () => {
+  assert.deepEqual(parseAssistantAlibabaUsage({
     usage: {
-      input_tokens: 120,
-      output_tokens: 30,
+      prompt_tokens: 120,
+      completion_tokens: 30,
       total_tokens: 150,
-      input_tokens_details: { cached_tokens: 50, cache_write_tokens: 20 },
-      output_tokens_details: { reasoning_tokens: 12 },
+      prompt_tokens_details: { cached_tokens: 50 },
+      completion_tokens_details: { reasoning_tokens: 12 },
     },
-    output: [
-      { type: 'web_search_call', id: 'search-1' },
-      { type: 'message', content: [] },
-    ],
   }), {
     inputTokens: 120,
     cachedInputTokens: 50,
-    cacheWriteInputTokens: 20,
+    cacheWriteInputTokens: 0,
     outputTokens: 30,
     reasoningTokens: 12,
     totalTokens: 150,
-    webSearchCalls: 1,
+    webSearchCalls: 0,
   });
 });
 
@@ -384,8 +380,8 @@ test('FIX-TOKEN checkpoint is versioned, reusable and omits provider narrative a
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-checkpoint-'));
   const path = join(directory, 'checkpoint.json');
   const fingerprint = {
-    primaryModel: 'gpt-5.6-luna',
-    fallbackModel: 'gpt-5.6-terra',
+    primaryModel: 'qwen-plus',
+    fallbackModel: 'qwen-max',
     promptVersion: 'prompt-v1',
     validatorVersion: 'validator-v1',
   };
@@ -685,7 +681,7 @@ test('FIX-TOKEN refresh rotates a mismatched fingerprint only after provider acc
     const report = await runAssistantSourceDiscovery({
       argv: ['--live', '--refresh'],
       environment: {
-        OPENAI_API_KEY: 'bounded-local-stub',
+        ALIBABA_API_KEY: 'bounded-local-stub',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
         ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -757,7 +753,7 @@ test('FIX-TOKEN refresh preserves the original checkpoint when its deferred back
       runAssistantSourceDiscovery({
         argv: ['--live', '--refresh'],
         environment: {
-          OPENAI_API_KEY: 'bounded-local-stub',
+          ALIBABA_API_KEY: 'bounded-local-stub',
           ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
           ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
           ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -797,7 +793,7 @@ test('FIX-TOKEN discovery defaults to a one-project dry-run and never constructs
   const report = await runAssistantSourceDiscovery({
     argv: [],
     environment: {
-      OPENAI_API_KEY: 'present-but-insufficient',
+      ALIBABA_API_KEY: 'present-but-insufficient',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     },
     silent: true,
@@ -991,8 +987,8 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
     async close() {},
   };
   const environment = {
-    OPENAI_API_KEY: 'bounded-local-stub',
-    ASSISTANT_AI_MODE: 'openai',
+    ALIBABA_API_KEY: 'bounded-local-stub',
+    ASSISTANT_AI_MODE: 'alibaba',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
     ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -1122,8 +1118,8 @@ test('ZAEBAL4 tool-call contract violation preserves checkpoint and skips regist
     200,
     {
       phase: 'PROJECT',
-      provider: 'openai',
-      model: 'gpt-5.6-luna',
+      provider: 'alibaba',
+      model: 'qwen-plus',
       requestId: 'request-zaebal4-contract',
       responseId: 'response-zaebal4-contract',
       httpStatus: 200,
@@ -1141,8 +1137,8 @@ test('ZAEBAL4 tool-call contract violation preserves checkpoint and skips regist
     const report = await runAssistantSourceDiscovery({
       argv: ['--live', '--apply', '--refresh'],
       environment: {
-        OPENAI_API_KEY: 'bounded-local-stub',
-        ASSISTANT_AI_MODE: 'openai',
+        ALIBABA_API_KEY: 'bounded-local-stub',
+        ASSISTANT_AI_MODE: 'alibaba',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
         ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
@@ -1249,8 +1245,8 @@ test('ZAEBAL4 reported usage mismatch stops before checkpoint, registration and 
     telemetry: {
       phases: [{
         phase: 'PROJECT',
-        provider: 'openai',
-        model: 'gpt-5.6-luna',
+        provider: 'alibaba',
+        model: 'qwen-plus',
         requestId: 'request-zaebal4-mismatch',
         responseId: 'response-zaebal4-mismatch',
         httpStatus: 200,
@@ -1269,8 +1265,8 @@ test('ZAEBAL4 reported usage mismatch stops before checkpoint, registration and 
     const report = await runAssistantSourceDiscovery({
       argv: ['--live', '--apply', '--refresh'],
       environment: {
-        OPENAI_API_KEY: 'bounded-local-stub',
-        ASSISTANT_AI_MODE: 'openai',
+        ALIBABA_API_KEY: 'bounded-local-stub',
+        ASSISTANT_AI_MODE: 'alibaba',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
         ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
@@ -1456,8 +1452,8 @@ test('ZAEBAL4 happy stub performs one request, settlement, registration and inde
     },
   };
   const environment = {
-    OPENAI_API_KEY: 'bounded-local-stub',
-    ASSISTANT_AI_MODE: 'openai',
+    ALIBABA_API_KEY: 'bounded-local-stub',
+    ASSISTANT_AI_MODE: 'alibaba',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
     ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
@@ -1482,12 +1478,13 @@ test('ZAEBAL4 happy stub performs one request, settlement, registration and inde
             {
               ...environment,
               ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+              ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
             },
             async (_url, init) => {
               events.push('http');
               const body = JSON.parse(init.body);
               providerBodies.push(body);
-              assert.equal(body.text.format.name, 'platforma_official_project_candidate');
+              assert.equal(body.response_format.json_schema.name, 'platforma_official_project_candidate');
               return sourceDiscoveryResponse({
                 status: 'FOUND',
                 canonicalUrl,
@@ -1522,11 +1519,12 @@ test('ZAEBAL4 happy stub performs one request, settlement, registration and inde
     assert.equal(report.stopReason, 'ASSISTANT_SOURCE_DISCOVERY_COMPLETED');
     assert.equal(report.providerBudgetContract.passed, true);
     assert.equal(report.summary.providerRequests, 1);
-    assert.equal(report.summary.knownTokenUsage.webSearchCalls, 1);
+    assert.equal(report.summary.knownTokenUsage.webSearchCalls, 0);
     assert.equal(report.summary.registered, 1);
     assert.equal(report.summary.indexed, 1);
     assert.equal(providerBodies.length, 1);
-    assert.equal(providerBodies[0].max_tool_calls, 1);
+    assert.equal(providerBodies[0].max_tokens, 1_600);
+    assert.equal('tools' in providerBodies[0], false);
     assert.equal(attempts.length, 1);
     assert.equal(attempts[0].status, 'SETTLED');
     assert.ok(attempts[0].reservedCostUsd.gte(attempts[0].chargedCostUsd));
@@ -1567,7 +1565,7 @@ test('FIX-TOKEN refresh error removes the stale selected entry instead of maskin
     const report = await runAssistantSourceDiscovery({
       argv: ['--live', '--refresh'],
       environment: {
-        OPENAI_API_KEY: 'bounded-local-stub',
+        ALIBABA_API_KEY: 'bounded-local-stub',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
         ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -1622,7 +1620,7 @@ test('FIX-TOKEN missing-only selection advances past checkpointed projects withi
     const report = await runAssistantSourceDiscovery({
       argv: ['--live', '--limit', '2', '--max-cost-usd', '0.20000000'],
       environment: {
-        OPENAI_API_KEY: 'bounded-local-stub',
+        ALIBABA_API_KEY: 'bounded-local-stub',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
         ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -1688,7 +1686,7 @@ test('FIX-TOKEN live run fails closed and cleans temporary output when checkpoin
       runAssistantSourceDiscovery({
         argv: ['--live'],
         environment: {
-          OPENAI_API_KEY: 'bounded-local-stub',
+          ALIBABA_API_KEY: 'bounded-local-stub',
           ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
           ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
           ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -1782,8 +1780,8 @@ test('FIX-TOKEN active indexed project registry source takes priority over a che
     async close() {},
   };
   const environment = {
-    OPENAI_API_KEY: 'bounded-local-stub',
-    ASSISTANT_AI_MODE: 'openai',
+    ALIBABA_API_KEY: 'bounded-local-stub',
+    ASSISTANT_AI_MODE: 'alibaba',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
     ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -1812,6 +1810,7 @@ test('FIX-TOKEN active indexed project registry source takes priority over a che
             {
               ...environment,
               ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+              ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
             },
             async () => {
               providerCalls += 1;
@@ -1906,7 +1905,7 @@ test('FIX-TOKEN checkpoint identity includes the current developer key', async (
     async close() {},
   };
   const environment = {
-    OPENAI_API_KEY: 'bounded-local-stub',
+    ALIBABA_API_KEY: 'bounded-local-stub',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
     ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -2090,7 +2089,7 @@ test('FIX-TOKEN CLI keeps one logical operation while isolating each execution',
     },
   };
   const environment = {
-    OPENAI_API_KEY: 'bounded-local-stub',
+    ALIBABA_API_KEY: 'bounded-local-stub',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
     ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -2316,7 +2315,7 @@ test('FIX-TOKEN live report counts Terra fallback and conservatively charges an 
       id: '44444444-4444-4444-8444-444444444444',
       runId,
       attemptOrdinal: 1,
-      requestedModel: 'gpt-5.6-terra',
+      requestedModel: 'qwen-max',
       isFallback: true,
       status: 'RESERVED',
       outcome: null,
@@ -2357,7 +2356,7 @@ test('FIX-TOKEN discovery report counts a failed paid provider attempt without p
   };
   const discovery = new AssistantSourceDiscoveryService(
     {
-      OPENAI_API_KEY: 'bounded-local-stub',
+      ALIBABA_API_KEY: 'bounded-local-stub',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'false',
     },
     async () => { throw new Error('simulated transport failure'); },
@@ -2565,7 +2564,7 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
     {
       name: 'missing structured output',
       failureKind: 'MISSING',
-      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_OUTPUT_MISSING',
     },
     {
       name: 'provider timeout',
@@ -2632,7 +2631,7 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
         async (_url, init) => {
           const requestBody = JSON.parse(init.body);
           providerBodies.push(requestBody);
-          if (requestBody.text.format.name === 'platforma_official_developer_candidate') {
+          if (requestBody.response_format.json_schema.name === 'platforma_official_developer_candidate') {
             return sourceDiscoveryResponse({
               status: 'FOUND',
               canonicalUrl: 'https://developer.example/',
@@ -2702,8 +2701,8 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
       }
       assert.equal(outcome.code ?? outcome.errorCode, scenario.errorCode);
       const requestedModels = providerBodies.map(({ model }) => model);
-      assert.equal(requestedModels.includes('gpt-5.6-terra'), false);
-      assert.equal(requestedModels.every((model) => model === 'gpt-5.6-luna'), true);
+      assert.equal(requestedModels.includes('qwen-max'), false);
+      assert.equal(requestedModels.every((model) => model === 'qwen-plus'), true);
       assert.equal(requestedModels.length, scenario.permitsLunaRetry ? 3 : 2);
       assert.equal(failedSourceFetches, scenario.sourceErrorCode ? 2 : 0);
     });
@@ -2714,7 +2713,7 @@ test('FIX-TOKEN discovery requires both live flag and explicit paid-call confirm
   await assert.rejects(
     runAssistantSourceDiscovery({
       argv: ['--live'],
-      environment: { OPENAI_API_KEY: 'key-alone-is-not-permission' },
+      environment: { ALIBABA_API_KEY: 'key-alone-is-not-permission' },
       silent: true,
     }),
     /ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED/u,
@@ -2732,8 +2731,8 @@ test('FIX-TOKEN discovery requires both live flag and explicit paid-call confirm
 
 function checkpointFingerprint() {
   return {
-    primaryModel: 'gpt-5.6-luna',
-    fallbackModel: 'gpt-5.6-terra',
+    primaryModel: 'qwen-plus',
+    fallbackModel: 'qwen-max',
     promptVersion: 'assistant-source-discovery-v2',
     validatorVersion: 'assistant-source-discovery-validator-v3',
   };
@@ -2771,7 +2770,7 @@ async function assertCheckpointFailureStopsProvider(
     await runAssistantSourceDiscovery({
       argv,
       environment: {
-        OPENAI_API_KEY: 'bounded-local-stub',
+        ALIBABA_API_KEY: 'bounded-local-stub',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
         ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -2815,7 +2814,7 @@ async function runDryRunEstimate({
       '--max-cost-usd', requestedCostCapUsd,
     ],
     environment: {
-      OPENAI_API_KEY: 'present-but-insufficient',
+      ALIBABA_API_KEY: 'present-but-insufficient',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'false',
       ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
     },
@@ -2863,7 +2862,7 @@ async function runPersistedDiscoveryReport({
     return await runAssistantSourceDiscovery({
       argv: ['--live'],
       environment: {
-        OPENAI_API_KEY: 'bounded-local-stub',
+        ALIBABA_API_KEY: 'bounded-local-stub',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
         ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
         ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -2911,7 +2910,7 @@ function persistedUsageAttempt({
   runId,
   executionId = '00000000-0000-4000-8000-000000000001',
   attemptOrdinal,
-  requestedModel = 'gpt-5.6-luna',
+  requestedModel = 'qwen-plus',
   isFallback = false,
   status = 'SETTLED',
   outcome,
@@ -2934,7 +2933,7 @@ function persistedUsageAttempt({
     executionId,
     attemptOrdinal,
     operation: 'SOURCE_DISCOVERY',
-    provider: 'openai',
+    provider: 'alibaba',
     requestedModel,
     actualModel: status === 'SETTLED' ? requestedModel : null,
     reasoningEffort: 'medium',
@@ -2966,8 +2965,8 @@ function persistedUsageAttempt({
 function failedDiscoveryError(code) {
   return new AssistantSourceDiscoveryError(code, null, null, null, {
     phase: 'PROJECT',
-    provider: 'openai',
-    model: 'gpt-5.6-luna',
+    provider: 'alibaba',
+    model: 'qwen-plus',
     requestId: null,
     responseId: null,
     httpStatus: null,
@@ -2983,37 +2982,30 @@ function failedDiscoveryError(code) {
 
 function sourceDiscoveryEnvironment() {
   return {
-    OPENAI_API_KEY: 'test-only',
-    ASSISTANT_SOURCE_DISCOVERY_MODEL: 'gpt-5.6-luna',
+    ALIBABA_API_KEY: 'test-only',
+    ASSISTANT_SOURCE_DISCOVERY_MODEL: 'qwen-plus',
   };
 }
 
 function sourceDiscoveryResponse(candidate, citations, responseId) {
   return new Response(JSON.stringify({
     id: responseId,
-    output: [
-      {
-        type: 'web_search_call',
-        action: { sources: citations.map((url) => ({ type: 'url', url })) },
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: JSON.stringify(candidate),
+        annotations: citations.map((url) => ({
+          type: 'url_citation',
+          url,
+          title: 'Источник',
+        })),
       },
-      {
-        type: 'message',
-        content: [{
-          type: 'output_text',
-          text: JSON.stringify(candidate),
-          annotations: citations.map((url) => ({
-            type: 'url_citation',
-            url,
-            title: 'Источник',
-          })),
-        }],
-      },
-    ],
+    }],
     usage: {
-      input_tokens: 20,
-      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-      output_tokens: 13,
-      output_tokens_details: { reasoning_tokens: 5 },
+      prompt_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 0 },
+      completion_tokens: 13,
+      completion_tokens_details: { reasoning_tokens: 5 },
       total_tokens: 33,
     },
   }), {
@@ -3028,18 +3020,18 @@ function sourceDiscoveryResponse(candidate, citations, responseId) {
 function malformedSourceDiscoveryResponse(responseId) {
   return new Response(JSON.stringify({
     id: responseId,
-    output: [
-      { type: 'web_search_call', action: { sources: [] } },
-      {
-        type: 'message',
-        content: [{ type: 'output_text', text: '{not-json', annotations: [] }],
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '{not-json',
+        annotations: [],
       },
-    ],
+    }],
     usage: {
-      input_tokens: 20,
-      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-      output_tokens: 13,
-      output_tokens_details: { reasoning_tokens: 5 },
+      prompt_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 0 },
+      completion_tokens: 13,
+      completion_tokens_details: { reasoning_tokens: 5 },
       total_tokens: 33,
     },
   }), {
@@ -3051,12 +3043,12 @@ function malformedSourceDiscoveryResponse(responseId) {
 function missingSourceDiscoveryResponse(responseId) {
   return new Response(JSON.stringify({
     id: responseId,
-    output: [],
+    choices: [],
     usage: {
-      input_tokens: 20,
-      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-      output_tokens: 0,
-      output_tokens_details: { reasoning_tokens: 0 },
+      prompt_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 0 },
+      completion_tokens: 0,
+      completion_tokens_details: { reasoning_tokens: 0 },
       total_tokens: 20,
     },
   }), {
@@ -3125,14 +3117,14 @@ function settlementFixture() {
       operationRunId,
       executionId,
       attemptOrdinal: 1,
-      provider: 'openai',
-      model: 'gpt-5.6-luna',
+      provider: 'alibaba',
+      model: 'qwen-plus',
       serviceTier: 'default',
       usageDate,
       reservationExpiresAt: new Date('2026-08-27T00:03:00.000Z'),
       reservedCostUsd: '0.10000000',
     },
-    actualModel: 'gpt-5.6-luna',
+    actualModel: 'qwen-plus',
     outcome: 'ACCEPTED',
     errorCode: null,
     inputTokens: 100,

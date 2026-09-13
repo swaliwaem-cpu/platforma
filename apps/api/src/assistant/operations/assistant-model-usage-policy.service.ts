@@ -5,10 +5,11 @@ import type {
   AssistantPlannerTelemetry,
   AssistantPlannerUsagePolicy,
 } from '../assistant-query-planner';
+import { ASSISTANT_TERRA_MODEL } from '../assistant-query-planner';
 import {
   ASSISTANT_PLANNER_PROMPT_VERSION,
   createAssistantPlannerRequestBody,
-  readAssistantOpenAiTimeoutMs,
+  readAssistantAlibabaTimeoutMs,
 } from '../assistant-planner-gateway';
 import {
   ASSISTANT_AI_SERVICE_TIER,
@@ -29,7 +30,7 @@ type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefine
 
 @Injectable()
 export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePolicy {
-  private readonly provider: 'fake' | 'openai';
+  private readonly provider: 'fake' | 'alibaba';
   private readonly perMinuteLimit: number;
   private readonly dailyLimit: number;
   private readonly dailyBudgetUsd: string;
@@ -41,8 +42,8 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
     environment: AssistantEnvironment = process.env,
     private readonly aiBudgets?: AssistantAiUsageBudgetService,
   ) {
-    this.provider = (environment.ASSISTANT_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US') === 'openai'
-      ? 'openai'
+    this.provider = (environment.ASSISTANT_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US') === 'alibaba'
+      ? 'alibaba'
       : 'fake';
     this.perMinuteLimit = readAssistantBudgetLimit(
       environment.ASSISTANT_MODEL_REQUESTS_PER_MINUTE,
@@ -60,9 +61,9 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
     );
     this.dailyBudgetUsd = readAssistantDailyUsdBudget(
       environment.ASSISTANT_MODEL_DAILY_BUDGET_USD,
-      this.provider === 'openai',
+      this.provider === 'alibaba',
     );
-    this.providerTimeoutMs = readAssistantOpenAiTimeoutMs(environment);
+    this.providerTimeoutMs = readAssistantAlibabaTimeoutMs(environment);
   }
 
   async beforeAttempt(request: AssistantPlannerRequest) {
@@ -103,7 +104,7 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
         reasoningEffort: request.reasoningEffort,
         promptVersion: ASSISTANT_PLANNER_PROMPT_VERSION,
         validatorVersion: 'assistant-query-planner-validator-v1',
-        isFallback: request.model.endsWith('-terra'),
+        isFallback: request.model === ASSISTANT_TERRA_MODEL,
         providerTimeoutMs: this.providerTimeoutMs,
       });
     } catch (error) {

@@ -80,7 +80,7 @@ test('PIDAFIX3 Geo live environment keeps other paid and worker boundaries disab
   const base = {
     PATH: '/usr/bin',
     LOCATIONIQ_API_KEY: 'locationiq-test-key-1234567890',
-    OPENAI_API_KEY: 'must-not-survive',
+    ALIBABA_API_KEY: 'must-not-survive',
     ASSISTANT_QUERY_PLANNER_LIVE: 'true',
     TELEGRAM_BOT_TOKEN: 'must-not-survive',
   };
@@ -94,7 +94,7 @@ test('PIDAFIX3 Geo live environment keeps other paid and worker boundaries disab
   });
   assert.equal(environment.PIDAFIX3_LOCATIONIQ_API_KEY, base.LOCATIONIQ_API_KEY);
   assert.equal(Object.hasOwn(environment, 'LOCATIONIQ_API_KEY'), false);
-  assert.equal(Object.hasOwn(environment, 'OPENAI_API_KEY'), false);
+  assert.equal(Object.hasOwn(environment, 'ALIBABA_API_KEY'), false);
   assert.equal(environment.ASSISTANT_AI_MODE, 'fake');
   assert.equal(environment.ASSISTANT_QUERY_PLANNER_LIVE, 'false');
   assert.equal(environment.ASSISTANT_EMBEDDING_MODE, 'fake');
@@ -150,8 +150,8 @@ test('PIDAFIX3 Geo live requires a matching completed fake baseline', () => {
     },
     externalProviderEvidence: {
       status: 'verified',
-      calls: { openai: 0, locationiq: 0, overpass: 0 },
-      persistedUsageAttempts: { openai: 0, locationiq: 0, overpass: 0 },
+      calls: { alibaba: 0, locationiq: 0, overpass: 0 },
+      persistedUsageAttempts: { alibaba: 0, locationiq: 0, overpass: 0 },
       deniedRemoteRequests: 0,
     },
     costUsd: 0,
@@ -253,7 +253,7 @@ test('PIDAFIX3 Geo live Compose override has no extra services or legacy bypass'
   assert.match(composeSource, /LOCATIONIQ_API_KEY: \$\{PIDAFIX3_LOCATIONIQ_API_KEY:\?/u);
   assert.match(composeSource, /MAP_STYLE_URL: http:\/\/127\.0\.0\.1:/u);
   assert.doesNotMatch(composeSource, /ASSISTANT_FIX_GEO1_LIVE_ALLOW_REMOTE/u);
-  assert.doesNotMatch(composeSource, /OPENAI_API_KEY/u);
+  assert.doesNotMatch(composeSource, /ALIBABA_API_KEY/u);
   const finallyBlock = runnerSource.slice(runnerSource.indexOf('  } finally {'));
   const stopIndex = finallyBlock.indexOf('stopResult = await stopProviderBoundary()');
   const reconciliationIndex = finallyBlock.indexOf('reconcileProviderCallReport(prisma');

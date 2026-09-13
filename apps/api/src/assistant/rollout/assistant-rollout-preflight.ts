@@ -207,7 +207,7 @@ function hasValidAssistantRolloutApproval(event: AssistantRolloutEventRecord) {
     && evalGate.version === 'assistant-eval-v1'
     && evalGate.passed === true
     && evalGate.caseCount === 200
-    && evalGate.providerMode === 'openai'
+    && evalGate.providerMode === 'alibaba'
     && typeof evalGate.evidenceCoreSha256 === 'string'
     && /^[0-9a-f]{64}$/u.test(evalGate.evidenceCoreSha256)
     && typeof evalGate.finalizedEvidenceSha256 === 'string'
@@ -459,7 +459,7 @@ export function assessAssistantProviderBudgetContract(
       && attempt.status === 'SETTLED'
       && (attempt.outcome === 'PROVIDER_SUCCESS'
         || attempt.outcome === 'PROVIDER_CONTRACT_VIOLATION')
-      && attempt.webSearchCalls !== 1) {
+      && attempt.webSearchCalls !== 0) {
       reasons.push('TOOL_CALL_CONTRACT_VIOLATION');
     }
     const uniqueReasons = [...new Set(reasons)];

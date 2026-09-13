@@ -412,8 +412,8 @@ function summarizePaidSmokeAttempts(attempts) {
   const identities = new Set();
   for (const attempt of attempts) {
     if (!attempt || attempt.operation !== 'PLANNER'
-      || (attempt.requestedModel !== 'gpt-5.6-luna'
-        && attempt.requestedModel !== 'gpt-5.6-terra')
+      || (attempt.requestedModel !== 'qwen-plus'
+        && attempt.requestedModel !== 'qwen-max')
       || !Number.isSafeInteger(attempt.attemptOrdinal)
       || attempt.attemptOrdinal < 1
       || typeof attempt.operationRunId !== 'string'
@@ -483,7 +483,7 @@ function readAssistantLocalPaidSmokeReadiness(apiEnvironment, cliEnvironment, ru
   const blockers = provider.missing.map((name) => `MISSING_${name}`);
   const effective = provider.effective;
 
-  if (effective.aiMode !== 'openai') blockers.push('ASSISTANT_AI_MODE_OPENAI_REQUIRED');
+  if (effective.aiMode !== 'alibaba') blockers.push('ASSISTANT_AI_MODE_ALIBABA_REQUIRED');
   if (effective.requestsPerMinute === null || effective.requestsPerMinute > 2) {
     blockers.push('ASSISTANT_MODEL_REQUESTS_PER_MINUTE_TOO_HIGH');
   }
@@ -504,8 +504,8 @@ function readAssistantLocalPaidSmokeReadiness(apiEnvironment, cliEnvironment, ru
   if (apiEnvironment.ASSISTANT_MODULE_ENABLED !== 'true') {
     blockers.push('ASSISTANT_MODULE_ENABLED_REQUIRED');
   }
-  if (!isOfficialOpenAiBaseUrl(apiEnvironment.ASSISTANT_OPENAI_BASE_URL)) {
-    blockers.push('ASSISTANT_OPENAI_BASE_URL_INVALID');
+  if (!isOfficialAlibabaBaseUrl(apiEnvironment.ASSISTANT_ALIBABA_BASE_URL)) {
+    blockers.push('ASSISTANT_ALIBABA_BASE_URL_INVALID');
   }
   if (!isDisposableDatabaseUrl(apiEnvironment.DATABASE_URL)
     || apiEnvironment.ASSISTANT_LOCAL_PAID_SMOKE_DISPOSABLE_DB !== 'true') {
@@ -562,8 +562,8 @@ function estimateCanaryMaximumCostUsd() {
   const costs = [];
   for (const smokeCase of canaryCases) {
     for (const [attemptOrdinal, model, reasoningEffort] of [
-      [1, 'gpt-5.6-luna', 'high'],
-      [2, 'gpt-5.6-terra', 'medium'],
+      [1, 'qwen-plus', 'high'],
+      [2, 'qwen-max', 'medium'],
     ]) {
       const body = createAssistantPlannerRequestBody({
         model,
@@ -821,12 +821,12 @@ function readNullSeparatedEnvironment(path) {
     'ASSISTANT_MODULE_ENABLED',
     'ASSISTANT_AI_MODE',
     'ASSISTANT_QUERY_PLANNER_LIVE',
-    'ASSISTANT_OPENAI_BASE_URL',
+    'ASSISTANT_ALIBABA_BASE_URL',
     'ASSISTANT_MODEL_REQUESTS_PER_MINUTE',
     'ASSISTANT_MODEL_REQUESTS_PER_DAY',
     'ASSISTANT_MODEL_DAILY_BUDGET_USD',
     'ASSISTANT_PAID_CALLS_CONFIRMED',
-    'OPENAI_API_KEY',
+    'ALIBABA_API_KEY',
     'ASSISTANT_EMBEDDING_MODE',
     'ASSISTANT_EMBEDDING_LIVE',
     'ASSISTANT_GEO_PROVIDER_ENABLED',
@@ -850,7 +850,7 @@ function readNullSeparatedEnvironment(path) {
     const name = entry.slice(0, separator);
     if (allowed.has(name)) {
       const value = entry.slice(separator + 1);
-      result[name] = name === 'OPENAI_API_KEY' && value ? '__present__' : value;
+      result[name] = name === 'ALIBABA_API_KEY' && value ? '__present__' : value;
     }
   }
   return result;
@@ -865,13 +865,13 @@ function hasAccessTokenSource(environment) {
   return tokenPresent !== fdPresent;
 }
 
-function isOfficialOpenAiBaseUrl(value) {
+function isOfficialAlibabaBaseUrl(value) {
   if (value === undefined || value.trim() === '') return true;
   try {
     const url = new URL(value);
     return url.protocol === 'https:'
-      && url.hostname === 'api.openai.com'
-      && (url.pathname === '/v1' || url.pathname === '/v1/')
+      && url.hostname === 'dashscope-intl.aliyuncs.com'
+      && (url.pathname === '/compatible-mode/v1' || url.pathname === '/compatible-mode/v1/')
       && !url.username && !url.password && !url.search && !url.hash;
   } catch {
     return false;

@@ -3,8 +3,8 @@ import {
   type AssistantSourceCatalogProjectEvidence,
 } from './assistant-source-discovery-identity';
 
-export const ASSISTANT_SOURCE_DISCOVERY_MODEL = 'gpt-5.6-luna';
-export const ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL = 'gpt-5.6-terra';
+export const ASSISTANT_SOURCE_DISCOVERY_MODEL = 'qwen-plus';
+export const ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL = 'qwen-max';
 export const maximumSourceDiscoveryProviderCalls = 35;
 export const maximumSourceDiscoveryCallsPerProject = 3;
 export const maximumSourceDiscoveryTerraFallbacks = 2;

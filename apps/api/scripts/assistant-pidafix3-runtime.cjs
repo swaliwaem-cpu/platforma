@@ -320,8 +320,8 @@ function createUnverifiedProviderEvidence() {
   return {
     status: 'not-measured',
     scope: 't07-connected-e2e',
-    calls: { openai: null, locationiq: null, overpass: null },
-    persistedUsageAttempts: { openai: null, locationiq: null, overpass: null },
+    calls: { alibaba: null, locationiq: null, overpass: null },
+    persistedUsageAttempts: { alibaba: null, locationiq: null, overpass: null },
     deniedRemoteRequests: null,
   };
 }
@@ -330,8 +330,8 @@ function verifyT07ProviderEvidence(value, nonce) {
   assert.match(nonce, /^[a-f0-9]{16}$/u);
   assert.equal(value?.version, 1);
   assert.equal(value?.nonce, nonce);
-  assert.deepEqual(value?.transportStubCalls, { openai: 0, locationiq: 0, overpass: 0 });
-  assert.deepEqual(value?.persistedUsageAttempts, { openai: 0, locationiq: 0, overpass: 0 });
+  assert.deepEqual(value?.transportStubCalls, { alibaba: 0, locationiq: 0, overpass: 0 });
+  assert.deepEqual(value?.persistedUsageAttempts, { alibaba: 0, locationiq: 0, overpass: 0 });
   assert.equal(value?.deniedRemoteRequests, 0);
   return {
     status: 'verified',

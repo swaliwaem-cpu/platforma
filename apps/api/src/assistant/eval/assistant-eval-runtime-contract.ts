@@ -4,8 +4,9 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ASSISTANT_LUNA_MODEL, ASSISTANT_TERRA_MODEL } from '../assistant-query-planner';
 import {
+  ASSISTANT_ALIBABA_DEFAULT_BASE_URL,
   ASSISTANT_PLANNER_PROMPT_VERSION,
-  readAssistantOpenAiTimeoutMs,
+  readAssistantAlibabaTimeoutMs,
 } from '../assistant-planner-gateway';
 import {
   areAssistantExternalConnectorsEnabled,
@@ -55,7 +56,7 @@ export function createAssistantEvalRuntimeContract(
       nodeEnvironment: readOptionalEnvironmentValue(environment.NODE_ENV),
       deploymentEnvironment: readOptionalEnvironmentValue(environment.DEPLOYMENT_ENV),
       ...runtimeModes,
-      openAiBaseUrlOfficial: isOfficialOpenAiBaseUrl(environment.ASSISTANT_OPENAI_BASE_URL),
+      alibabaBaseUrlOfficial: isOfficialAlibabaBaseUrl(environment.ASSISTANT_ALIBABA_BASE_URL),
     },
   };
 }
@@ -82,8 +83,8 @@ export function createAssistantReleaseRuntimeBinding(
       queryPlannerLive: provider.queryPlannerLive,
       paidCallsConfirmed: provider.paidCallsConfirmed,
       apiKeyPresent: provider.apiKeyPresent,
-      openAiBaseUrlOfficial: isOfficialOpenAiBaseUrl(environment.ASSISTANT_OPENAI_BASE_URL),
-      timeoutMs: readAssistantOpenAiTimeoutMs(environment),
+      alibabaBaseUrlOfficial: isOfficialAlibabaBaseUrl(environment.ASSISTANT_ALIBABA_BASE_URL),
+      timeoutMs: readAssistantAlibabaTimeoutMs(environment),
     },
     planner: {
       promptVersion: ASSISTANT_PLANNER_PROMPT_VERSION,
@@ -159,12 +160,12 @@ export function createAssistantEvalDatabaseFingerprint(value: AssistantEvalDatab
   ])).digest('hex');
 }
 
-function isOfficialOpenAiBaseUrl(value: string | undefined) {
+function isOfficialAlibabaBaseUrl(value: string | undefined) {
   try {
-    const parsed = new URL(value?.trim() || 'https://api.openai.com/v1');
+    const parsed = new URL(value?.trim() || ASSISTANT_ALIBABA_DEFAULT_BASE_URL);
     return parsed.protocol === 'https:'
-      && parsed.hostname === 'api.openai.com'
-      && (parsed.pathname === '/v1' || parsed.pathname === '/v1/')
+      && parsed.hostname === 'dashscope-intl.aliyuncs.com'
+      && (parsed.pathname === '/compatible-mode/v1' || parsed.pathname === '/compatible-mode/v1/')
       && !parsed.username && !parsed.password && !parsed.search && !parsed.hash;
   } catch {
     return false;
@@ -173,7 +174,7 @@ function isOfficialOpenAiBaseUrl(value: string | undefined) {
 
 function readEmbeddingMode(value: string | undefined) {
   const normalized = (value ?? 'disabled').trim().toLocaleLowerCase('en-US');
-  return ['disabled', 'fake', 'openai'].includes(normalized) ? normalized : null;
+  return ['disabled', 'fake', 'alibaba'].includes(normalized) ? normalized : null;
 }
 
 function readOptionalEnvironmentValue(value: string | undefined) {

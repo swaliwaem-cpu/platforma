@@ -349,7 +349,7 @@ function validateInspection(value, expectedRunIds) {
 
 function findAssistantEvalProviderCoverageViolations(runs, attempts, providerMode) {
   if (!Array.isArray(runs) || !Array.isArray(attempts)
-    || !['fake', 'openai'].includes(providerMode)) {
+    || !['fake', 'alibaba'].includes(providerMode)) {
     return ['ASSISTANT_EVAL_PROVIDER_RECEIPTS_INCOMPLETE'];
   }
   const runById = new Map();
@@ -529,7 +529,7 @@ function assertAssistantEvalRuntimeHandshake(value, databaseFingerprint, limits)
     || !provider || !runtime
     || provider.readinessPassed !== true
     || !Array.isArray(provider.missing) || provider.missing.length !== 0
-    || !['fake', 'openai'].includes(provider.aiMode)
+    || !['fake', 'alibaba'].includes(provider.aiMode)
     || !Number.isSafeInteger(provider.requestsPerMinute)
     || !Number.isSafeInteger(provider.requestsPerDay)
     || provider.requestsPerMinute < 1
@@ -578,11 +578,11 @@ function assertAssistantEvalRuntimeHandshake(value, databaseFingerprint, limits)
       || provider.paidCallsConfirmed !== false)) {
     throw new Error('ASSISTANT_EVAL_RUNTIME_HANDSHAKE_INVALID');
   }
-  if (provider.aiMode === 'openai') {
+  if (provider.aiMode === 'alibaba') {
     if (provider.queryPlannerLive !== true
       || provider.paidCallsConfirmed !== true
       || provider.apiKeyPresent !== true
-      || runtime.openAiBaseUrlOfficial !== true
+      || runtime.alibabaBaseUrlOfficial !== true
       || typeof provider.dailyBudgetUsd !== 'string') {
       throw new Error('ASSISTANT_EVAL_RUNTIME_HANDSHAKE_INVALID');
     }

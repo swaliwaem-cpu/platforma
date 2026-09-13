@@ -24,7 +24,7 @@ const safeCodePattern = /^[A-Z][A-Z0-9_]{2,119}$/u;
 const internalErrorCodePattern = /^ASSISTANT_[A-Z0-9_]{2,109}$/u;
 const usdPattern = /^\d+\.\d{8}$/u;
 const tokenCountPattern = /^(?:0|[1-9]\d*)$/u;
-const openAiModels = new Set(['gpt-5.6-luna', 'gpt-5.6-terra']);
+const alibabaModels = new Set(['qwen-plus', 'qwen-max']);
 const assistantQualityFlags = new Set([
   'HARD_FILTER_VIOLATION',
   'UNSUPPORTED_FACT',
@@ -791,7 +791,7 @@ function readSanitizedProviderReceipt(value, code) {
       'pricingStatus', 'reservedCostUsd', 'chargedCostUsd', 'totalTokens',
       'webSearchCalls', 'durationMs', 'createdAt', 'settledAt',
     ])
-      || value.provider !== 'openai'
+      || value.provider !== 'alibaba'
       || value.operation !== 'PLANNER'
       || value.status !== 'SETTLED'
       || !['ACCEPTED', 'LOCAL_VALIDATION_FAILED', 'PROVIDER_ERROR'].includes(value.outcome)
@@ -803,10 +803,10 @@ function readSanitizedProviderReceipt(value, code) {
       receiptId: requireUuid(value.receiptId, code),
       executionId: requireUuid(value.executionId, code),
       attemptOrdinal: requirePositiveInteger(value.attemptOrdinal, code),
-      provider: 'openai',
+      provider: 'alibaba',
       operation: 'PLANNER',
-      requestedModel: readOpenAiModel(value.requestedModel, code),
-      actualModel: value.actualModel === null ? null : readOpenAiModel(value.actualModel, code),
+      requestedModel: readAlibabaModel(value.requestedModel, code),
+      actualModel: value.actualModel === null ? null : readAlibabaModel(value.actualModel, code),
       status: 'SETTLED',
       outcome: value.outcome,
       errorCodeDigest: readOptionalDigest(value.errorCodeDigest, code),
@@ -1018,7 +1018,7 @@ function readRunnerReport(value, expected) {
     || value.evaluatedAt !== expected.evaluatedAt
     || value.caseCount !== expected.caseCount
     || value.completedRunCount !== expected.caseCount
-    || !['fake', 'openai'].includes(value.providerMode)
+    || !['fake', 'alibaba'].includes(value.providerMode)
     || !digestPattern.test(value.runtimeConfigSha256)
     || typeof value.releaseSha !== 'string'
     || !/^[0-9a-f]{40}$/u.test(value.releaseSha)
@@ -1238,17 +1238,17 @@ function readAiProviderReceipt(value) {
   const receiptId = requireUuid(value.receiptId, code);
   const executionId = requireUuid(value.executionId, code);
   const attemptOrdinal = requirePositiveInteger(value.attemptOrdinal, code);
-  if (value.provider !== 'openai'
+  if (value.provider !== 'alibaba'
     || value.operation !== 'PLANNER'
     || value.status !== 'SETTLED'
     || !['ACCEPTED', 'LOCAL_VALIDATION_FAILED', 'PROVIDER_ERROR'].includes(value.outcome)
     || value.pricingStatus !== 'PRICED') {
     throw new Error(code);
   }
-  const requestedModel = readOpenAiModel(value.requestedModel, code);
+  const requestedModel = readAlibabaModel(value.requestedModel, code);
   const actualModel = value.actualModel === null
     ? null
-    : readOpenAiModel(value.actualModel, code);
+    : readAlibabaModel(value.actualModel, code);
   const errorCode = readOptionalInternalErrorCode(value.errorCode, code);
   const reservedCostUsd = requireUsd(value.reservedCostUsd, code);
   const chargedCostUsd = requireUsd(value.chargedCostUsd, code);
@@ -1266,7 +1266,7 @@ function readAiProviderReceipt(value) {
     receiptId,
     executionId,
     attemptOrdinal,
-    provider: 'openai',
+    provider: 'alibaba',
     operation: 'PLANNER',
     requestedModel,
     actualModel,
@@ -1336,7 +1336,7 @@ function readGeoProviderReceipt(value) {
 
 function assertCaseProviderReceiptCoverage(receipts, quality, providerMode) {
   const aiReceipts = receipts.filter(({ receiptType }) => receiptType === 'AI');
-  if (providerMode === 'openai' && aiReceipts.length !== quality.modelAttempts
+  if (providerMode === 'alibaba' && aiReceipts.length !== quality.modelAttempts
     || providerMode === 'fake' && aiReceipts.length !== 0
     || new Set(aiReceipts.map(({ receiptId }) => receiptId)).size !== aiReceipts.length
     || aiReceipts.length > 0
@@ -1383,8 +1383,8 @@ function readOptionalDigest(value, code) {
   return value === null ? null : requireDigest(value, code);
 }
 
-function readOpenAiModel(value, code) {
-  if (typeof value !== 'string' || !openAiModels.has(value)) throw new Error(code);
+function readAlibabaModel(value, code) {
+  if (typeof value !== 'string' || !alibabaModels.has(value)) throw new Error(code);
   return value;
 }
 

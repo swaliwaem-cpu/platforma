@@ -40,7 +40,7 @@ test('Assistant source discovery reuses an active indexed project source before 
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      if (body.text.format.name === 'platforma_official_developer_candidate') {
+      if (body.response_format.json_schema.name === 'platforma_official_developer_candidate') {
         return developerResponse({
           canonicalUrl: 'https://developer.example/',
           officialDeveloperName: 'ФСК',
@@ -244,7 +244,7 @@ test('Assistant source discovery resolves a registered developer known path befo
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      if (body.text.format.name === 'platforma_official_developer_candidate') {
+      if (body.response_format.json_schema.name === 'platforma_official_developer_candidate') {
         return developerResponse({
           canonicalUrl: registryUrl,
           officialDeveloperName: 'ФСК',
@@ -745,7 +745,7 @@ test('Assistant source discovery exhausts deterministic catalog and known paths 
     discoveryEnvironment(),
     async (_url, init) => {
       const body = JSON.parse(init.body);
-      events.push(`provider:${body.text.format.name}`);
+      events.push(`provider:${body.response_format.json_schema.name}`);
       return projectNotFoundResponse(['https://developer.example/projects/']);
     },
     {
@@ -827,7 +827,7 @@ test('Assistant source discovery preserves a retryable catalog error before proj
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      return body.text.format.name === 'platforma_official_developer_candidate'
+      return body.response_format.json_schema.name === 'platforma_official_developer_candidate'
         ? developerResponse({
           canonicalUrl: registryUrl,
           officialDeveloperName: 'ФСК',
@@ -856,12 +856,12 @@ test('Assistant source discovery preserves a retryable catalog error before proj
     (error) => error.code === 'SOURCE_NETWORK_FAILED',
   );
   assert.equal(catalogFetches, 3);
-  assert.deepEqual(providerBodies.map(({ text, model }) => ({
-    phase: text.format.name,
+  assert.deepEqual(providerBodies.map(({ response_format, model }) => ({
+    phase: response_format.json_schema.name,
     model,
   })), [{
     phase: 'platforma_official_developer_candidate',
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
   }]);
 });
 
@@ -915,13 +915,13 @@ test('Assistant source discovery never widens an exact co.jp host to the public 
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      if (body.text.format.name === 'platforma_official_developer_candidate') {
+      if (body.response_format.json_schema.name === 'platforma_official_developer_candidate') {
         return developerResponse({
           canonicalUrl: 'https://www.x.example.co.jp/',
           officialDeveloperName: 'ФСК',
         }, ['https://www.x.example.co.jp/']);
       }
-      const candidateUrl = body.model === 'gpt-5.6-luna' ? nestedUrl : unrelatedUrl;
+      const candidateUrl = body.model === 'qwen-plus' ? nestedUrl : unrelatedUrl;
       return projectResponse({
         canonicalUrl: candidateUrl,
         officialProjectName: 'Amber City',
@@ -968,13 +968,15 @@ test('Assistant source discovery never widens an exact co.jp host to the public 
     'ASSISTANT_SOURCE_DISCOVERY_PROJECT_OUTSIDE_DEVELOPER_DOMAIN',
   );
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
+    'qwen-plus',
+    'qwen-plus',
+    'qwen-max',
   ]);
   const allowedDomains = providerBodies
-    .filter(({ text }) => text.format.name === 'platforma_official_project_candidate')
-    .flatMap(({ tools }) => tools[0].filters.allowed_domains);
+    .filter(({ response_format }) => (
+      response_format.json_schema.name === 'platforma_official_project_candidate'
+    ))
+    .flatMap((body) => JSON.parse(body.messages[1].content).verified_developer_hosts);
   assert.equal(allowedDomains.includes('x.example.co.jp'), true);
   assert.equal(allowedDomains.every((host) => (
     host === 'x.example.co.jp' || host === 'www.x.example.co.jp'
@@ -1130,9 +1132,9 @@ test('Assistant source discovery allows one Terra only after a seeded Luna candi
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      events.push(`provider:${body.model}:${body.text.format.name}`);
-      assert.equal(body.text.format.name, 'platforma_official_project_candidate');
-      const isFallback = body.model === 'gpt-5.6-terra';
+      events.push(`provider:${body.model}:${body.response_format.json_schema.name}`);
+      assert.equal(body.response_format.json_schema.name, 'platforma_official_project_candidate');
+      const isFallback = body.model === 'qwen-max';
       const canonicalUrl = isFallback ? correctUrl : wrongUrl;
       return projectResponse({
         canonicalUrl,
@@ -1179,27 +1181,36 @@ test('Assistant source discovery allows one Terra only after a seeded Luna candi
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.equal(result.canonicalUrl, correctUrl);
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
+    'qwen-plus',
+    'qwen-max',
   ]);
   for (const requestBody of providerBodies) {
-    assert.deepEqual(requestBody.reasoning, { effort: 'medium' });
-    assert.equal(requestBody.service_tier, 'default');
-    assert.equal(requestBody.max_output_tokens, 1_600);
-    assert.equal(requestBody.max_tool_calls, 1);
-    assert.equal(requestBody.tools[0].type, 'web_search');
-    assert.equal(requestBody.tools[0].search_context_size, 'low');
-    assert.deepEqual(requestBody.tools[0].filters.allowed_domains, [
+    assert.equal(requestBody.max_tokens, 1_600);
+    assert.equal(requestBody.response_format.type, 'json_schema');
+    assert.equal(
+      requestBody.response_format.json_schema.name,
+      'platforma_official_project_candidate',
+    );
+    assert.equal(requestBody.response_format.json_schema.strict, true);
+    assert.equal('service_tier' in requestBody, false);
+    assert.equal('reasoning' in requestBody, false);
+    assert.equal('tools' in requestBody, false);
+    assert.equal('max_tool_calls' in requestBody, false);
+    assert.equal('tool_choice' in requestBody, false);
+    assert.equal('include' in requestBody, false);
+    assert.equal('store' in requestBody, false);
+    const userInput = JSON.parse(requestBody.messages[1].content);
+    assert.deepEqual(userInput.verified_developer_hosts, [
       'developer.example',
       'www.developer.example',
     ]);
   }
   assert.deepEqual(result.telemetry.phases.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
+    'qwen-plus',
+    'qwen-max',
   ]);
   assert.ok(events.indexOf(`fetch:${wrongUrl}`) < events.findIndex((event) => (
-    event.startsWith('provider:gpt-5.6-terra:')
+    event.startsWith('provider:qwen-max:')
   )));
 });
 
@@ -1213,7 +1224,7 @@ test('Assistant source discovery requires Terra to provide its own allowed-host 
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      return body.model === 'gpt-5.6-luna'
+      return body.model === 'qwen-plus'
         ? projectResponse({
           canonicalUrl: wrongUrl,
           officialProjectName: 'Wrong project',
@@ -1264,8 +1275,8 @@ test('Assistant source discovery requires Terra to provide its own allowed-host 
   assert.equal(result.status, 'REJECTED', JSON.stringify(result, null, 2));
   assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CITATION_MISSING');
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
+    'qwen-plus',
+    'qwen-max',
   ]);
   assert.equal(fetchedUrls.includes(correctUrl), false);
 });
@@ -1319,35 +1330,51 @@ test('Assistant source discovery verifies the developer first and restricts proj
   assert.equal(result.telemetry.totalTokens, 66);
   assert.deepEqual(result.telemetry.phases.map(({ phase }) => phase), ['DEVELOPER', 'PROJECT']);
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].url, 'https://api.openai.com/v1/responses');
+  assert.equal(
+    calls[0].url,
+    'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
+  );
   assert.equal(calls[0].init.headers.Authorization, 'Bearer test-only');
 
   const developerRequest = JSON.parse(calls[0].init.body);
   const projectRequest = JSON.parse(calls[1].init.body);
-  assert.equal(developerRequest.model, 'gpt-5.6-luna');
-  assert.deepEqual(developerRequest.reasoning, { effort: 'medium' });
-  assert.equal(developerRequest.max_output_tokens, 1_600);
-  assert.deepEqual(developerRequest.tools, [{ type: 'web_search', search_context_size: 'low' }]);
-  assert.equal(developerRequest.service_tier, 'default');
-  assert.equal(developerRequest.max_tool_calls, 1);
-  assert.deepEqual(projectRequest.tools, [{
-    type: 'web_search',
-    search_context_size: 'low',
-    filters: { allowed_domains: ['developer.example', 'www.developer.example'] },
-  }]);
-  assert.match(projectRequest.instructions, /сначала подтвержден/u);
-  assert.match(projectRequest.instructions, /устарев/u);
-  assert.match(projectRequest.instructions, /транслит/u);
-  assert.match(projectRequest.instructions, /переимен/u);
-  assert.equal(projectRequest.model, 'gpt-5.6-luna');
-  assert.deepEqual(projectRequest.reasoning, { effort: 'medium' });
-  assert.equal(projectRequest.max_output_tokens, 1_600);
-  assert.equal(projectRequest.tool_choice, 'required');
-  assert.equal(projectRequest.service_tier, 'default');
-  assert.equal(projectRequest.max_tool_calls, 1);
-  assert.deepEqual(projectRequest.include, ['web_search_call.action.sources']);
-  assert.equal(projectRequest.text.format.type, 'json_schema');
-  assert.equal(projectRequest.store, false);
+  assert.equal(developerRequest.model, 'qwen-plus');
+  assert.equal(developerRequest.max_tokens, 1_600);
+  assert.equal(developerRequest.response_format.type, 'json_schema');
+  assert.equal(
+    developerRequest.response_format.json_schema.name,
+    'platforma_official_developer_candidate',
+  );
+  assert.equal(developerRequest.response_format.json_schema.strict, true);
+  assert.equal(developerRequest.messages[0].role, 'system');
+  assert.match(developerRequest.messages[0].content, /веб-поиск/u);
+  assert.equal(developerRequest.messages[1].role, 'user');
+  assert.equal('tools' in developerRequest, false);
+  assert.equal('service_tier' in developerRequest, false);
+  assert.equal('max_tool_calls' in developerRequest, false);
+  const projectSystemPrompt = projectRequest.messages[0].content;
+  const projectUserInput = JSON.parse(projectRequest.messages[1].content);
+  assert.deepEqual(projectUserInput.verified_developer_hosts, [
+    'developer.example',
+    'www.developer.example',
+  ]);
+  assert.match(projectSystemPrompt, /сначала подтвержден/u);
+  assert.match(projectSystemPrompt, /устарев/u);
+  assert.match(projectSystemPrompt, /транслит/u);
+  assert.match(projectSystemPrompt, /переимен/u);
+  assert.equal(projectRequest.model, 'qwen-plus');
+  assert.equal(projectRequest.max_tokens, 1_600);
+  assert.equal(projectRequest.response_format.type, 'json_schema');
+  assert.equal(
+    projectRequest.response_format.json_schema.name,
+    'platforma_official_project_candidate',
+  );
+  assert.equal('tool_choice' in projectRequest, false);
+  assert.equal('service_tier' in projectRequest, false);
+  assert.equal('max_tool_calls' in projectRequest, false);
+  assert.equal('include' in projectRequest, false);
+  assert.equal('store' in projectRequest, false);
+  assert.equal('reasoning' in projectRequest, false);
   assert.equal(JSON.stringify(projectRequest).includes('test-only'), false);
   assert.equal(connectorCalls[0].canonicalUrl, 'https://developer.example/');
   assert.equal(connectorCalls.at(-1).canonicalUrl, 'https://developer.example/projects/amber-city');
@@ -1379,15 +1406,16 @@ test('Assistant source discovery fails closed before project search when the dev
   assert.equal(connectorCalls, 0);
 });
 
-test('Assistant source discovery requires explicit OpenAI mode before a live provider call', () => {
+test('Assistant source discovery requires explicit Alibaba mode before a live provider call', () => {
   assert.throws(
     () => new AssistantSourceDiscoveryService({
       ...discoveryEnvironment(),
       ASSISTANT_AI_MODE: 'fake',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     }),
-    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_OPENAI_MODE_REQUIRED',
+    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_ALIBABA_MODE_REQUIRED',
   );
 });
 
@@ -1408,8 +1436,8 @@ test('Assistant source discovery never turns a transport failure into a Terra fa
   );
   assert.equal(providerBodies.length, 2);
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-luna',
+    'qwen-plus',
+    'qwen-plus',
   ]);
 });
 
@@ -1420,9 +1448,10 @@ test('Assistant source discovery reserves and settles every Luna retry before th
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     },
     async (_url, init) => {
       const body = JSON.parse(init.body);
@@ -1482,11 +1511,11 @@ test('Assistant source discovery reserves and settles every Luna retry before th
 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.deepEqual(events, [
-    'reserve:1:gpt-5.6-luna',
-    'http:1:gpt-5.6-luna',
+    'reserve:1:qwen-plus',
+    'http:1:qwen-plus',
     'settle:1:ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED',
-    'reserve:2:gpt-5.6-luna',
-    'http:2:gpt-5.6-luna',
+    'reserve:2:qwen-plus',
+    'http:2:qwen-plus',
     'settle:2:PROVIDER_SUCCESS',
   ]);
 });
@@ -1498,9 +1527,10 @@ test('Assistant source discovery stops after settlement failure without retry or
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     },
     async (_url, init) => {
       providerBodies.push(JSON.parse(init.body));
@@ -1549,29 +1579,23 @@ test('Assistant source discovery stops after settlement failure without retry or
   );
   assert.equal(reservations, 1);
   assert.equal(settlements, 1);
-  assert.deepEqual(providerBodies.map(({ model }) => model), ['gpt-5.6-luna']);
+  assert.deepEqual(providerBodies.map(({ model }) => model), ['qwen-plus']);
 });
 
-test('ZAEBAL4 source discovery reports every settled phase when a later tool contract fails', async () => {
+test('ZAEBAL4 source discovery reports every settled phase when the project transport fails', async () => {
   const providerBodies = [];
   const service = new AssistantSourceDiscoveryService(
     discoveryEnvironment(),
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      if (body.text.format.name === 'platforma_official_developer_candidate') {
+      if (body.response_format.json_schema.name === 'platforma_official_developer_candidate') {
         return developerResponse({
           canonicalUrl: 'https://developer.example/',
           officialDeveloperName: 'ФСК',
         }, ['https://developer.example/']);
       }
-      return openAiResponse({
-        status: 'FOUND',
-        canonicalUrl: 'https://developer.example/official/amber-city',
-        officialProjectName: 'Amber City',
-        matchKind: 'EXACT',
-        reason: 'Проект найден внутри официального контура застройщика.',
-      }, ['https://developer.example/official/amber-city'], 'resp_project_contract', 2);
+      throw new Error('simulated retryable project transport failure');
     },
     {
       async fetch(source) {
@@ -1589,19 +1613,20 @@ test('ZAEBAL4 source discovery reports every settled phase when a later tool con
   await assert.rejects(
     service.discover(project),
     (error) => {
-      assert.equal(error.code, 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED');
+      assert.equal(error.code, 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED');
       assert.deepEqual(error.phaseTelemetries.map(({ phase, webSearchCalls }) => ({
         phase,
         webSearchCalls,
       })), [
-        { phase: 'DEVELOPER', webSearchCalls: 1 },
-        { phase: 'PROJECT', webSearchCalls: 2 },
+        { phase: 'DEVELOPER', webSearchCalls: 0 },
+        { phase: 'PROJECT', webSearchCalls: null },
+        { phase: 'PROJECT', webSearchCalls: null },
       ]);
       return true;
     },
   );
-  assert.equal(providerBodies.length, 2);
-  assert.equal(providerBodies.some(({ model }) => model === 'gpt-5.6-terra'), false);
+  assert.equal(providerBodies.length, 3);
+  assert.equal(providerBodies.some(({ model }) => model === 'qwen-max'), false);
 });
 
 test('Assistant source discovery uses one Terra fallback after Luna fails local project validation', async () => {
@@ -1645,9 +1670,9 @@ test('Assistant source discovery uses one Terra fallback after Luna fails local 
 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
+    'qwen-plus',
+    'qwen-plus',
+    'qwen-max',
   ]);
   assert.equal(result.telemetry.phases.length, 3);
   assert.equal(result.canonicalUrl, 'https://developer.example/projects/amber-city');
@@ -1693,9 +1718,9 @@ test('Assistant source discovery stops before a fourth provider call for one pro
   );
   assert.equal(providerBodies.length, 3);
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-luna',
-    'gpt-5.6-luna',
+    'qwen-plus',
+    'qwen-plus',
+    'qwen-plus',
   ]);
 });
 
@@ -1781,7 +1806,7 @@ test('Assistant source discovery reports Terra exhaustion before fallback HTTP',
     }),
     (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_TERRA_BUDGET_EXHAUSTED',
   );
-  assert.deepEqual(providerBodies.map(({ model }) => model), ['gpt-5.6-luna']);
+  assert.deepEqual(providerBodies.map(({ model }) => model), ['qwen-plus']);
 });
 
 test('Assistant source discovery reports run USD exhaustion before retry reservation and HTTP', async () => {
@@ -1791,24 +1816,25 @@ test('Assistant source discovery reports run USD exhaustion before retry reserva
     officialName: 'ФСК',
   };
   const requestBody = createProjectDiscoveryRequestBody(
-    'gpt-5.6-luna',
+    'qwen-plus',
     project,
     developer,
   );
   const oneCallBudget = estimateAssistantAiCallCost({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
     maxOutputTokens: 1_600,
-    maxWebSearchCalls: 2,
+    maxWebSearchCalls: 0,
   }).estimatedUsd;
   let providerCalls = 0;
   let reservations = 0;
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     },
     async () => {
       providerCalls += 1;
@@ -1867,26 +1893,27 @@ test('Assistant source discovery keeps the run USD cap atomic across concurrent 
       developerName: 'ПИК',
     },
   ];
-  const firstRequest = createDeveloperDiscoveryRequestBody('gpt-5.6-luna', projects[0]);
+  const firstRequest = createDeveloperDiscoveryRequestBody('qwen-plus', projects[0]);
   const oneCallBudget = estimateAssistantAiCallCost({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     requestBytes: Buffer.byteLength(JSON.stringify(firstRequest), 'utf8'),
     maxOutputTokens: 1_600,
-    maxWebSearchCalls: 2,
+    maxWebSearchCalls: 0,
   }).estimatedUsd;
   let reservations = 0;
   let providerCalls = 0;
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     },
     async (_url, init) => {
       providerCalls += 1;
       const body = JSON.parse(init.body);
-      const providerInput = JSON.parse(body.input[0].content[0].text);
+      const providerInput = JSON.parse(body.messages[1].content);
       const developerUrl = `https://${providerInput.developer_key}.example/`;
       return developerResponse({
         canonicalUrl: developerUrl,
@@ -1957,10 +1984,10 @@ test('Assistant source discovery rejects a cited site that does not prove the de
   assert.equal(result.status, 'REJECTED');
   assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_MISMATCH');
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
+    'qwen-plus',
+    'qwen-max',
   ]);
-  assert.deepEqual(providerBodies[1].tools[0].filters.allowed_domains, [
+  assert.deepEqual(JSON.parse(providerBodies[1].messages[1].content).protected_official_hosts, [
     'developer.example',
     'www.developer.example',
   ]);
@@ -2014,11 +2041,11 @@ test('Assistant source discovery accepts one developer Terra fallback inside the
   assert.equal(result.developerCanonicalUrl, terraUrl);
   assert.equal(result.canonicalUrl, projectUrl);
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
-    'gpt-5.6-luna',
+    'qwen-plus',
+    'qwen-max',
+    'qwen-plus',
   ]);
-  assert.deepEqual(providerBodies[1].tools[0].filters.allowed_domains, [
+  assert.deepEqual(JSON.parse(providerBodies[1].messages[1].content).protected_official_hosts, [
     'developer.example',
     'www.developer.example',
   ]);
@@ -2034,7 +2061,7 @@ test('Assistant source discovery rejects a developer Terra candidate outside the
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      return body.model === 'gpt-5.6-luna'
+      return body.model === 'qwen-plus'
         ? developerResponse({
           canonicalUrl: lunaUrl,
           officialDeveloperName: 'ФСК',
@@ -2060,8 +2087,8 @@ test('Assistant source discovery rejects a developer Terra candidate outside the
     'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_OUTSIDE_ALLOWED_HOSTS',
   );
   assert.deepEqual(providerBodies.map(({ model }) => model), [
-    'gpt-5.6-luna',
-    'gpt-5.6-terra',
+    'qwen-plus',
+    'qwen-max',
   ]);
   assert.deepEqual(fetchedUrls, [lunaUrl]);
 });
@@ -2108,7 +2135,7 @@ test('Assistant source discovery expands an exact host only through a verified o
   const result = await service.discover(project);
 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
-  assert.deepEqual(calls[1].tools[0].filters.allowed_domains, [
+  assert.deepEqual(JSON.parse(calls[1].messages[1].content).verified_developer_hosts, [
     'mortgage.developer.example',
     'www.mortgage.developer.example',
     'developer.example',
@@ -2159,7 +2186,7 @@ test('Assistant source discovery keeps an explicitly official linked host when i
 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.equal(result.developerCanonicalUrl, 'https://catalog.developer.example/');
-  assert.deepEqual(calls[1].tools[0].filters.allowed_domains, [
+  assert.deepEqual(JSON.parse(calls[1].messages[1].content).verified_developer_hosts, [
     'catalog.developer.example',
     'www.catalog.developer.example',
     'developer.example',
@@ -2220,8 +2247,8 @@ test('Assistant source discovery does not expand trust when a linked catalog fai
   assert.equal(result.status, 'REJECTED', JSON.stringify(result, null, 2));
   assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_OUTSIDE_DEVELOPER_DOMAIN');
   assert.equal(providerBodies.length, 3);
-  assert.equal(providerBodies.slice(1).every(({ tools }) => (
-    tools[0].filters.allowed_domains.every((host) => (
+  assert.equal(providerBodies.slice(1).every((body) => (
+    JSON.parse(body.messages[1].content).verified_developer_hosts.every((host) => (
       host === 'developer.example' || host === 'www.developer.example'
     ))
   )), true);
@@ -2286,12 +2313,13 @@ test('Assistant source discovery does not trust an anti-bot sibling proposed onl
   assert.equal(result.errorCode, 'SOURCE_ANTI_BOT_CHALLENGE');
   assert.equal(result.telemetry.totalTokens, 66);
   assert.equal(result.telemetry.phases.length, 2);
-  assert.deepEqual(providerBodies[1].tools, [{
-    type: 'web_search',
-    search_context_size: 'low',
-    filters: { allowed_domains: ['developer.example', 'www.developer.example'] },
-  }]);
-  const alternativeInput = JSON.parse(providerBodies[1].input[0].content[0].text);
+  assert.equal('tools' in providerBodies[1], false);
+  assert.equal(providerBodies[1].max_tokens, 1_600);
+  assert.equal(
+    providerBodies[1].response_format.json_schema.name,
+    'platforma_official_developer_candidate',
+  );
+  const alternativeInput = JSON.parse(providerBodies[1].messages[1].content);
   assert.deepEqual(alternativeInput.protected_official_hosts, [
     'developer.example',
     'www.developer.example',
@@ -2353,7 +2381,7 @@ test('Assistant source discovery deduplicates concurrent developer verification 
     discoveryEnvironment(),
     async (_url, init) => {
       const body = JSON.parse(init.body);
-      const phase = body.text.format.name.includes('developer') ? 'DEVELOPER' : 'PROJECT';
+      const phase = body.response_format.json_schema.name.includes('developer') ? 'DEVELOPER' : 'PROJECT';
       providerPhases.push(phase);
       if (phase === 'DEVELOPER') {
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -2362,7 +2390,7 @@ test('Assistant source discovery deduplicates concurrent developer verification 
           officialDeveloperName: 'ФСК',
         }, ['https://developer.example/']);
       }
-      const input = JSON.parse(body.input[0].content[0].text);
+      const input = JSON.parse(body.messages[1].content);
       const isSecond = input.project_key_hint === 'amber-city-two';
       return projectResponse({
         canonicalUrl: `https://developer.example/projects/${isSecond ? 'amber-city-two' : 'amber-city'}`,
@@ -2429,7 +2457,7 @@ test('Assistant source discovery rejects a project URL without a citation from t
   assert.equal(fetchedUrls.every((value) => (
     ['developer.example', 'www.developer.example'].includes(new URL(value).hostname)
   )), true);
-  assert.equal(result.telemetry.phases.at(-1).model, 'gpt-5.6-terra');
+  assert.equal(result.telemetry.phases.at(-1).model, 'qwen-max');
 });
 
 test('Assistant source discovery accepts a standalone project site only through a link on the verified developer page', async () => {
@@ -2576,7 +2604,7 @@ test('Assistant source discovery does not trust a standalone domain proposed wit
   assert.equal(result.status, 'REJECTED');
   assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_OUTSIDE_DEVELOPER_DOMAIN');
   assert.equal(fetchedUrls.includes('https://cityzen.moscow/'), false);
-  assert.equal(result.telemetry.phases.at(-1).model, 'gpt-5.6-terra');
+  assert.equal(result.telemetry.phases.at(-1).model, 'qwen-max');
 });
 
 test('Assistant source discovery recognizes Russian and Latin phonetic brand variants such as СИТИДЗЕН and CITYZEN', async () => {
@@ -2782,10 +2810,18 @@ test('Assistant source discovery retries from a rendered developer catalog and g
   assert.match(result.reason, /динамическим каталогом/iu);
   assert.equal(result.telemetry.totalTokens, 99);
   assert.equal(result.telemetry.phases.length, 3);
-  assert.equal(providerBodies[1].tools[0].search_context_size, 'low');
-  assert.equal(providerBodies[2].tools[0].search_context_size, 'low');
-  assert.equal(providerBodies[2].model, 'gpt-5.6-terra');
-  const retryInput = JSON.parse(providerBodies[2].input[0].content[0].text);
+  assert.equal(
+    providerBodies[1].response_format.json_schema.name,
+    'platforma_official_project_candidate',
+  );
+  assert.equal(providerBodies[1].max_tokens, 1_600);
+  assert.equal(
+    providerBodies[2].response_format.json_schema.name,
+    'platforma_official_project_candidate',
+  );
+  assert.equal(providerBodies[2].max_tokens, 1_600);
+  assert.equal(providerBodies[2].model, 'qwen-max');
+  const retryInput = JSON.parse(providerBodies[2].messages[1].content);
   assert.equal(retryInput.verified_catalog_project_name, 'City Bay');
   assert.equal(retryInput.verified_catalog_project_code, 'citybay');
   assert.equal(connectorCalls.filter(({ canonicalUrl, connectorConfig }) => (
@@ -3058,13 +3094,13 @@ function twoPhaseService(options) {
 
 function discoveryEnvironment() {
   return {
-    OPENAI_API_KEY: 'test-only',
-    ASSISTANT_SOURCE_DISCOVERY_MODEL: 'gpt-5.6-luna',
+    ALIBABA_API_KEY: 'test-only',
+    ASSISTANT_SOURCE_DISCOVERY_MODEL: 'qwen-plus',
   };
 }
 
 function developerResponse(overrides, citations) {
-  return openAiResponse({
+  return chatCompletionResponse({
     status: 'FOUND',
     canonicalUrl: overrides.canonicalUrl,
     officialDeveloperName: overrides.officialDeveloperName,
@@ -3073,7 +3109,7 @@ function developerResponse(overrides, citations) {
 }
 
 function developerNotFoundResponse(citations) {
-  return openAiResponse({
+  return chatCompletionResponse({
     status: 'NOT_FOUND',
     canonicalUrl: null,
     officialDeveloperName: null,
@@ -3082,7 +3118,7 @@ function developerNotFoundResponse(citations) {
 }
 
 function projectResponse(overrides, citations) {
-  return openAiResponse({
+  return chatCompletionResponse({
     status: 'FOUND',
     canonicalUrl: overrides.canonicalUrl,
     officialProjectName: overrides.officialProjectName,
@@ -3092,7 +3128,7 @@ function projectResponse(overrides, citations) {
 }
 
 function projectNotFoundResponse(citations) {
-  return openAiResponse({
+  return chatCompletionResponse({
     status: 'NOT_FOUND',
     canonicalUrl: null,
     officialProjectName: null,
@@ -3101,30 +3137,22 @@ function projectNotFoundResponse(citations) {
   }, citations, 'resp_project');
 }
 
-function openAiResponse(candidate, citations, responseId, webSearchCallCount = 1) {
+function chatCompletionResponse(candidate, citations, responseId) {
   return new Response(JSON.stringify({
     id: responseId,
-    output: [
-      ...Array.from({ length: webSearchCallCount }, () => ({
-        type: 'web_search_call',
-        action: {
-          sources: citations.map((url) => ({ type: 'url', url })),
-        },
-      })),
-      {
-        type: 'message',
-        content: [{
-          type: 'output_text',
-          text: JSON.stringify(candidate),
-          annotations: citations.map((url) => ({ type: 'url_citation', url, title: 'Источник' })),
-        }],
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: JSON.stringify(candidate),
+        annotations: citations.map((url) => ({ type: 'url_citation', url, title: 'Источник' })),
       },
-    ],
+    }],
     usage: {
-      input_tokens: 20,
-      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-      output_tokens: 13,
-      output_tokens_details: { reasoning_tokens: 5 },
+      prompt_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 0 },
+      completion_tokens: 13,
+      completion_tokens_details: { reasoning_tokens: 5 },
       total_tokens: 33,
     },
   }), {

@@ -136,7 +136,7 @@ test('FIX-TOKEN keeps only indexes used by real budget, reconciliation and repor
       1,
       'SOURCE_DISCOVERY',
       ${planProvider},
-      'gpt-5.6-luna',
+      'qwen-plus',
       'default',
       'medium',
       'query-plan-prompt-v1',
@@ -144,7 +144,7 @@ test('FIX-TOKEN keeps only indexes used by real budget, reconciliation and repor
       false,
       'SETTLED',
       'ACCEPTED',
-      'openai-standard-pricing-2026-08-27',
+      'alibaba-dashscope-pricing-2026-09-13',
       'PRICED',
       CAST('0.00010000' AS numeric),
       CAST('0.00010000' AS numeric),
@@ -166,14 +166,14 @@ test('FIX-TOKEN keeps only indexes used by real budget, reconciliation and repor
       1,
       'SOURCE_DISCOVERY',
       ${planProvider},
-      'gpt-5.6-luna',
+      'qwen-plus',
       'default',
       'medium',
       'query-plan-prompt-v1',
       'query-plan-validator-v1',
       false,
       'RESERVED',
-      'openai-standard-pricing-2026-08-27',
+      'alibaba-dashscope-pricing-2026-09-13',
       'RESERVED',
       CAST('0.10000000' AS numeric),
       ${planUsageDate},
@@ -259,7 +259,7 @@ test('PIDAFIX1 persists an embedding reservation before provider work and settle
   const executionId = randomUUID();
   const reservation = await service.reserve({
     provider: embeddingProvider,
-    model: 'text-embedding-3-small',
+    model: 'text-embedding-v4',
     operation: 'EMBEDDING_RETRIEVAL',
     operationRunId,
     executionId,
@@ -274,11 +274,11 @@ test('PIDAFIX1 persists an embedding reservation before provider work and settle
   });
   assert.equal(beforeProvider.status, 'RESERVED');
   assert.equal(beforeProvider.operation, 'EMBEDDING_RETRIEVAL');
-  assert.equal(beforeProvider.pricingCatalogVersion, 'openai-embedding-pricing-2026-08-28');
+  assert.equal(beforeProvider.pricingCatalogVersion, 'alibaba-dashscope-embedding-pricing-2026-09-13');
 
   await service.settle({
     reservation,
-    actualModel: 'text-embedding-3-small',
+    actualModel: 'text-embedding-v4',
     outcome: 'ACCEPTED',
     errorCode: null,
     inputTokens: 1_000,
@@ -294,8 +294,8 @@ test('PIDAFIX1 persists an embedding reservation before provider work and settle
     where: { id: reservation.id },
   });
   assert.equal(settled.status, 'SETTLED');
-  assert.equal(settled.estimatedCostUsd.toFixed(8), '0.00002000');
-  assert.equal(settled.chargedCostUsd.toFixed(8), '0.00002000');
+  assert.equal(settled.estimatedCostUsd.toFixed(8), '0.00007000');
+  assert.equal(settled.chargedCostUsd.toFixed(8), '0.00007000');
 });
 
 test('PIDAFIX1 applies one atomic provider-day USD ceiling across planner and embeddings', async () => {
@@ -312,13 +312,13 @@ test('PIDAFIX1 applies one atomic provider-day USD ceiling across planner and em
   const race = await Promise.allSettled([
     service.reserve({
       ...common,
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       operation: 'PLANNER',
       attemptOrdinal: 1,
     }),
     service.reserve({
       ...common,
-      model: 'text-embedding-3-small',
+      model: 'text-embedding-v4',
       operation: 'EMBEDDING_RETRIEVAL',
       attemptOrdinal: 2,
     }),
@@ -338,12 +338,12 @@ test('PIDAFIX1 request caps allow two Luna and two Terra attempts but reject the
     now: eleventhDay,
     errorPrefix: 'ASSISTANT_MODEL',
   });
-  await reserveRequest('gpt-5.6-luna');
-  await reserveRequest('gpt-5.6-luna');
-  await reserveRequest('gpt-5.6-terra');
-  await reserveRequest('gpt-5.6-terra');
+  await reserveRequest('qwen-plus');
+  await reserveRequest('qwen-plus');
+  await reserveRequest('qwen-max');
+  await reserveRequest('qwen-max');
   await assert.rejects(
-    reserveRequest('gpt-5.6-luna'),
+    reserveRequest('qwen-plus'),
     (error) => error.code === 'ASSISTANT_MODEL_MINUTE_BUDGET_EXHAUSTED',
   );
   assert.equal(await prisma.assistantUsageMetric.count({
@@ -357,14 +357,14 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   const lunaExecutionId = randomUUID();
   const terraExecutionId = randomUUID();
   const luna = await reserve({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId: lunaRunId,
     executionId: lunaExecutionId,
     now: firstDay,
   });
   const terra = await reserve({
-    model: 'gpt-5.6-terra',
+    model: 'qwen-max',
     operation: 'SOURCE_DISCOVERY',
     operationRunId: terraRunId,
     executionId: terraExecutionId,
@@ -372,7 +372,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   });
 
   const race = await Promise.allSettled(Array.from({ length: 8 }, (_, index) => reserve({
-    model: index % 2 === 0 ? 'gpt-5.6-luna' : 'gpt-5.6-terra',
+    model: index % 2 === 0 ? 'qwen-plus' : 'qwen-max',
     operation: index % 2 === 0 ? 'SOURCE_DISCOVERY' : 'PLANNER',
     operationRunId: runId(`race-${index}`),
     executionId: randomUUID(),
@@ -396,7 +396,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   assert.equal(budget.settledCostUsd.toFixed(8), '0.00000000');
 
   const idempotentLuna = await reserve({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId: lunaRunId,
     executionId: lunaExecutionId,
@@ -408,7 +408,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   await assert.rejects(
     service.reserve({
       provider,
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       operation: 'PLANNER',
       operationRunId: lunaRunId,
       executionId: lunaExecutionId,
@@ -433,7 +433,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
 
   await service.settle({
     reservation: terra,
-    actualModel: 'gpt-5.6-terra',
+    actualModel: 'qwen-max',
     outcome: 'PROVIDER_ERROR',
     errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT',
     inputTokens: null,
@@ -448,11 +448,11 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
 
   const settledBudget = await readBudget(firstDay);
   assert.equal(settledBudget.reservedCostUsd.toFixed(8), '0.10000000');
-  assert.equal(settledBudget.settledCostUsd.toFixed(8), '0.10002890');
+  assert.equal(settledBudget.settledCostUsd.toFixed(8), '0.10005200');
 
   await assert.rejects(
     reserve({
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       operation: 'PLANNER',
       operationRunId: lunaRunId,
       executionId: lunaExecutionId,
@@ -462,7 +462,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   );
   const budgetAfterFinalizedReuse = await readBudget(firstDay);
   assert.equal(budgetAfterFinalizedReuse.reservedCostUsd.toFixed(8), '0.10000000');
-  assert.equal(budgetAfterFinalizedReuse.settledCostUsd.toFixed(8), '0.10002890');
+  assert.equal(budgetAfterFinalizedReuse.settledCostUsd.toFixed(8), '0.10005200');
   assert.equal(await prisma.assistantAiUsageAttempt.count({ where: { provider } }), 3);
 
   const attempts = await prisma.assistantAiUsageAttempt.findMany({
@@ -480,16 +480,16 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   const lunaAttempt = attempts.find(({ id }) => id === luna.id);
   const terraAttempt = attempts.find(({ id }) => id === terra.id);
   assert.equal(lunaAttempt.pricingStatus, 'PRICED');
-  assert.equal(lunaAttempt.cachedInputTokens, 20n);
-  assert.equal(lunaAttempt.cacheWriteInputTokens, 10n);
+  assert.equal(lunaAttempt.cachedInputTokens, 30n);
+  assert.equal(lunaAttempt.cacheWriteInputTokens, 0n);
   assert.equal(lunaAttempt.webSearchCalls, 0);
-  assert.equal(lunaAttempt.chargedCostUsd.toFixed(8), '0.00002890');
+  assert.equal(lunaAttempt.chargedCostUsd.toFixed(8), '0.00005200');
   assert.equal(terraAttempt.pricingStatus, 'USAGE_INCOMPLETE');
   assert.equal(terraAttempt.chargedCostUsd.toFixed(8), '0.10000000');
 
   await assert.rejects(
     reserve({
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       operation: 'PLANNER',
       operationRunId: runId('same-day-after-crash'),
       executionId: randomUUID(),
@@ -499,7 +499,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   );
 
   const rollover = await reserve({
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId: runId('utc-rollover'),
     executionId: randomUUID(),
@@ -514,7 +514,7 @@ test('FIX-TOKEN reserve retries reuse persisted server-derived dates', async () 
   const executionId = randomUUID();
   const input = {
     provider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId,
     executionId,
@@ -580,7 +580,7 @@ test('FIX-TOKEN derived expiry starts after a blocking daily-budget wait', async
   const reserveStartedAt = Date.now();
   const reservePromise = service.reserve({
     provider: expiryProvider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId,
     executionId,
@@ -613,7 +613,7 @@ test('FIX-TOKEN reserve rejects a mismatched explicit expiry', async () => {
   const reservationExpiresAt = new Date(eighthDay.getTime() + 300_000);
   const input = {
     provider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId,
     executionId,
@@ -647,7 +647,7 @@ test('FIX-TOKEN rejects a delayed reserve from an execution fenced by recovery',
   const expiredAt = new Date(recoveryNow.getTime() - 1);
   await service.reserve({
     provider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId,
     executionId: oldExecutionId,
@@ -670,7 +670,7 @@ test('FIX-TOKEN rejects a delayed reserve from an execution fenced by recovery',
   await assert.rejects(
     service.reserve({
       provider,
-      model: 'gpt-5.6-terra',
+      model: 'qwen-max',
       operation: 'PLANNER',
       operationRunId,
       executionId: oldExecutionId,
@@ -688,7 +688,7 @@ test('FIX-TOKEN rejects a delayed reserve from an execution fenced by recovery',
 
   const next = await service.reserve({
     provider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId,
     executionId: nextExecutionId,
@@ -710,7 +710,7 @@ test('FIX-TOKEN reconciliation evaluates expiry after waiting for the attempt lo
   const reservationExpiresAt = new Date(Date.now() + 1_000);
   const reservation = await service.reserve({
     provider: reconcileProvider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId,
     executionId,
@@ -773,8 +773,8 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
         "reserved_cost_usd", "usage_date"
       ) VALUES (
         CAST(${attemptId} AS uuid), ${operationRunId}, 1, 'PLANNER', ${provider},
-        'gpt-5.6-luna', 'medium', 'legacy-prompt-v1', 'legacy-validator-v1',
-        false, 'RESERVED', 'openai-standard-pricing-2026-08-27', 'RESERVED',
+        'qwen-plus', 'medium', 'legacy-prompt-v1', 'legacy-validator-v1',
+        false, 'RESERVED', 'alibaba-dashscope-pricing-2026-09-13', 'RESERVED',
         CAST('0.01000000' AS numeric), ${usageDate}
       )
       ON CONFLICT ("operation_run_id", "attempt_ordinal") DO NOTHING
@@ -819,7 +819,7 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
 test('FIX-TOKEN records an actual charge above reserve without hiding the overage', async () => {
   const reservation = await service.reserve({
     provider,
-    model: 'gpt-5.6-terra',
+    model: 'qwen-max',
     operation: 'SOURCE_DISCOVERY',
     operationRunId: runId('reserve-exceeded'),
     executionId: randomUUID(),
@@ -834,7 +834,7 @@ test('FIX-TOKEN records an actual charge above reserve without hiding the overag
 
   assert.equal(await service.settle({
     reservation,
-    actualModel: 'gpt-5.6-terra',
+    actualModel: 'qwen-max',
     outcome: 'ACCEPTED',
     errorCode: null,
     inputTokens: 1_000,
@@ -843,7 +843,7 @@ test('FIX-TOKEN records an actual charge above reserve without hiding the overag
     outputTokens: 100,
     reasoningTokens: 50,
     totalTokens: 1_100,
-    webSearchCalls: 1,
+    webSearchCalls: 0,
     durationMs: 250,
   }), true);
 
@@ -857,21 +857,22 @@ test('FIX-TOKEN records an actual charge above reserve without hiding the overag
   });
   assert.equal(attempt.pricingStatus, 'RESERVE_EXCEEDED');
   assert.equal(attempt.reservedCostUsd.toFixed(8), '0.00000100');
-  assert.equal(attempt.chargedCostUsd.toFixed(8), '0.01320000');
-  assert.equal((await readBudget(thirdDay)).settledCostUsd.toFixed(8), '0.01320000');
+  assert.equal(attempt.chargedCostUsd.toFixed(8), '0.00224000');
+  assert.equal((await readBudget(thirdDay)).settledCostUsd.toFixed(8), '0.00224000');
 });
 
-test('ZAEBAL4 PostgreSQL settles two returned Web Search calls before rejecting without retry', async () => {
+test('ZAEBAL4 PostgreSQL settles the reserved charge before rejecting an invalid response without retry', async () => {
   const operationRunId = runId('source-tool-contract');
   const executionId = randomUUID();
   let providerCalls = 0;
   let requestBody = null;
   const boundary = new AssistantSourceDiscoveryProviderBoundary({
     environment: {
-      OPENAI_API_KEY: 'bounded-local-postgres-stub',
-      ASSISTANT_AI_MODE: 'openai',
+      ALIBABA_API_KEY: 'bounded-local-postgres-stub',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      ASSISTANT_SOURCE_DISCOVERY_WEB_SEARCH_ACKNOWLEDGED: 'true',
     },
     async fetchImplementation(_url, init) {
       providerCalls += 1;
@@ -895,12 +896,12 @@ test('ZAEBAL4 PostgreSQL settles two returned Web Search calls before rejecting 
         outcome: null,
         chargedCostUsd: null,
       });
-      return sourceContractResponse(2);
+      return sourceContractResponse();
     },
     serviceOptions: {
       usageBudgets: {
         reserve(input) {
-          assert.equal(input.provider, 'openai');
+          assert.equal(input.provider, 'alibaba');
           return service.reserve({ ...input, provider: sourceContractProvider, now: twelfthDay });
         },
         settle(input) {
@@ -927,11 +928,15 @@ test('ZAEBAL4 PostgreSQL settles two returned Web Search calls before rejecting 
       boundary.requestCandidate({ phase: 'DEVELOPER', project })
     )),
     (error) => error instanceof AssistantSourceDiscoveryError
-      && error.code === 'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+      && error.code === 'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_INVALID',
   );
 
   assert.equal(providerCalls, 1);
-  assert.equal(requestBody.max_tool_calls, 1);
+  assert.equal(requestBody.model, 'qwen-plus');
+  assert.ok(Array.isArray(requestBody.messages));
+  assert.equal(requestBody.response_format?.type, 'json_schema');
+  assert.equal('max_tool_calls' in requestBody, false);
+  assert.equal('tools' in requestBody, false);
   const attempt = await prisma.assistantAiUsageAttempt.findFirstOrThrow({
     where: { operationRunId, executionId, attemptOrdinal: 1 },
     select: {
@@ -950,13 +955,14 @@ test('ZAEBAL4 PostgreSQL settles two returned Web Search calls before rejecting 
   assert.equal(attempt.executionId, executionId);
   assert.equal(attempt.attemptOrdinal, 1);
   assert.equal(attempt.status, 'SETTLED');
-  assert.equal(attempt.outcome, 'PROVIDER_CONTRACT_VIOLATION');
+  assert.equal(attempt.outcome, 'PROVIDER_ERROR');
   assert.equal(
     attempt.errorCode,
-    'ASSISTANT_SOURCE_DISCOVERY_TOOL_CALL_LIMIT_EXCEEDED',
+    'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_INVALID',
   );
-  assert.equal(attempt.webSearchCalls, 2);
+  assert.equal(attempt.webSearchCalls, null);
   assert.ok(attempt.reservedCostUsd.gte(attempt.chargedCostUsd));
+  assert.equal(attempt.chargedCostUsd.toFixed(8), attempt.reservedCostUsd.toFixed(8));
   const budget = await prisma.assistantAiDailyBudget.findUniqueOrThrow({
     where: {
       provider_usageDate: { provider: sourceContractProvider, usageDate: twelfthDay },
@@ -974,7 +980,7 @@ test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new executio
   const usageNow = new Date();
   const oldReservation = await service.reserve({
     provider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId: fixture.run.id,
     executionId: oldExecutionId,
@@ -1018,7 +1024,7 @@ test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new executio
       assert.notEqual(executionIdSeen, oldExecutionId);
       const reservation = await service.reserve({
         provider,
-        model: 'gpt-5.6-luna',
+        model: 'qwen-plus',
         operation: 'PLANNER',
         operationRunId: fixture.run.id,
         executionId: executionIdSeen,
@@ -1092,10 +1098,10 @@ test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new executio
   assert.match(oldAttempt.errorCode, /^ASSISTANT_AI_[A-Z0-9_]+$/u);
   assert.equal(oldAttempt.chargedCostUsd.toFixed(8), '0.10000000');
   assert.equal(newAttempt.outcome, 'ACCEPTED');
-  assert.equal(newAttempt.chargedCostUsd.toFixed(8), '0.00002890');
+  assert.equal(newAttempt.chargedCostUsd.toFixed(8), '0.00005200');
   const budget = await readBudget(oldReservation.usageDate);
   assert.equal(budget.reservedCostUsd.toFixed(8), '0.00000000');
-  assert.equal(budget.settledCostUsd.toFixed(8), '0.10002890');
+  assert.equal(budget.settledCostUsd.toFixed(8), '0.10005200');
 });
 
 test('FIX-TOKEN defers a recovered AssistantRun while its previous provider reservation is active', async () => {
@@ -1104,7 +1110,7 @@ test('FIX-TOKEN defers a recovered AssistantRun while its previous provider rese
   const reservationExpiresAt = new Date(Date.now() + 120_000);
   const reservation = await service.reserve({
     provider,
-    model: 'gpt-5.6-luna',
+    model: 'qwen-plus',
     operation: 'PLANNER',
     operationRunId: fixture.run.id,
     executionId: randomUUID(),
@@ -1151,7 +1157,7 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
   }), null);
   const gate = deferred();
   const reservationInputs = Array.from({ length: 8 }, (_, index) => ({
-    model: index % 2 === 0 ? 'gpt-5.6-luna' : 'gpt-5.6-terra',
+    model: index % 2 === 0 ? 'qwen-plus' : 'qwen-max',
     operation: index % 2 === 0 ? 'PLANNER' : 'SOURCE_DISCOVERY',
     operationRunId: runId(`reconcile-race-${index}`),
     executionId: randomUUID(),
@@ -1170,7 +1176,7 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
       reasoningEffort: 'medium',
       promptVersion: 'test-prompt-v1',
       validatorVersion: 'test-validator-v1',
-      isFallback: input.model === 'gpt-5.6-terra',
+      isFallback: input.model === 'qwen-max',
       reservationExpiresAt: new Date(fourthDay.getTime() + 30_000),
       now: fourthDay,
     });
@@ -1209,7 +1215,7 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
     true,
   );
 
-  const target = fulfilled.find(({ input }) => input.model === 'gpt-5.6-luna');
+  const target = fulfilled.find(({ input }) => input.model === 'qwen-plus');
   assert.ok(target);
   const reconciliationNow = new Date(fourthDay.getTime() + 120_000);
   const recoveryExecutionId = randomUUID();
@@ -1225,7 +1231,7 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
 
   const settledAttempt = await readAttemptSnapshot(target.reservation.id);
   const chargedCostUsd = settledAttempt.chargedCostUsd.toFixed(8);
-  assert.equal(['0.00002890', '0.05000000'].includes(chargedCostUsd), true);
+  assert.equal(['0.00005200', '0.05000000'].includes(chargedCostUsd), true);
   assert.equal(['ACCEPTED', 'UNKNOWN_AFTER_CRASH'].includes(settledAttempt.outcome), true);
   const afterRaceBudget = await readBudget(fourthDay);
   assert.equal(afterRaceBudget.reservedCostUsd.toFixed(8), '0.25000000');
@@ -1400,7 +1406,7 @@ function reserve({ model, operation, operationRunId, executionId, now }) {
     reasoningEffort: 'medium',
     promptVersion: 'test-prompt-v1',
     validatorVersion: 'test-validator-v1',
-    isFallback: model === 'gpt-5.6-terra',
+    isFallback: model === 'qwen-max',
     now,
   });
 }
@@ -1408,12 +1414,12 @@ function reserve({ model, operation, operationRunId, executionId, now }) {
 function settleLuna(reservation) {
   return service.settle({
     reservation,
-    actualModel: 'gpt-5.6-luna',
+    actualModel: 'qwen-plus',
     outcome: 'ACCEPTED',
     errorCode: null,
     inputTokens: 100,
-    cachedInputTokens: 20,
-    cacheWriteInputTokens: 10,
+    cachedInputTokens: 30,
+    cacheWriteInputTokens: 0,
     outputTokens: 10,
     reasoningTokens: 5,
     totalTokens: 110,
@@ -1443,37 +1449,10 @@ function explainPlanText(rows) {
   return JSON.stringify(plan);
 }
 
-function sourceContractResponse(webSearchCallCount) {
-  return new Response(JSON.stringify({
-    id: 'response-zaebal4-postgres',
-    model: 'gpt-5.6-luna',
-    output: [
-      {
-        type: 'message',
-        content: [{
-          type: 'output_text',
-          text: JSON.stringify({
-            status: 'FOUND',
-            canonicalUrl: 'https://developer.example/',
-            officialDeveloperName: 'ZAEBAL4 developer',
-            reason: 'Официальный сайт найден.',
-          }),
-        }],
-      },
-      ...Array.from({ length: webSearchCallCount }, (_, index) => ({
-        type: 'web_search_call',
-        id: `search-zaebal4-postgres-${index + 1}`,
-        action: { sources: [{ url: 'https://developer.example/' }] },
-      })),
-    ],
-    usage: {
-      input_tokens: 20,
-      input_tokens_details: { cached_tokens: 4, cache_write_tokens: 2 },
-      output_tokens: 10,
-      output_tokens_details: { reasoning_tokens: 3 },
-      total_tokens: 30,
-    },
-  }), {
+function sourceContractResponse() {
+  return new Response(JSON.stringify([
+    { id: 'response-zaebal4-postgres', unexpected: 'chat-completion-envelope' },
+  ]), {
     status: 200,
     headers: {
       'content-type': 'application/json',

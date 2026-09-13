@@ -534,7 +534,7 @@ async function discoverProjects(
             ? error.phaseTelemetries.length > 0
               ? aggregateTelemetry(error.phaseTelemetries)
               : {
-                provider: 'openai',
+                provider: 'alibaba',
                 model: ASSISTANT_SOURCE_DISCOVERY_MODEL,
                 requestId: error.requestId,
                 responseId: error.responseId,
@@ -958,8 +958,8 @@ function assertPaidCallsAllowed(environment) {
   if (environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
     throw new Error('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
   }
-  if (!environment.OPENAI_API_KEY?.trim()) {
-    throw new Error('OPENAI_API_KEY_MISSING');
+  if (!environment.ALIBABA_API_KEY?.trim()) {
+    throw new Error('ALIBABA_API_KEY_MISSING');
   }
 }
 

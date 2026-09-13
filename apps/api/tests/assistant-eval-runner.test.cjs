@@ -277,32 +277,32 @@ test('ZAEBAL6 runner rejects absent or invalid caps before touching product stat
   assert.equal('ASSISTANT_EVAL_ACCESS_TOKEN' in invalidEnvironment, false);
 });
 
-test('ZAEBAL6 provider coverage fails closed when OpenAI telemetry has no exact settled receipt', () => {
+test('ZAEBAL6 provider coverage fails closed when Alibaba telemetry has no exact settled receipt', () => {
   const { findAssistantEvalProviderCoverageViolations } = loadRunner();
   const runId = uuid(206_001);
   const runs = [{
     id: runId,
-    telemetryJson: [{ model: 'gpt-5-mini', outcome: 'ACCEPTED', totalTokens: 42 }],
+    telemetryJson: [{ model: 'qwen-plus', outcome: 'ACCEPTED', totalTokens: 42 }],
   }];
   const attempt = {
     operationRunId: runId,
     executionId: uuid(206_002),
     attemptOrdinal: 1,
     operation: 'PLANNER',
-    actualModel: 'gpt-5-mini',
+    actualModel: 'qwen-plus',
     status: 'SETTLED',
     outcome: 'ACCEPTED',
     totalTokens: 42n,
   };
 
-  assert.deepEqual(findAssistantEvalProviderCoverageViolations(runs, [attempt], 'openai'), []);
-  assert.deepEqual(findAssistantEvalProviderCoverageViolations(runs, [], 'openai'), [
+  assert.deepEqual(findAssistantEvalProviderCoverageViolations(runs, [attempt], 'alibaba'), []);
+  assert.deepEqual(findAssistantEvalProviderCoverageViolations(runs, [], 'alibaba'), [
     'ASSISTANT_EVAL_PROVIDER_RECEIPTS_INCOMPLETE',
   ]);
   assert.deepEqual(findAssistantEvalProviderCoverageViolations(runs, [{
     ...attempt,
     totalTokens: 41n,
-  }], 'openai'), ['ASSISTANT_EVAL_PROVIDER_RECEIPTS_INCOMPLETE']);
+  }], 'alibaba'), ['ASSISTANT_EVAL_PROVIDER_RECEIPTS_INCOMPLETE']);
   assert.deepEqual(findAssistantEvalProviderCoverageViolations(runs, [attempt], 'fake'), [
     'ASSISTANT_EVAL_PROVIDER_RECEIPTS_UNEXPECTED',
   ]);
@@ -425,11 +425,11 @@ test('ZAEBAL6 execute runtime accepts only a local disposable database and forbi
     ...fakeRuntimeContract(),
     provider: { ...fakeRuntimeContract().provider, queryPlannerLive: true },
   }, 'a'.repeat(64), validLimits()), /ASSISTANT_EVAL_RUNTIME_HANDSHAKE_INVALID/u);
-  const openAiContract = {
+  const alibabaContract = {
     ...fakeRuntimeContract(),
     provider: {
       ...fakeRuntimeContract().provider,
-      aiMode: 'openai',
+      aiMode: 'alibaba',
       dailyBudgetUsd: '1.00000000',
       queryPlannerLive: true,
       paidCallsConfirmed: true,
@@ -437,21 +437,21 @@ test('ZAEBAL6 execute runtime accepts only a local disposable database and forbi
     },
   };
   assert.doesNotThrow(() => assertAssistantEvalRuntimeHandshake(
-    openAiContract,
+    alibabaContract,
     'a'.repeat(64),
     validLimits(),
   ));
   assert.throws(() => assertAssistantEvalRuntimeHandshake({
-    ...openAiContract,
-    provider: { ...openAiContract.provider, dailyBudgetUsd: '1.00000001' },
+    ...alibabaContract,
+    provider: { ...alibabaContract.provider, dailyBudgetUsd: '1.00000001' },
   }, 'a'.repeat(64), validLimits()), /ASSISTANT_EVAL_RUNTIME_BUDGET_EXCEEDS_CAP/u);
   assert.throws(() => assertAssistantEvalRuntimeHandshake({
-    ...openAiContract,
-    runtime: { ...openAiContract.runtime, openAiBaseUrlOfficial: false },
+    ...alibabaContract,
+    runtime: { ...alibabaContract.runtime, alibabaBaseUrlOfficial: false },
   }, 'a'.repeat(64), validLimits()), /ASSISTANT_EVAL_RUNTIME_HANDSHAKE_INVALID/u);
   assert.throws(() => assertAssistantEvalRuntimeHandshake({
-    ...openAiContract,
-    provider: { ...openAiContract.provider, dailyBudgetUsd: 'not-usd' },
+    ...alibabaContract,
+    provider: { ...alibabaContract.provider, dailyBudgetUsd: 'not-usd' },
   }, 'a'.repeat(64), validLimits()), /ASSISTANT_EVAL_RUNTIME_HANDSHAKE_INVALID/u);
 });
 
@@ -1156,10 +1156,10 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
     receiptId: uuid(620_000 + (index * 2) + 1),
     executionId: uuid(620_000 + (index * 2) + 2),
     attemptOrdinal: 1,
-    provider: 'openai',
+    provider: 'alibaba',
     operation: 'PLANNER',
-    requestedModel: 'gpt-5.6-luna',
-    actualModel: 'gpt-5.6-luna',
+    requestedModel: 'qwen-plus',
+    actualModel: 'qwen-plus',
     status: 'SETTLED',
     outcome: 'ACCEPTED',
     errorCode: null,
@@ -1186,7 +1186,7 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
     completedRunCount: 200,
     modelRequestCount: 200,
     effectiveCostUsd: '0.00000000',
-    providerMode: 'openai',
+    providerMode: 'alibaba',
     runtimeConfigSha256: 'b'.repeat(64),
     releaseSha: '1'.repeat(40),
     releaseImageIdentity: `sha256:${'c'.repeat(64)}`,
@@ -1263,10 +1263,10 @@ test('ZAEBAL6 evidence bundle correlates run, revision, receipt and quality prov
       receiptId: uuid(620_001),
       executionId: uuid(620_002),
       attemptOrdinal: 1,
-      provider: 'openai',
+      provider: 'alibaba',
       operation: 'PLANNER',
-      requestedModel: 'gpt-5.6-luna',
-      actualModel: 'gpt-5.6-luna',
+      requestedModel: 'qwen-plus',
+      actualModel: 'qwen-plus',
       status: 'SETTLED',
       outcome: 'ACCEPTED',
       errorCodeDigest: null,
@@ -1581,7 +1581,7 @@ test('ZAEBAL6 evidence receipt loader assigns safe AI and geo attempts to their 
           executionId: uuid(640_002),
           attemptOrdinal: 1,
           operation: 'PLANNER',
-          provider: 'openai',
+          provider: 'alibaba',
           requestedModel: 'fake-model',
           actualModel: 'fake-model',
           status: 'SETTLED',
@@ -1638,7 +1638,7 @@ test('ZAEBAL6 evidence receipt loader assigns safe AI and geo attempts to their 
     receiptId: uuid(640_001),
     executionId: uuid(640_002),
     attemptOrdinal: 1,
-    provider: 'openai',
+    provider: 'alibaba',
     operation: 'PLANNER',
     requestedModel: 'fake-model',
     actualModel: 'fake-model',
@@ -1768,7 +1768,7 @@ function fakeRuntimeContract() {
       sourceDiscoveryLive: false,
       embeddingMode: 'fake',
       embeddingLive: false,
-      openAiBaseUrlOfficial: true,
+      alibabaBaseUrlOfficial: true,
     },
   };
 }

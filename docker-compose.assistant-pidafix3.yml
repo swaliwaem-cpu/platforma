@@ -59,7 +59,7 @@ services:
       LOCATIONIQ_API_URL: http://127.0.0.1:9/locationiq
       ASSISTANT_OVERPASS_ENABLED: "false"
       ASSISTANT_OVERPASS_URL: http://127.0.0.1:9/overpass
-      ASSISTANT_OPENAI_BASE_URL: http://127.0.0.1:9/openai
+      ASSISTANT_ALIBABA_BASE_URL: http://127.0.0.1:9/alibaba
       OPENROUTESERVICE_API_URL: http://127.0.0.1:9/openrouteservice
       ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: "false"
       ASSISTANT_SOURCE_WORKER_ENABLED: "false"

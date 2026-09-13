@@ -162,7 +162,7 @@ function createSafeEnvironment(baseEnvironment, overrides = {}) {
     ASSISTANT_SOURCE_BROWSER_FALLBACK_ENABLED: 'false',
     LOCATIONIQ_API_URL: 'http://127.0.0.1:9/locationiq',
     ASSISTANT_OVERPASS_URL: 'http://127.0.0.1:9/overpass',
-    ASSISTANT_OPENAI_BASE_URL: 'http://127.0.0.1:9/openai',
+    ASSISTANT_ALIBABA_BASE_URL: 'http://127.0.0.1:9/alibaba',
     OPENROUTESERVICE_API_URL: 'http://127.0.0.1:9/openrouteservice',
     MAP_PROVIDER_ENABLED: 'false',
     S3_ENDPOINT: 'http://127.0.0.1:9',
@@ -177,7 +177,7 @@ function createSafeEnvironment(baseEnvironment, overrides = {}) {
 }
 
 function isSensitiveOrLiveKey(key) {
-  return /(?:^|_)(?:OPENAI_API_KEY|LOCATIONIQ_API_KEY|TELEGRAM_BOT_TOKEN|SMTP_PASSWORD|DATABASE_URL|ASSISTANT_.*LIVE|ASSISTANT_PAID_CALLS_CONFIRMED|ASSISTANT_FIX_GEO1_LIVE_ALLOW_REMOTE|AWS_.*|.*SECRET|.*PASSWORD|.*ACCESS_TOKEN)$/iu.test(key)
+  return /(?:^|_)(?:OPENAI_API_KEY|ALIBABA_API_KEY|LOCATIONIQ_API_KEY|TELEGRAM_BOT_TOKEN|SMTP_PASSWORD|DATABASE_URL|ASSISTANT_.*LIVE|ASSISTANT_PAID_CALLS_CONFIRMED|ASSISTANT_FIX_GEO1_LIVE_ALLOW_REMOTE|AWS_.*|.*SECRET|.*PASSWORD|.*ACCESS_TOKEN)$/iu.test(key)
     || /(?:TOKEN|API_KEY)$/iu.test(key)
     || /^(?:S3_|MINIO_|TRAINING_AUDIO_BUCKET$)/iu.test(key);
 }

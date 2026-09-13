@@ -21,8 +21,8 @@ export { extractAssistantLogicalPredicates } from './assistant-logical-plan';
 export type { AssistantLogicalPredicateV1 } from './assistant-logical-plan';
 export type { AssistantDialogMessage } from './assistant-dialog';
 
-export const ASSISTANT_LUNA_MODEL = 'gpt-5.6-luna';
-export const ASSISTANT_TERRA_MODEL = 'gpt-5.6-terra';
+export const ASSISTANT_LUNA_MODEL = 'qwen-plus';
+export const ASSISTANT_TERRA_MODEL = 'qwen-max';
 
 const filterKeys = [
   'budgetMinRub',
@@ -152,7 +152,7 @@ export type AssistantPlannerUsagePolicy = {
 };
 
 export type AssistantPlannerTelemetry = {
-  provider: 'fake' | 'openai';
+  provider: 'fake' | 'alibaba';
   model: string;
   reasoningEffort: AssistantReasoningEffort;
   outcome: 'ACCEPTED' | 'LOCAL_VALIDATION_FAILED' | 'PROVIDER_ERROR';
@@ -173,7 +173,7 @@ export type AssistantPlannerTelemetry = {
 
 export type AssistantPlannerGatewayResult = {
   output: unknown;
-  provider?: 'fake' | 'openai';
+  provider?: 'fake' | 'alibaba';
   requestId?: string | null;
   responseId?: string | null;
   httpStatus?: number | null;
@@ -1156,13 +1156,13 @@ function createTelemetry(
 }
 
 function readPlannerGatewayFailure(error: unknown): {
-  provider: 'fake' | 'openai';
+  provider: 'fake' | 'alibaba';
   errorCode: string;
   requestId: string | null;
   responseId: string | null;
   httpStatus: number | null;
 } | null {
-  if (!isRecord(error) || (error.provider !== 'openai' && error.provider !== 'fake')) return null;
+  if (!isRecord(error) || (error.provider !== 'alibaba' && error.provider !== 'fake')) return null;
   const errorCode = readNullableBoundedString(error.code, 120);
   if (!errorCode) return null;
   return {

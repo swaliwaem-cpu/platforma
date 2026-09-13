@@ -23,7 +23,7 @@ const {
   validateAssistantObjectAnswer,
 } = require('../dist/assistant/catalog/assistant-object-answer.js');
 const {
-  AssistantOpenAiPlannerGateway,
+  AssistantAlibabaPlannerGateway,
   createAssistantPlannerGateway,
 } = require('../dist/assistant/assistant-planner-gateway.js');
 const {
@@ -62,8 +62,8 @@ test('Assistant T02 planner routes ordinary and complex requests to the required
   assert.deepEqual(
     calls.map(({ model, reasoningEffort }) => [model, reasoningEffort]),
     [
-      ['gpt-5.6-luna', 'medium'],
-      ['gpt-5.6-luna', 'high'],
+      ['qwen-plus', 'medium'],
+      ['qwen-plus', 'high'],
     ],
   );
 });
@@ -73,7 +73,7 @@ test('Assistant T02 planner allows exactly one Terra medium fallback after local
   const planner = new AssistantQueryPlanner({
     async plan(request) {
       calls.push(request);
-      if (request.model === 'gpt-5.6-luna') return { taskType: 'SEARCH' };
+      if (request.model === 'qwen-plus') return { taskType: 'SEARCH' };
       return validIntent({ hardFilters: { ...emptyFilters(), rooms: [2] } });
     },
   });
@@ -84,15 +84,15 @@ test('Assistant T02 planner allows exactly one Terra medium fallback after local
   assert.deepEqual(
     calls.map(({ model, reasoningEffort }) => [model, reasoningEffort]),
     [
-      ['gpt-5.6-luna', 'medium'],
-      ['gpt-5.6-terra', 'medium'],
+      ['qwen-plus', 'medium'],
+      ['qwen-max', 'medium'],
     ],
   );
   assert.deepEqual(
     result.telemetry.map(({ model, outcome, isFallback }) => [model, outcome, isFallback]),
     [
-      ['gpt-5.6-luna', 'LOCAL_VALIDATION_FAILED', false],
-      ['gpt-5.6-terra', 'ACCEPTED', true],
+      ['qwen-plus', 'LOCAL_VALIDATION_FAILED', false],
+      ['qwen-max', 'ACCEPTED', true],
     ],
   );
 });
@@ -261,7 +261,7 @@ test('FIX-GEO2 rejects an invented planner clarification and uses Terra only as 
   const planner = new AssistantQueryPlanner({
     async plan(request) {
       calls.push(request.model);
-      return request.model === 'gpt-5.6-luna'
+      return request.model === 'qwen-plus'
         ? validLogicalIntent({
             needsClarification: true,
             clarificationQuestion: 'Уточните место.',
@@ -274,7 +274,7 @@ test('FIX-GEO2 rejects an invented planner clarification and uses Terra only as 
   const result = await planner.plan({ messages: ['Покажи доступные квартиры'], context: null });
 
   assert.equal(result.intent.needsClarification, false);
-  assert.deepEqual(calls, ['gpt-5.6-luna', 'gpt-5.6-terra']);
+  assert.deepEqual(calls, ['qwen-plus', 'qwen-max']);
 });
 
 test('FIX-GEO2 rejects invented plan values and preserves a grounded soft preference', async () => {
@@ -282,7 +282,7 @@ test('FIX-GEO2 rejects invented plan values and preserves a grounded soft prefer
   const planner = new AssistantQueryPlanner({
     async plan(request) {
       calls.push(request.model);
-      if (request.model === 'gpt-5.6-luna') {
+      if (request.model === 'qwen-plus') {
         return validLogicalIntent({
           comparisonTargets: ['Выдуманный ЖК'],
           hardFilters: { ...emptyFilters(), developer: 'Выдуманный девелопер' },
@@ -299,7 +299,7 @@ test('FIX-GEO2 rejects invented plan values and preserves a grounded soft prefer
     context: null,
   });
 
-  assert.deepEqual(calls, ['gpt-5.6-luna', 'gpt-5.6-terra']);
+  assert.deepEqual(calls, ['qwen-plus', 'qwen-max']);
   assert.equal(result.intent.hardFilters.metro, null);
   assert.equal(result.intent.softPreferences.metro, 'Спортивная');
 });
@@ -1392,7 +1392,7 @@ test('Assistant T02 fake Luna planner extracts supported Platforma conditions wi
   assert.equal(result.intent.hardFilters.completionYearMax, 2028);
   assert.equal(result.intent.needsClarification, false);
   assert.deepEqual(result.telemetry.map(({ provider, model, reasoningEffort }) => [provider, model, reasoningEffort]), [
-    ['fake', 'gpt-5.6-luna', 'medium'],
+    ['fake', 'qwen-plus', 'medium'],
   ]);
 });
 
@@ -1413,7 +1413,7 @@ test('Assistant T02 planner records bounded usage telemetry without exposing it 
     async plan() {
       return {
         output: validIntent({ hardFilters: { ...emptyFilters(), budgetMaxRub: 20_000_000, rooms: [1], metro: 'Сокол' } }),
-        provider: 'openai',
+        provider: 'alibaba',
         requestId: 'request-safe',
         responseId: 'response-safe',
         httpStatus: 200,
@@ -1432,8 +1432,8 @@ test('Assistant T02 planner records bounded usage telemetry without exposing it 
 
   assert.equal(result.intent.provider, undefined);
   assert.deepEqual(result.telemetry[0], {
-    provider: 'openai',
-    model: 'gpt-5.6-luna',
+    provider: 'alibaba',
+    model: 'qwen-plus',
     reasoningEffort: 'medium',
     outcome: 'ACCEPTED',
     errorCode: null,
@@ -1464,13 +1464,13 @@ test('Assistant T02 planner uses the same single fallback budget for downstream 
   const result = await planner.planWithValidation(
     { messages: ['Однушка до 20 млн у метро Сокол'], context: null },
     async (_intent, request) => {
-      if (request.model === 'gpt-5.6-luna') throw new AssistantAnswerValidationError('ASSISTANT_LINK_INVALID');
+      if (request.model === 'qwen-plus') throw new AssistantAnswerValidationError('ASSISTANT_LINK_INVALID');
       return 'validated-answer';
     },
   );
 
   assert.equal(result.value, 'validated-answer');
-  assert.deepEqual(calls, ['gpt-5.6-luna', 'gpt-5.6-terra']);
+  assert.deepEqual(calls, ['qwen-plus', 'qwen-max']);
   assert.deepEqual(result.telemetry.map(({ outcome, isFallback }) => [outcome, isFallback]), [
     ['LOCAL_VALIDATION_FAILED', false],
     ['ACCEPTED', true],
@@ -1496,24 +1496,25 @@ test('Assistant T02 planner does not turn a database failure into a Terra fallba
       && error.code === 'ASSISTANT_PLANNER_PIPELINE_FAILED'
       && error.telemetry.length === 1,
   );
-  assert.deepEqual(calls, ['gpt-5.6-luna']);
+  assert.deepEqual(calls, ['qwen-plus']);
 });
 
-test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates the real response shape', async () => {
+test('Assistant T02 Alibaba gateway uses a bounded local HTTP stub and validates the real response shape', async () => {
   await withHttpStub(async (request, response) => {
     const body = await readRequestBody(request);
-    assert.equal(body.model, 'gpt-5.6-luna');
-    assert.equal(body.service_tier, 'default');
-    assert.equal(body.reasoning.effort, 'medium');
-    assert.equal(body.store, false);
-    assert.equal(body.max_output_tokens, 2_500);
+    assert.equal(body.model, 'qwen-plus');
+    assert.equal(body.max_tokens, 2_500);
+    assert.equal(body.messages[0].role, 'system');
+    assert.equal(body.messages[1].role, 'user');
     assert.equal(body.tools, undefined);
     assert.equal(body.tool_choice, undefined);
-    assert.equal(body.max_tool_calls, undefined);
     assert.equal(body.include, undefined);
-    assert.equal(JSON.stringify(body.text.format.schema).includes('uniqueItems'), false);
-    assert.equal(JSON.stringify(body.text.format.schema).includes('"oneOf"'), false);
-    const predicates = body.text.format.schema.properties.predicates.items.anyOf;
+    assert.equal(body.response_format.type, 'json_schema');
+    assert.equal(body.response_format.json_schema.strict, true);
+    const schema = body.response_format.json_schema.schema;
+    assert.equal(JSON.stringify(schema).includes('uniqueItems'), false);
+    assert.equal(JSON.stringify(schema).includes('"oneOf"'), false);
+    const predicates = schema.properties.predicates.items.anyOf;
     assert.deepEqual(predicates.map((branch) => branch.properties.type.enum), [['SPATIAL'], ['TRAVEL_TIME']]);
     response.writeHead(200, {
       'content-type': 'application/json',
@@ -1521,24 +1522,24 @@ test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates 
     });
     response.end(JSON.stringify({
       id: 'stub-response-id',
-      output: [{ content: [{ type: 'output_text', text: JSON.stringify(validIntent()) }] }],
+      choices: [{ message: { role: 'assistant', content: JSON.stringify(validIntent()) } }],
       usage: {
-        input_tokens: 12,
-        output_tokens: 8,
+        prompt_tokens: 12,
+        completion_tokens: 8,
         total_tokens: 20,
-        output_tokens_details: { reasoning_tokens: 3 },
+        completion_tokens_details: { reasoning_tokens: 3 },
       },
     }));
   }, async (baseUrl) => {
-    const gateway = new AssistantOpenAiPlannerGateway('stub-key', fetch, baseUrl, 1_000);
+    const gateway = new AssistantAlibabaPlannerGateway('stub-key', fetch, baseUrl, 1_000);
     const result = await gateway.plan({
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       reasoningEffort: 'medium',
       messages: ['Нужна квартира'],
       context: null,
     });
 
-    assert.equal(result.provider, 'openai');
+    assert.equal(result.provider, 'alibaba');
     assert.equal(result.requestId, 'stub-request-id');
     assert.equal(result.responseId, 'stub-response-id');
     assert.equal(result.totalTokens, 20);
@@ -1546,8 +1547,8 @@ test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates 
   });
 });
 
-test('Assistant T02 OpenAI gateway keeps its timeout active while reading the response body', async () => {
-  const gateway = new AssistantOpenAiPlannerGateway(
+test('Assistant T02 Alibaba gateway keeps its timeout active while reading the response body', async () => {
+  const gateway = new AssistantAlibabaPlannerGateway(
     'stub-key',
     createAbortableDelayedJsonFetch(),
     'http://openai.test',
@@ -1555,17 +1556,17 @@ test('Assistant T02 OpenAI gateway keeps its timeout active while reading the re
   );
   await assert.rejects(
     gateway.plan({
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       reasoningEffort: 'medium',
       messages: ['Нужна квартира'],
       context: null,
     }),
-    (error) => error.code === 'ASSISTANT_OPENAI_TIMEOUT',
+    (error) => error.code === 'ASSISTANT_ALIBABA_TIMEOUT',
   );
 });
 
-test('Assistant T02 planner preserves OpenAI provider failure classification in private telemetry', async () => {
-  const planner = new AssistantQueryPlanner(new AssistantOpenAiPlannerGateway(
+test('Assistant T02 planner preserves Alibaba provider failure classification in private telemetry', async () => {
+  const planner = new AssistantQueryPlanner(new AssistantAlibabaPlannerGateway(
     'stub-key',
     createAbortableDelayedJsonFetch({ 'x-request-id': 'timeout-request-id' }),
     'http://openai.test',
@@ -1574,9 +1575,9 @@ test('Assistant T02 planner preserves OpenAI provider failure classification in 
   await assert.rejects(
     planner.plan({ messages: ['Нужна квартира'], context: null }),
     (error) => {
-      assert.equal(error.code, 'ASSISTANT_OPENAI_TIMEOUT');
-      assert.equal(error.telemetry[0].provider, 'openai');
-      assert.equal(error.telemetry[0].errorCode, 'ASSISTANT_OPENAI_TIMEOUT');
+      assert.equal(error.code, 'ASSISTANT_ALIBABA_TIMEOUT');
+      assert.equal(error.telemetry[0].provider, 'alibaba');
+      assert.equal(error.telemetry[0].errorCode, 'ASSISTANT_ALIBABA_TIMEOUT');
       assert.equal(error.telemetry[0].requestId, 'timeout-request-id');
       return true;
     },
@@ -1695,7 +1696,7 @@ test('FIX-GEO2 ambiguous planned place asks one bounded clarification without Te
   assert.deepEqual(result.answer, { kind: 'CLARIFICATION', reason: 'AMBIGUOUS_PLACE' });
   assert.equal(resolveCalls, 1);
   assert.equal(searchCalls, 0);
-  assert.deepEqual(result.telemetry.map(({ model }) => model), ['gpt-5.6-luna']);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-plus']);
 });
 
 test('FIX-GEO2 missing walking routes returns structured UNAVAILABLE without Terra', async () => {
@@ -1737,7 +1738,7 @@ test('FIX-GEO2 missing walking routes returns structured UNAVAILABLE without Ter
   });
 
   assert.deepEqual(result.answer, { kind: 'UNAVAILABLE', reason: 'ROUTING' });
-  assert.deepEqual(result.telemetry.map(({ model }) => model), ['gpt-5.6-luna']);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-plus']);
 });
 
 test('FIX-GEO2 planner provider failure returns structured UNAVAILABLE without Terra', async () => {
@@ -1756,7 +1757,7 @@ test('FIX-GEO2 planner provider failure returns structured UNAVAILABLE without T
 
   assert.deepEqual(result.answer, { kind: 'UNAVAILABLE', reason: 'PROVIDER' });
   assert.equal(plannerCalls, 1);
-  assert.deepEqual(result.telemetry.map(({ model }) => model), ['gpt-5.6-luna']);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-plus']);
 });
 
 test('FIX-GEO2 settles known planner usage even when planning or execution exhausts the deadline', async () => {
@@ -1766,7 +1767,7 @@ test('FIX-GEO2 settles known planner usage even when planning or execution exhau
     const planner = new AssistantQueryPlanner({
       async plan() {
         if (expiresDuring === 'planner') deadlineAt.setTime(0);
-        return { output: validLogicalIntent(), provider: 'openai', inputTokens: 120, outputTokens: 30, totalTokens: 150 };
+        return { output: validLogicalIntent(), provider: 'alibaba', inputTokens: 120, outputTokens: 30, totalTokens: 150 };
       },
     }, {
       async beforeAttempt() { return 'reservation'; },

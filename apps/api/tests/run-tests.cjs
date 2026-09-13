@@ -18,6 +18,7 @@ environment.ASSISTANT_EMBEDDING_LIVE = 'false';
 environment.ASSISTANT_PAID_CALLS_CONFIRMED = 'false';
 environment.ASSISTANT_GEO_PROVIDER_MODE = 'fake';
 delete environment.OPENAI_API_KEY;
+delete environment.ALIBABA_API_KEY;
 delete environment.LOCATIONIQ_API_KEY;
 
 const result = spawnSync(process.execPath, ['--test', ...testFiles], {

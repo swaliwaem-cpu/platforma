@@ -7,22 +7,24 @@ import {
   isAssistantExternalKnowledgeFactRequest,
   isAssistantObjectKnowledgeFactRequest,
   isAssistantObjectCatalogRequest,
+  ASSISTANT_TERRA_MODEL,
   type AssistantPlannerGateway,
   type AssistantPlannerGatewayResult,
   type AssistantPlannerRequest,
   type AssistantLogicalPlanV1,
 } from './assistant-query-planner';
-import { ASSISTANT_AI_SERVICE_TIER } from './operations/assistant-ai-cost';
 import { assistantFiltersHaveConflict } from './assistant-plan-grounding';
 
 type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
-type AssistantAiMode = 'fake' | 'openai';
+type AssistantAiMode = 'fake' | 'alibaba';
+export type AssistantAlibabaStructuredOutput = 'json_schema' | 'json_object';
 
 const assistantPlannerSchema = createAssistantPlannerSchema();
 export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-logical-plan-v1';
+export const ASSISTANT_ALIBABA_DEFAULT_BASE_URL = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 
 export class AssistantPlannerGatewayError extends Error {
-  readonly provider = 'openai' as const;
+  readonly provider = 'alibaba' as const;
 
   constructor(
     readonly code: string,
@@ -47,15 +49,27 @@ export function createAssistantPlannerGateway(
   if (environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
     throw new AssistantPlannerGatewayError('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
   }
-  const apiKey = environment.OPENAI_API_KEY?.trim() ?? '';
-  if (!apiKey) throw new AssistantPlannerGatewayError('OPENAI_API_KEY_MISSING');
-  const baseUrl = environment.ASSISTANT_OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
-  const timeoutMs = readAssistantOpenAiTimeoutMs(environment);
-  return new AssistantOpenAiPlannerGateway(apiKey, fetchImplementation, baseUrl, timeoutMs);
+  const apiKey = environment.ALIBABA_API_KEY?.trim() ?? '';
+  if (!apiKey) throw new AssistantPlannerGatewayError('ALIBABA_API_KEY_MISSING');
+  const baseUrl = environment.ASSISTANT_ALIBABA_BASE_URL?.trim() || ASSISTANT_ALIBABA_DEFAULT_BASE_URL;
+  const timeoutMs = readAssistantAlibabaTimeoutMs(environment);
+  const structuredOutput = readAssistantAlibabaStructuredOutput(environment);
+  return new AssistantAlibabaPlannerGateway(apiKey, fetchImplementation, baseUrl, timeoutMs, structuredOutput);
 }
 
-export function readAssistantOpenAiTimeoutMs(environment: AssistantEnvironment = process.env) {
-  return readBoundedInteger(environment.ASSISTANT_OPENAI_TIMEOUT_MS, 20_000, 1_000, 120_000);
+export function readAssistantAlibabaTimeoutMs(environment: AssistantEnvironment = process.env) {
+  return readBoundedInteger(environment.ASSISTANT_ALIBABA_TIMEOUT_MS, 20_000, 1_000, 120_000);
+}
+
+export function readAssistantAlibabaStructuredOutput(
+  environment: AssistantEnvironment = process.env,
+): AssistantAlibabaStructuredOutput {
+  const normalized = (environment.ASSISTANT_ALIBABA_STRUCTURED_OUTPUT ?? 'json_schema')
+    .trim().toLocaleLowerCase('en-US');
+  if (normalized !== 'json_schema' && normalized !== 'json_object') {
+    throw new AssistantPlannerGatewayError('ASSISTANT_ALIBABA_STRUCTURED_OUTPUT_INVALID');
+  }
+  return normalized;
 }
 
 export class AssistantFakePlannerGateway implements AssistantPlannerGateway {
@@ -75,12 +89,13 @@ export class AssistantFakePlannerGateway implements AssistantPlannerGateway {
   }
 }
 
-export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
+export class AssistantAlibabaPlannerGateway implements AssistantPlannerGateway {
   constructor(
     private readonly apiKey: string,
     private readonly fetchImplementation: typeof fetch = fetch,
-    private readonly baseUrl = 'https://api.openai.com/v1',
+    private readonly baseUrl = ASSISTANT_ALIBABA_DEFAULT_BASE_URL,
     private readonly timeoutMs = 20_000,
+    private readonly structuredOutput: AssistantAlibabaStructuredOutput = 'json_schema',
   ) {}
 
   async plan(request: AssistantPlannerRequest): Promise<AssistantPlannerGatewayResult> {
@@ -95,36 +110,39 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
     const timeout = setTimeout(() => controller.abort(), Math.min(this.timeoutMs, remainingMs));
     const clientRequestId = createClientRequestId(request);
     try {
-      const response = await this.fetchImplementation(`${this.baseUrl.replace(/\/$/u, '')}/responses`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          'X-Client-Request-Id': clientRequestId,
+      const response = await this.fetchImplementation(
+        `${this.baseUrl.replace(/\/$/u, '')}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+            'X-Client-Request-Id': clientRequestId,
+          },
+          body: JSON.stringify(createAssistantPlannerRequestBody(request, this.structuredOutput)),
+          signal: controller.signal,
         },
-        body: JSON.stringify(createAssistantPlannerRequestBody(request)),
-        signal: controller.signal,
-      });
+      );
       const requestId = readBoundedString(response.headers.get('x-request-id'), 160);
       let value: unknown;
       try {
         value = await response.json();
       } catch {
         if (controller.signal.aborted) {
-          throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_TIMEOUT', requestId, null, response.status);
+          throw new AssistantPlannerGatewayError('ASSISTANT_ALIBABA_TIMEOUT', requestId, null, response.status);
         }
-        throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE', requestId, null, response.status);
+        throw new AssistantPlannerGatewayError('ASSISTANT_ALIBABA_MALFORMED_RESPONSE', requestId, null, response.status);
       }
       if (!response.ok) {
-        throw new AssistantPlannerGatewayError(`ASSISTANT_OPENAI_HTTP_${response.status}`, requestId, null, response.status);
+        throw new AssistantPlannerGatewayError(`ASSISTANT_ALIBABA_HTTP_${response.status}`, requestId, null, response.status);
       }
       if (!isRecord(value)) {
-        throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE', requestId, null, response.status);
+        throw new AssistantPlannerGatewayError('ASSISTANT_ALIBABA_MALFORMED_RESPONSE', requestId, null, response.status);
       }
-      const outputText = readOutputText(value.output);
+      const outputText = readChatCompletionContent(value.choices);
       if (!outputText) {
         throw new AssistantPlannerGatewayError(
-          'ASSISTANT_OPENAI_OUTPUT_MISSING',
+          'ASSISTANT_ALIBABA_OUTPUT_MISSING',
           requestId,
           readBoundedString(value.id, 160),
           response.status,
@@ -137,10 +155,10 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
       } catch {
         output = null;
       }
-      const usage = parseAssistantOpenAiUsage(value);
+      const usage = parseAssistantAlibabaUsage(value);
       return {
         output,
-        provider: 'openai',
+        provider: 'alibaba',
         requestId,
         responseId: readBoundedString(value.id, 160),
         httpStatus: response.status,
@@ -151,8 +169,8 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
       throw new AssistantPlannerGatewayError(controller.signal.aborted
         ? deadlineLimitsRequest
           ? 'ASSISTANT_EXECUTION_DEADLINE_EXCEEDED'
-          : 'ASSISTANT_OPENAI_TIMEOUT'
-        : 'ASSISTANT_OPENAI_NETWORK_ERROR');
+          : 'ASSISTANT_ALIBABA_TIMEOUT'
+        : 'ASSISTANT_ALIBABA_NETWORK_ERROR');
     } finally {
       clearTimeout(timeout);
     }
@@ -276,51 +294,55 @@ export function createAssistantPlannerSchema() {
   };
 }
 
-export function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
+export function createAssistantPlannerRequestBody(
+  request: AssistantPlannerRequest,
+  structuredOutput: AssistantAlibabaStructuredOutput = 'json_schema',
+) {
   return {
     model: request.model,
-    service_tier: ASSISTANT_AI_SERVICE_TIER,
-    reasoning: { effort: request.reasoningEffort },
-    store: false,
-    max_output_tokens: 2_500,
-    instructions: [
-      `Contract: ${ASSISTANT_PLANNER_PROMPT_VERSION}.`,
-      'Ты Query Planner внутренней Platforma по недвижимости.',
-      'Преобразуй полный сырой русскоязычный диалог в строгий AssistantLogicalPlanV1.',
-      'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
-      'Не возвращай SQL, координаты или цепочку tool calls.',
-      'Не выдумывай названия, числа, единицы, цены, наличие, ссылки или факты: все значения плана должны присутствовать в диалоге.',
-      'Для поиска внутри названного места используй только SPATIAL/INSIDE/PLACE.',
-      'Для ограничения пешего времени до ближайшего метро используй только TRAVEL_TIME/WALK/NEAREST_METRO/LTE и минуты.',
-      'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
-      'Для общего поиска, списка или обзорной карточки объектов, ЖК, БЦ и МФК по внутреннему каталогу Platforma выбери OBJECT.',
-      'Для текущих квартир, лотов, цен и наличия выбери SEARCH.',
-      'Для ипотеки, рассрочки, акций, архитектуры, инфраструктуры и иных подтверждаемых фактов о проекте выбери FACT.',
-      'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны только для SEARCH и COMPARE; для OBJECT requiredFacts пуст.',
-      'Для явного сравнения двух ЖК или застройщиков заполни comparisonTargets двумя точными названиями.',
-      'Не требуй бюджет, комнатность или локацию, если пользователь их не указал.',
-      'Уточнение допустимо только для неоднозначного места, отсутствующего числового значения или конфликтующих hard conditions.',
-    ].join(' '),
-    input: [{
-      role: 'user',
-      content: [{
-        type: 'input_text',
-        text: JSON.stringify({
+    max_tokens: 2_500,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          `Contract: ${ASSISTANT_PLANNER_PROMPT_VERSION}.`,
+          'Ты Query Planner внутренней Platforma по недвижимости.',
+          'Преобразуй полный сырой русскоязычный диалог в строгий AssistantLogicalPlanV1.',
+          'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
+          'Не возвращай SQL, координаты или цепочку tool calls.',
+          'Не выдумывай названия, числа, единицы, цены, наличие, ссылки или факты: все значения плана должны присутствовать в диалоге.',
+          'Для поиска внутри названного места используй только SPATIAL/INSIDE/PLACE.',
+          'Для ограничения пешего времени до ближайшего метро используй только TRAVEL_TIME/WALK/NEAREST_METRO/LTE и минуты.',
+          'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
+          'Для общего поиска, списка или обзорной карточки объектов, ЖК, БЦ и МФК по внутреннему каталогу Platforma выбери OBJECT.',
+          'Для текущих квартир, лотов, цен и наличия выбери SEARCH.',
+          'Для ипотеки, рассрочки, акций, архитектуры, инфраструктуры и иных подтверждаемых фактов о проекте выбери FACT.',
+          'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны только для SEARCH и COMPARE; для OBJECT requiredFacts пуст.',
+          'Для явного сравнения двух ЖК или застройщиков заполни comparisonTargets двумя точными названиями.',
+          'Не требуй бюджет, комнатность или локацию, если пользователь их не указал.',
+          'Уточнение допустимо только для неоднозначного места, отсутствующего числового значения или конфликтующих hard conditions.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
           trust_boundary: 'UNTRUSTED_USER_TEXT',
           dialog: request.dialog
             ?? request.messages.map((content) => ({ role: 'USER', content })),
           page_context: request.context,
         }),
-      }],
-    }],
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'platforma_assistant_intent',
-        strict: true,
-        schema: assistantPlannerSchema,
       },
-    },
+    ],
+    response_format: structuredOutput === 'json_schema'
+      ? {
+          type: 'json_schema',
+          json_schema: {
+            name: 'platforma_assistant_intent',
+            strict: true,
+            schema: assistantPlannerSchema,
+          },
+        }
+      : { type: 'json_object' },
   };
 }
 
@@ -366,24 +388,22 @@ function createDeterministicIntent(messages: string[]): AssistantLogicalPlanV1 {
 }
 
 function createClientRequestId(request: AssistantPlannerRequest) {
-  const suffix = request.model.endsWith('luna') ? 'luna' : 'terra';
+  const suffix = request.model === ASSISTANT_TERRA_MODEL ? 'terra' : 'luna';
   return `assistant-planner-${suffix}-${Date.now()}`.slice(0, 160);
 }
 
-function readOutputText(value: unknown) {
+function readChatCompletionContent(value: unknown) {
   if (!Array.isArray(value)) return null;
-  for (const item of value) {
-    if (!isRecord(item) || !Array.isArray(item.content)) continue;
-    for (const content of item.content) {
-      if (isRecord(content) && content.type === 'output_text' && typeof content.text === 'string') {
-        return content.text;
-      }
+  for (const choice of value) {
+    if (!isRecord(choice) || !isRecord(choice.message)) continue;
+    if (typeof choice.message.content === 'string' && choice.message.content.length > 0) {
+      return choice.message.content;
     }
   }
   return null;
 }
 
-export function parseAssistantOpenAiUsage(value: unknown) {
+export function parseAssistantAlibabaUsage(value: unknown) {
   if (!isRecord(value)) {
     return {
       inputTokens: null,
@@ -396,22 +416,20 @@ export function parseAssistantOpenAiUsage(value: unknown) {
     };
   }
   const usage = isRecord(value.usage) ? value.usage : null;
-  const inputDetails = usage && isRecord(usage.input_tokens_details)
-    ? usage.input_tokens_details
+  const promptDetails = usage && isRecord(usage.prompt_tokens_details)
+    ? usage.prompt_tokens_details
     : null;
-  const outputDetails = usage && isRecord(usage.output_tokens_details)
-    ? usage.output_tokens_details
+  const completionDetails = usage && isRecord(usage.completion_tokens_details)
+    ? usage.completion_tokens_details
     : null;
   return {
-    inputTokens: readTokenCount(usage?.input_tokens),
-    cachedInputTokens: readTokenCount(inputDetails?.cached_tokens),
-    cacheWriteInputTokens: readTokenCount(inputDetails?.cache_write_tokens),
-    outputTokens: readTokenCount(usage?.output_tokens),
-    reasoningTokens: readTokenCount(outputDetails?.reasoning_tokens),
+    inputTokens: readTokenCount(usage?.prompt_tokens),
+    cachedInputTokens: readTokenCount(promptDetails?.cached_tokens),
+    cacheWriteInputTokens: 0,
+    outputTokens: readTokenCount(usage?.completion_tokens),
+    reasoningTokens: readTokenCount(completionDetails?.reasoning_tokens),
     totalTokens: readTokenCount(usage?.total_tokens),
-    webSearchCalls: Array.isArray(value.output)
-      ? value.output.filter((item) => isRecord(item) && item.type === 'web_search_call').length
-      : null,
+    webSearchCalls: 0,
   };
 }
 
@@ -421,7 +439,7 @@ function readTokenCount(value: unknown) {
 
 function readAssistantAiMode(environment: AssistantEnvironment): AssistantAiMode {
   const mode = (environment.ASSISTANT_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US');
-  if (mode !== 'fake' && mode !== 'openai') throw new AssistantPlannerGatewayError('ASSISTANT_AI_MODE_INVALID');
+  if (mode !== 'fake' && mode !== 'alibaba') throw new AssistantPlannerGatewayError('ASSISTANT_AI_MODE_INVALID');
   return mode;
 }
 
@@ -434,7 +452,7 @@ function readBoundedInteger(
   if (value === undefined || value === '') return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
-    throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_TIMEOUT_MS_INVALID');
+    throw new AssistantPlannerGatewayError('ASSISTANT_ALIBABA_TIMEOUT_MS_INVALID');
   }
   return parsed;
 }

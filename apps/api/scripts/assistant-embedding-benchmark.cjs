@@ -44,7 +44,7 @@ async function runAssistantEmbeddingBenchmark(input = {}) {
   const ledger = input.ledger ?? createDefaultLedger(environment, operationTimeoutMs);
   const createGateway = input.createGateway ?? ((candidate) => new AssistantEmbeddingGateway({
     ...environment,
-    ASSISTANT_EMBEDDING_MODE: 'openai',
+    ASSISTANT_EMBEDDING_MODE: 'alibaba',
     ASSISTANT_EMBEDDING_MODEL: candidate.model,
     ASSISTANT_EMBEDDING_DIMENSIONS: String(candidate.dimensions),
     ASSISTANT_MODEL_DAILY_BUDGET_USD: limits.maximumCostUsd,
@@ -240,8 +240,8 @@ function assertLiveReadiness(environment, plan, limits) {
   if (environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
     throw new Error('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
   }
-  if (typeof environment.OPENAI_API_KEY !== 'string' || !environment.OPENAI_API_KEY.trim()) {
-    throw new Error('OPENAI_API_KEY_REQUIRED');
+  if (typeof environment.ALIBABA_API_KEY !== 'string' || !environment.ALIBABA_API_KEY.trim()) {
+    throw new Error('ALIBABA_API_KEY_REQUIRED');
   }
   if (environment.NODE_ENV === 'production'
     || environment.DEPLOYMENT_ENV === 'production'

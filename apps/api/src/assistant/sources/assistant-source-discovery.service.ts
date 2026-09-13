@@ -1265,7 +1265,7 @@ function telemetryFromPhases(
 ): AssistantSourceDiscoveryTelemetry {
   if (phases.length > 0) return aggregateTelemetry(phases);
   return {
-    provider: 'openai',
+    provider: 'alibaba',
     model,
     requestId: null,
     responseId: null,

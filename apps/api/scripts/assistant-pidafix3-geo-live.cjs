@@ -170,9 +170,9 @@ function validateFakeBaselineReport(report, expected) {
   assert.equal(report.cleanup?.exactImageTagsRemoved, true,
     'PIDAFIX3_GEO_LIVE_BASELINE_IMAGES_REMAIN');
   assert.equal(report.externalProviderEvidence?.status, 'verified', 'PIDAFIX3_GEO_LIVE_BASELINE_EGRESS_UNVERIFIED');
-  assert.deepEqual(report.externalProviderEvidence?.calls, { openai: 0, locationiq: 0, overpass: 0 });
+  assert.deepEqual(report.externalProviderEvidence?.calls, { alibaba: 0, locationiq: 0, overpass: 0 });
   assert.deepEqual(report.externalProviderEvidence?.persistedUsageAttempts,
-    { openai: 0, locationiq: 0, overpass: 0 });
+    { alibaba: 0, locationiq: 0, overpass: 0 });
   assert.equal(report.externalProviderEvidence?.deniedRemoteRequests, 0);
   assert.equal(report.costUsd, 0, 'PIDAFIX3_GEO_LIVE_BASELINE_COST_INVALID');
   return true;

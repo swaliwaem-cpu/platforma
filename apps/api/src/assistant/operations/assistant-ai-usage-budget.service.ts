@@ -66,7 +66,7 @@ const assistantAiReservationSafetyMs = 5_000;
 const assistantAiSettlementAttempts = 3;
 
 export class AssistantAiUsageBudgetError extends Error {
-  readonly provider = 'openai' as const;
+  readonly provider = 'alibaba' as const;
 
   constructor(
     readonly code: string,

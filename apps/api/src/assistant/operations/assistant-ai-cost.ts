@@ -1,9 +1,9 @@
-export const ASSISTANT_AI_PRICING_CATALOG_VERSION = 'openai-standard-pricing-2026-08-27';
-export const ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION = 'openai-embedding-pricing-2026-08-28';
+export const ASSISTANT_AI_PRICING_CATALOG_VERSION = 'alibaba-dashscope-pricing-2026-09-13';
+export const ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION = 'alibaba-dashscope-embedding-pricing-2026-09-13';
 export const ASSISTANT_AI_SERVICE_TIER = 'default';
 
 const usdScale = 100_000_000n;
-const longContextThreshold = 272_000;
+const longContextThreshold = 256_000;
 const webSearchCallUsdUnits = 1_000_000n;
 
 type AssistantAiPricingTier = 'standard' | 'long';
@@ -15,20 +15,23 @@ type AssistantAiRates = {
   output: bigint;
 };
 
+// Rates are USD units (1e-8 USD) per token, DashScope international list prices.
+// qwen-plus: 0-256K $0.40/$1.20 per 1M, 256K-1M $1.20/$3.60 (non-thinking mode).
+// qwen-max: no tiers, $1.60/$6.40 per 1M. Neither model advertises a context
+// caching discount, so cached/cache-write tokens are billed at the standard input rate.
 const pricingCatalog: Record<string, Record<AssistantAiPricingTier, AssistantAiRates>> = {
-  'gpt-5.6-luna': {
-    standard: { input: 20n, cachedInput: 2n, cacheWriteInput: 25n, output: 120n },
-    long: { input: 40n, cachedInput: 4n, cacheWriteInput: 50n, output: 180n },
+  'qwen-plus': {
+    standard: { input: 40n, cachedInput: 40n, cacheWriteInput: 40n, output: 120n },
+    long: { input: 120n, cachedInput: 120n, cacheWriteInput: 120n, output: 360n },
   },
-  'gpt-5.6-terra': {
-    standard: { input: 200n, cachedInput: 20n, cacheWriteInput: 250n, output: 1_200n },
-    long: { input: 400n, cachedInput: 40n, cacheWriteInput: 500n, output: 1_800n },
+  'qwen-max': {
+    standard: { input: 160n, cachedInput: 160n, cacheWriteInput: 160n, output: 640n },
+    long: { input: 160n, cachedInput: 160n, cacheWriteInput: 160n, output: 640n },
   },
 };
 
 const embeddingPricingCatalog: Record<string, { maximumDimensions: number; input: bigint }> = {
-  'text-embedding-3-small': { maximumDimensions: 1_536, input: 2n },
-  'text-embedding-3-large': { maximumDimensions: 3_072, input: 13n },
+  'text-embedding-v4': { maximumDimensions: 2_048, input: 7n },
 };
 
 export type AssistantAiCostInput = {

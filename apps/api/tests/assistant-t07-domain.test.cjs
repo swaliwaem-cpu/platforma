@@ -201,7 +201,7 @@ test('Assistant T07 fake planner routes every frozen mortgage current-fact case 
     const result = await planner.plan({
       messages: [item.query],
       context: item.context,
-      model: 'gpt-5.6-terra',
+      model: 'qwen-max',
       reasoningEffort: 'medium',
     });
     assert.equal(result.output.taskType, 'FACT', item.id);
@@ -1167,7 +1167,7 @@ test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider 
     ASSISTANT_EMBEDDING_MODE: 'fake',
     ASSISTANT_RELEASE_SHA: '1'.repeat(40),
     ASSISTANT_RELEASE_IMAGE_IDENTITY: 'none',
-    OPENAI_API_KEY: 'must-not-leak',
+    ALIBABA_API_KEY: 'must-not-leak',
   };
 
   const contract = createAssistantEvalRuntimeContract(databaseIdentity, environment);
@@ -1199,7 +1199,7 @@ test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider 
     sourceDiscoveryLive: false,
     embeddingMode: 'fake',
     embeddingLive: false,
-    openAiBaseUrlOfficial: true,
+    alibabaBaseUrlOfficial: true,
   });
   assert.equal(JSON.stringify(contract).includes('must-not-leak'), false);
   assert.notEqual(
@@ -1224,7 +1224,7 @@ test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider 
   assert.notEqual(
     createAssistantEvalRuntimeContract(databaseIdentity, {
       ...environment,
-      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_AI_MODE: 'alibaba',
       ASSISTANT_MODEL_DAILY_BUDGET_USD: '1.00',
       ASSISTANT_QUERY_PLANNER_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
@@ -1835,7 +1835,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
     pricingStatus: 'PRICED',
     reservedCostUsd: '0.03000000',
     chargedCostUsd: '0.02000000',
-    webSearchCalls: 1,
+    webSearchCalls: 0,
   };
   assert.deepEqual(assessAssistantProviderBudgetContract([cleanAttempt]), {
     passed: true,
@@ -1848,8 +1848,8 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
     ...cleanAttempt,
     operationRunId: 'zaebal4-rollout-actual-model-alias',
     operation: 'PLANNER',
-    requestedModel: 'gpt-5.6-luna',
-    actualModel: 'gpt-5.6-luna-2026-08-01',
+    requestedModel: 'qwen-plus',
+    actualModel: 'qwen-plus-2026-08-01',
     inputTokens: 20n,
     cachedInputTokens: 4n,
     cacheWriteInputTokens: 2n,
@@ -1862,7 +1862,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
     operations: ['PLANNER'],
     reportedUsage: [{
       operationRunId: 'zaebal4-rollout-actual-model-alias',
-      model: 'gpt-5.6-luna-2026-08-01',
+      model: 'qwen-plus-2026-08-01',
       inputTokens: 20,
       cachedInputTokens: 4,
       cacheWriteInputTokens: 2,
@@ -1903,7 +1903,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       operationRunId: usageMismatchRunId,
       executionId: '44444444-4444-4444-8444-444444444443',
       operation: 'PLANNER',
-      requestedModel: 'gpt-5.6-luna',
+      requestedModel: 'qwen-plus',
       status: 'SETTLED',
       outcome: 'UNKNOWN_AFTER_CRASH',
       pricingStatus: 'USAGE_INCOMPLETE',
@@ -1922,7 +1922,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       executionId: '44444444-4444-4444-8444-444444444444',
       attemptOrdinal: 2,
       operation: 'EMBEDDING_RETRIEVAL',
-      requestedModel: 'text-embedding-3-small',
+      requestedModel: 'text-embedding-v4',
       inputTokens: 8n,
       cachedInputTokens: 0n,
       cacheWriteInputTokens: 0n,
@@ -1937,7 +1937,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       operationRunId: usageMismatchRunId,
       executionId: '44444444-4444-4444-8444-444444444444',
       operation: 'PLANNER',
-      requestedModel: 'gpt-5.6-luna',
+      requestedModel: 'qwen-plus',
       inputTokens: 20n,
       cachedInputTokens: 4n,
       cacheWriteInputTokens: 2n,
@@ -1956,7 +1956,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
     }],
     reportedUsage: [{
       operationRunId: usageMismatchRunId,
-      model: 'gpt-5.6-luna',
+      model: 'qwen-plus',
       inputTokens: 21,
       cachedInputTokens: 4,
       cacheWriteInputTokens: 2,
@@ -2007,7 +2007,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       executionId: '55555555-5555-4555-8555-555555555555',
       attemptOrdinal: 1,
       operation: 'PLANNER',
-      requestedModel: 'gpt-5.6-luna',
+      requestedModel: 'qwen-plus',
       inputTokens: 10n,
       cachedInputTokens: 0n,
       cacheWriteInputTokens: 0n,
@@ -2022,7 +2022,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       executionId: '55555555-5555-4555-8555-555555555555',
       attemptOrdinal: 2,
       operation: 'PLANNER',
-      requestedModel: 'gpt-5.6-luna',
+      requestedModel: 'qwen-plus',
       inputTokens: 20n,
       cachedInputTokens: 0n,
       cacheWriteInputTokens: 0n,
@@ -2041,7 +2041,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
     reportedUsage: [
       {
         operationRunId: aggregateCollisionRunId,
-        model: 'gpt-5.6-luna',
+        model: 'qwen-plus',
         inputTokens: 11,
         cachedInputTokens: 0,
         cacheWriteInputTokens: 0,
@@ -2052,7 +2052,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       },
       {
         operationRunId: aggregateCollisionRunId,
-        model: 'gpt-5.6-luna',
+        model: 'qwen-plus',
         inputTokens: 19,
         cachedInputTokens: 0,
         cacheWriteInputTokens: 0,
@@ -2077,7 +2077,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       executionId: '55555555-5555-4555-8555-555555555555',
       attemptOrdinal: 1,
       operation: 'PLANNER',
-      requestedModel: 'gpt-5.6-luna',
+      requestedModel: 'qwen-plus',
       inputTokens: 10n,
       cachedInputTokens: 0n,
       cacheWriteInputTokens: 0n,
@@ -2092,7 +2092,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       executionId: '55555555-5555-4555-8555-555555555555',
       attemptOrdinal: 2,
       operation: 'PLANNER',
-      requestedModel: 'gpt-5.6-luna',
+      requestedModel: 'qwen-plus',
       inputTokens: 20n,
       cachedInputTokens: 0n,
       cacheWriteInputTokens: 0n,
@@ -2112,7 +2112,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       {
         operationRunId: aggregateCollisionRunId,
         attemptOrdinal: 2,
-        model: 'gpt-5.6-luna',
+        model: 'qwen-plus',
         inputTokens: 10,
         cachedInputTokens: 0,
         cacheWriteInputTokens: 0,
@@ -2124,7 +2124,7 @@ test('ZAEBAL4 rollout treats provider overcharge, RESERVED receipts and reported
       {
         operationRunId: aggregateCollisionRunId,
         attemptOrdinal: 3,
-        model: 'gpt-5.6-luna',
+        model: 'qwen-plus',
         inputTokens: 20,
         cachedInputTokens: 0,
         cacheWriteInputTokens: 0,
@@ -2254,8 +2254,8 @@ test('Assistant T07 rollout geo receipts fail closed on reserved, unknown, unclo
   assert.equal(crossingDay.exceededBuckets.some(({ window }) => window === 'DAY'), true);
 });
 
-test('PIDAFIX1 paid readiness is shared, fail-closed and redacts the OpenAI key', () => {
-  const blocked = readAssistantPaidProviderReadiness({ ASSISTANT_AI_MODE: 'openai' });
+test('PIDAFIX1 paid readiness is shared, fail-closed and redacts the Alibaba key', () => {
+  const blocked = readAssistantPaidProviderReadiness({ ASSISTANT_AI_MODE: 'alibaba' });
   assert.equal(blocked.passed, false);
   assert.deepEqual(blocked.missing, [
     'ASSISTANT_MODEL_REQUESTS_PER_MINUTE',
@@ -2263,24 +2263,24 @@ test('PIDAFIX1 paid readiness is shared, fail-closed and redacts the OpenAI key'
     'ASSISTANT_MODEL_DAILY_BUDGET_USD',
     'ASSISTANT_QUERY_PLANNER_LIVE',
     'ASSISTANT_PAID_CALLS_CONFIRMED',
-    'OPENAI_API_KEY',
+    'ALIBABA_API_KEY',
   ]);
   assert.equal(blocked.effective.apiKeyPresent, false);
 
   const ready = readAssistantPaidProviderReadiness({
-    ASSISTANT_AI_MODE: 'openai',
+    ASSISTANT_AI_MODE: 'alibaba',
     ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '2',
     ASSISTANT_MODEL_REQUESTS_PER_DAY: '2',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
     ASSISTANT_QUERY_PLANNER_LIVE: 'true',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-    OPENAI_API_KEY: 'must-not-be-returned',
+    ALIBABA_API_KEY: 'must-not-be-returned',
   });
   assert.deepEqual(ready, {
     passed: true,
     missing: [],
     effective: {
-      aiMode: 'openai',
+      aiMode: 'alibaba',
       requestsPerMinute: 2,
       requestsPerDay: 2,
       dailyBudgetUsd: '0.50000000',
@@ -2317,7 +2317,7 @@ test('Assistant T07 rollout flags and explicit budgets are documented in env and
   assert.match(compose, /MAP_PROVIDER_ENABLED: \$\{MAP_PROVIDER_ENABLED:-true\}/u);
   assert.match(compose, /ASSISTANT_CURRENT_FACT_REFRESH_MODE: \$\{ASSISTANT_CURRENT_FACT_REFRESH_MODE:-disabled\}/u);
   assert.match(compose, /assistant-source-worker:[\s\S]*?profiles: \["assistant-external"\]/u);
-  assert.doesNotMatch(configuration, /VITE_(?:LOCATIONIQ|OPENAI|ASSISTANT_GEO_PROVIDER|ASSISTANT_EXTERNAL_CONNECTORS)/u);
+  assert.doesNotMatch(configuration, /VITE_(?:LOCATIONIQ|OPENAI|ALIBABA|ASSISTANT_GEO_PROVIDER|ASSISTANT_EXTERNAL_CONNECTORS)/u);
 });
 
 function actor(id, permissions) {
@@ -2686,7 +2686,7 @@ function rolloutApproval(stage, startedAt) {
       version: 'assistant-eval-v1',
       passed: true,
       caseCount: 200,
-      providerMode: 'openai',
+      providerMode: 'alibaba',
       evidenceCoreSha256: 'a'.repeat(64),
       finalizedEvidenceSha256: 'b'.repeat(64),
     },

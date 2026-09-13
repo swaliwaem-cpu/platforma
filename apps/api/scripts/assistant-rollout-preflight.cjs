@@ -68,7 +68,7 @@ async function run() {
     ...currentReleaseIdentity,
   });
   const evalGatePassed = evalSummary.passed
-    && evalProviderMode === 'openai'
+    && evalProviderMode === 'alibaba'
     && evalCompatibility.passed;
   let sourceHealth;
   let criticalErrorCount;
@@ -214,7 +214,7 @@ async function run() {
       operations: ['PLANNER'],
       executions: executionFences,
       reportedUsage: providerTelemetryRuns.flatMap(({ id, telemetryJson }) => (
-        readAssistantOpenAiReportedUsage(id, telemetryJson)
+        readAssistantAlibabaReportedUsage(id, telemetryJson)
       )),
     });
     const overpassLimits = readAssistantOverpassBudgetLimits(process.env);
@@ -368,10 +368,10 @@ function readJsonFile(path, code) {
   }
 }
 
-function readAssistantOpenAiReportedUsage(operationRunId, telemetryJson) {
+function readAssistantAlibabaReportedUsage(operationRunId, telemetryJson) {
   if (!Array.isArray(telemetryJson)) return [];
   return telemetryJson.flatMap((entry) => {
-    if (!entry || typeof entry !== 'object' || entry.provider !== 'openai') return [];
+    if (!entry || typeof entry !== 'object' || entry.provider !== 'alibaba') return [];
     return [{
       operationRunId,
       model: entry.model,

@@ -32,7 +32,7 @@ const root = resolve(__dirname, '../../..');
 test('PIDAFIX3 plan keeps all external boundaries fake or disabled', () => {
   const environment = createSafeEnvironment({
     PATH: '/usr/bin',
-    OPENAI_API_KEY: 'must-not-survive',
+    ALIBABA_API_KEY: 'must-not-survive',
     LOCATIONIQ_API_KEY: 'must-not-survive',
     TELEGRAM_BOT_TOKEN: 'must-not-survive',
     DATABASE_URL: 'postgresql://production.example/platforma',
@@ -49,7 +49,7 @@ test('PIDAFIX3 plan keeps all external boundaries fake or disabled', () => {
 
   assert.equal(environment.PATH, '/usr/bin');
   for (const key of [
-    'OPENAI_API_KEY', 'LOCATIONIQ_API_KEY', 'TELEGRAM_BOT_TOKEN',
+    'ALIBABA_API_KEY', 'LOCATIONIQ_API_KEY', 'TELEGRAM_BOT_TOKEN',
     'DATABASE_URL', 'ASSISTANT_FIX_GEO1_LIVE_ALLOW_REMOTE',
   ]) {
     assert.equal(Object.hasOwn(environment, key), false);
@@ -174,7 +174,7 @@ test('PIDAFIX3 Compose file contains only postgres, api and web services', async
   assert.match(source, /PROJECT_PRESENTATIONS_WORKER_ENABLED: "false"/u);
   assert.match(source, /127\.0\.0\.1:\$\{PIDAFIX3_API_PORT/u);
   assert.doesNotMatch(source, /^  (?:redis|minio|.*worker):$/mu);
-  assert.doesNotMatch(source, /OPENAI_API_KEY:/u);
+  assert.doesNotMatch(source, /ALIBABA_API_KEY:/u);
   assert.doesNotMatch(source, /LOCATIONIQ_API_KEY:/u);
 });
 
@@ -402,23 +402,23 @@ test('PIDAFIX3 provider evidence stays unknown until a nonce-bound T07 artifact 
   assert.deepEqual(createUnverifiedProviderEvidence(), {
     status: 'not-measured',
     scope: 't07-connected-e2e',
-    calls: { openai: null, locationiq: null, overpass: null },
-    persistedUsageAttempts: { openai: null, locationiq: null, overpass: null },
+    calls: { alibaba: null, locationiq: null, overpass: null },
+    persistedUsageAttempts: { alibaba: null, locationiq: null, overpass: null },
     deniedRemoteRequests: null,
   });
   const nonce = '0123456789abcdef';
   const artifact = {
     version: 1,
     nonce,
-    transportStubCalls: { openai: 0, locationiq: 0, overpass: 0 },
-    persistedUsageAttempts: { openai: 0, locationiq: 0, overpass: 0 },
+    transportStubCalls: { alibaba: 0, locationiq: 0, overpass: 0 },
+    persistedUsageAttempts: { alibaba: 0, locationiq: 0, overpass: 0 },
     deniedRemoteRequests: 0,
   };
   assert.equal(verifyT07ProviderEvidence(artifact, nonce).status, 'verified');
   assert.throws(() => verifyT07ProviderEvidence({ ...artifact, nonce: 'fedcba9876543210' }, nonce));
   assert.throws(() => verifyT07ProviderEvidence({
     ...artifact,
-    transportStubCalls: { openai: 1, locationiq: 0, overpass: 0 },
+    transportStubCalls: { alibaba: 1, locationiq: 0, overpass: 0 },
   }, nonce));
 });
 

@@ -6,6 +6,7 @@ import {
   ASSISTANT_AI_SERVICE_TIER,
   estimateAssistantEmbeddingCallCost,
 } from '../operations/assistant-ai-cost';
+import { ASSISTANT_ALIBABA_DEFAULT_BASE_URL } from '../assistant-planner-gateway';
 import {
   AssistantAiUsageBudgetService,
   readAssistantDailyUsdBudget,
@@ -44,11 +45,12 @@ export class AssistantEmbeddingError extends Error {
 
 @Injectable()
 export class AssistantEmbeddingGateway {
-  private readonly mode: 'disabled' | 'fake' | 'openai';
+  private readonly mode: 'disabled' | 'fake' | 'alibaba';
   private readonly model: string | null;
   private readonly dimensions: number | null;
   private readonly timeoutMs: number;
   private readonly dailyBudgetUsd: string | null;
+  private readonly baseUrl: string | null;
 
   constructor(
     private readonly environment: EmbeddingEnvironment = process.env,
@@ -64,9 +66,10 @@ export class AssistantEmbeddingGateway {
       this.model = fakeEmbeddingModel;
       this.dimensions = fakeEmbeddingDimensions;
       this.dailyBudgetUsd = null;
+      this.baseUrl = null;
       return;
     }
-    if (this.mode === 'openai') {
+    if (this.mode === 'alibaba') {
       if (environment.ASSISTANT_EMBEDDING_LIVE !== 'true') {
         throw new AssistantEmbeddingError('ASSISTANT_EMBEDDING_LIVE_REQUIRED', false);
       }
@@ -74,7 +77,7 @@ export class AssistantEmbeddingGateway {
         throw new AssistantEmbeddingError('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED', false);
       }
       this.model = readRequiredString(environment.ASSISTANT_EMBEDDING_MODEL, 'ASSISTANT_EMBEDDING_MODEL_REQUIRED');
-      this.dimensions = readInteger(environment.ASSISTANT_EMBEDDING_DIMENSIONS, 0, 1, 3_072);
+      this.dimensions = readInteger(environment.ASSISTANT_EMBEDDING_DIMENSIONS, 0, 1, 2_048);
       if (this.dimensions === 0) {
         throw new AssistantEmbeddingError('ASSISTANT_EMBEDDING_DIMENSIONS_REQUIRED', false);
       }
@@ -92,7 +95,9 @@ export class AssistantEmbeddingGateway {
       if (pricing.status !== 'PRICED') {
         throw new AssistantEmbeddingError('ASSISTANT_EMBEDDING_COST_UNPRICED', false);
       }
-      readRequiredString(environment.OPENAI_API_KEY, 'OPENAI_API_KEY_REQUIRED');
+      readRequiredString(environment.ALIBABA_API_KEY, 'ALIBABA_API_KEY_REQUIRED');
+      this.baseUrl = (environment.ASSISTANT_ALIBABA_BASE_URL?.trim() || ASSISTANT_ALIBABA_DEFAULT_BASE_URL)
+        .replace(/\/$/u, '');
       try {
         this.dailyBudgetUsd = readAssistantDailyUsdBudget(
           environment.ASSISTANT_MODEL_DAILY_BUDGET_USD,
@@ -112,6 +117,7 @@ export class AssistantEmbeddingGateway {
     this.model = null;
     this.dimensions = null;
     this.dailyBudgetUsd = null;
+    this.baseUrl = null;
   }
 
   isEnabled() {
@@ -159,7 +165,7 @@ export class AssistantEmbeddingGateway {
     let reservation: AssistantAiUsageReservation;
     try {
       reservation = await this.usageBudgets.reserve({
-        provider: 'openai',
+        provider: 'alibaba',
         model: this.model,
         operation: context.operation,
         operationRunId: context.operationRunId,
@@ -192,10 +198,10 @@ export class AssistantEmbeddingGateway {
     let vectors: number[][] | null = null;
     let failure: AssistantEmbeddingError | null = null;
     try {
-      const response = await Promise.race([this.fetchImpl('https://api.openai.com/v1/embeddings', {
+      const response = await Promise.race([this.fetchImpl(`${this.baseUrl}/embeddings`, {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${this.environment.OPENAI_API_KEY}`,
+          authorization: `Bearer ${this.environment.ALIBABA_API_KEY}`,
           'content-type': 'application/json',
         },
         body: JSON.stringify({
@@ -264,7 +270,7 @@ export class AssistantEmbeddingGateway {
   }
 
   async reconcileExecution(operationRunId: string, executionId: string) {
-    if (this.mode !== 'openai') return 0;
+    if (this.mode !== 'alibaba') return 0;
     if (!this.usageBudgets) {
       throw new AssistantEmbeddingError('ASSISTANT_EMBEDDING_LEDGER_CONTEXT_REQUIRED', false);
     }
@@ -371,7 +377,7 @@ function createFakeEmbedding(value: string) {
 
 function readMode(value: string | undefined) {
   const normalized = (value ?? 'disabled').trim().toLocaleLowerCase('en-US');
-  if (normalized === 'disabled' || normalized === 'fake' || normalized === 'openai') return normalized;
+  if (normalized === 'disabled' || normalized === 'fake' || normalized === 'alibaba') return normalized;
   throw new AssistantEmbeddingError('ASSISTANT_EMBEDDING_MODE_INVALID', false);
 }
 

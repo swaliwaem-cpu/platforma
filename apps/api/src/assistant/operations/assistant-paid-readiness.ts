@@ -6,7 +6,7 @@ export type AssistantPaidProviderReadiness = {
   passed: boolean;
   missing: string[];
   effective: {
-    aiMode: 'fake' | 'openai' | null;
+    aiMode: 'fake' | 'alibaba' | null;
     requestsPerMinute: number | null;
     requestsPerDay: number | null;
     dailyBudgetUsd: string | null;
@@ -28,19 +28,19 @@ export function readAssistantPaidProviderReadiness(
   const requestsPerDay = readPositiveInteger(environment.ASSISTANT_MODEL_REQUESTS_PER_DAY);
   if (requestsPerDay === null) missing.push('ASSISTANT_MODEL_REQUESTS_PER_DAY');
 
-  const openAi = aiMode === 'openai';
-  const dailyBudgetUsd = openAi
+  const live = aiMode === 'alibaba';
+  const dailyBudgetUsd = live
     ? readPositiveUsd(environment.ASSISTANT_MODEL_DAILY_BUDGET_USD)
     : null;
   const queryPlannerLive = environment.ASSISTANT_QUERY_PLANNER_LIVE === 'true';
   const paidCallsConfirmed = environment.ASSISTANT_PAID_CALLS_CONFIRMED === 'true';
-  const apiKeyPresent = typeof environment.OPENAI_API_KEY === 'string'
-    && environment.OPENAI_API_KEY.trim().length > 0;
+  const apiKeyPresent = typeof environment.ALIBABA_API_KEY === 'string'
+    && environment.ALIBABA_API_KEY.trim().length > 0;
 
-  if (openAi && dailyBudgetUsd === null) missing.push('ASSISTANT_MODEL_DAILY_BUDGET_USD');
-  if (openAi && !queryPlannerLive) missing.push('ASSISTANT_QUERY_PLANNER_LIVE');
-  if (openAi && !paidCallsConfirmed) missing.push('ASSISTANT_PAID_CALLS_CONFIRMED');
-  if (openAi && !apiKeyPresent) missing.push('OPENAI_API_KEY');
+  if (live && dailyBudgetUsd === null) missing.push('ASSISTANT_MODEL_DAILY_BUDGET_USD');
+  if (live && !queryPlannerLive) missing.push('ASSISTANT_QUERY_PLANNER_LIVE');
+  if (live && !paidCallsConfirmed) missing.push('ASSISTANT_PAID_CALLS_CONFIRMED');
+  if (live && !apiKeyPresent) missing.push('ALIBABA_API_KEY');
 
   return {
     passed: missing.length === 0,
@@ -59,7 +59,7 @@ export function readAssistantPaidProviderReadiness(
 
 function readAiMode(value: string | undefined) {
   const normalized = (value ?? 'fake').trim().toLocaleLowerCase('en-US');
-  return normalized === 'fake' || normalized === 'openai' ? normalized : null;
+  return normalized === 'fake' || normalized === 'alibaba' ? normalized : null;
 }
 
 function readPositiveInteger(value: string | undefined) {

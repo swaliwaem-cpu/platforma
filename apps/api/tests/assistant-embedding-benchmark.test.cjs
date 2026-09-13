@@ -7,8 +7,8 @@ const {
 } = require('../scripts/assistant-embedding-benchmark.cjs');
 
 const candidates = JSON.stringify([
-  { model: 'text-embedding-3-small', dimensions: 256 },
-  { model: 'text-embedding-3-large', dimensions: 512 },
+  { model: 'text-embedding-v4', dimensions: 256 },
+  { model: 'text-embedding-v4', dimensions: 512 },
 ]);
 
 test('PIDAFIX1 embedding benchmark is a zero-boundary dry-run by default', async () => {
@@ -238,7 +238,7 @@ function readyEnvironment() {
     ASSISTANT_EMBEDDING_BENCHMARK_CANDIDATES: candidates,
     ASSISTANT_EMBEDDING_LIVE: 'true',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
-    OPENAI_API_KEY: 'test-only-provider-key',
+    ALIBABA_API_KEY: 'test-only-provider-key',
   };
 }
 
