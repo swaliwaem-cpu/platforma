@@ -43,45 +43,53 @@ html[data-app-theme="dark-premium"] {
 
 html[data-app-theme="minimal-luxury"] {
   color-scheme: light;
-  --app-theme-canvas: #f7f6f2;
-  --app-theme-surface: #fffefa;
-  --app-theme-surface-soft: #fbfaf6;
-  --app-theme-surface-muted: #f0ede6;
-  --app-theme-control: #fffefa;
-  --app-theme-ink-900: #1d2228;
-  --app-theme-ink-800: #363b42;
-  --app-theme-ink-700: #686d72;
-  --app-theme-ink-600: #858a8f;
-  --app-theme-border-strong: #c8c0b4;
-  --app-theme-border: #ded7cc;
-  --app-theme-border-soft: #ebe6dd;
-  --app-theme-primary: #222831;
-  --app-theme-primary-deep: #14191f;
-  --app-theme-primary-soft: #eeece7;
-  --app-theme-primary-foreground: #fffefa;
+  --platforma-font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --app-theme-canvas: #ece9e5;
+  --app-theme-surface: #faf8f5;
+  --app-theme-surface-soft: #f0ece7;
+  --app-theme-surface-muted: #e3ded8;
+  --app-theme-control: #e3ded8;
+  --app-theme-ink-900: #0e0d0c;
+  --app-theme-ink-800: #2b2927;
+  --app-theme-ink-700: #66635f;
+  --app-theme-ink-600: #66635f;
+  --app-theme-border-strong: #a69e96;
+  --app-theme-border: #c3bbb4;
+  --app-theme-border-soft: #c3bbb4;
+  --app-theme-primary: #383c40;
+  --app-theme-primary-deep: #202326;
+  --app-theme-primary-soft: #e3ded8;
+  --app-theme-primary-foreground: #ffffff;
   --app-theme-object: #345f57;
   --app-theme-object-deep: #274942;
   --app-theme-object-soft: #edf4f0;
   --app-theme-accent: #9a6a43;
   --app-theme-accent-soft: #f4eadf;
-  --app-theme-success: #2e6f49;
-  --app-theme-success-soft: #ecf6ef;
-  --app-theme-warning: #7b5b18;
-  --app-theme-warning-soft: #fff6db;
-  --app-theme-danger: #a64237;
-  --app-theme-danger-soft: #fff1ee;
-  --app-theme-danger-foreground: #fffefa;
-  --app-theme-shadow-panel: 0 1px 0 rgb(29 34 40 / 4%), 0 12px 34px rgb(29 34 40 / 4%);
-  --app-theme-shadow-card: 0 1px 0 rgb(29 34 40 / 4%), 0 16px 38px rgb(29 34 40 / 5%);
-  --app-theme-shadow-card-hover: 0 1px 0 rgb(29 34 40 / 5%), 0 22px 52px rgb(29 34 40 / 8%);
-  --app-theme-shadow-overlay: 0 24px 72px rgb(29 34 40 / 14%);
-  --app-theme-focus-primary: 0 0 0 3px rgb(34 40 49 / 14%);
-  --app-theme-focus-object: 0 0 0 3px rgb(52 95 87 / 16%);
+  --app-theme-success: #168b5e;
+  --app-theme-success-soft: rgb(22 163 106 / 13%);
+  --app-theme-warning: #b87300;
+  --app-theme-warning-soft: rgb(216 135 0 / 13%);
+  --app-theme-danger: #cf3150;
+  --app-theme-danger-soft: rgb(223 59 87 / 13%);
+  --app-theme-danger-foreground: #ffffff;
+  --app-theme-shadow-panel:
+    inset 0 0 0 0.5px rgb(255 255 255 / 24%),
+    inset 0 1px 1px rgb(255 255 255 / 36%),
+    inset 1px 0 2px rgb(255 255 255 / 16%),
+    inset -5px 0 12px rgb(255 255 255 / 7%),
+    inset 0 -5px 12px rgb(255 255 255 / 4%),
+    inset -1px -1px 0 rgb(58 58 55 / 13%),
+    0 20px 56px rgb(70 70 66 / 12%);
+  --app-theme-shadow-card: none;
+  --app-theme-shadow-card-hover: 0 12px 28px rgb(38 40 42 / 17%);
+  --app-theme-shadow-overlay: 0 20px 48px rgb(0 0 0 / 16%), inset 0 1px 0 rgb(255 255 255 / 72%);
+  --app-theme-focus-primary: 0 0 0 3px rgb(45 38 32 / 14%);
+  --app-theme-focus-object: 0 0 0 3px rgb(45 38 32 / 14%);
   --app-theme-gallery-backdrop: rgb(247 246 242 / 94%);
   --app-theme-gallery-surface: var(--app-theme-surface);
   --app-theme-gallery-stage: var(--app-theme-surface-muted);
-  --app-theme-radius-sm: 5px;
-  --app-theme-radius-md: 7px;
+  --app-theme-radius-sm: 9px;
+  --app-theme-radius-md: 13px;
 }
 
 html[data-app-theme] {
@@ -723,13 +731,29 @@ html[data-app-theme="minimal-luxury"] :is(.sidebar, .login-panel, .content-panel
   box-shadow: var(--app-theme-shadow-panel);
 }
 
-html[data-app-theme] .sidebar:not(.sidebar--open) {
-  border-width: 0;
+html[data-app-theme="minimal-luxury"] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .catalog-filter-toggle, .object-detail-action-button) {
+  font-weight: 760;
+}
+
+/* Sidebar bottom rows (profile, theme, logout) behave like nav items. */
+html[data-app-theme="dark-premium"] .sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button) {
   border-color: transparent;
   background: transparent;
   box-shadow: none;
+  color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme="minimal-luxury"] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .catalog-filter-toggle, .object-detail-action-button) {
-  font-weight: 760;
+html[data-app-theme="dark-premium"] .sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button):is(:hover, :focus-visible) {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-primary-soft);
+  color: var(--app-theme-primary-deep);
+}
+
+html[data-app-theme="dark-premium"] .sidebar :is(.sidebar-avatar, .sidebar-user-text small) {
+  border-color: var(--app-theme-border);
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme="dark-premium"] .sidebar .sidebar-user-text b {
+  color: var(--app-theme-ink-900);
 }

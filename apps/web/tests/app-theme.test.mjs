@@ -154,7 +154,7 @@ test('sidebar exposes an icon-only theme toggle wired to app theme helpers', () 
   const styles = readFileSync(resolve(srcDir, 'styles.css'), 'utf8');
   const themeStyles = readFileSync(resolve(srcDir, 'app-theme.css'), 'utf8');
 
-  assert.match(appSource, /import \{ MenuIcon,\s*MoonIcon,\s*SunIcon \} from 'lucide-react';/);
+  assert.match(appSource, /import \{[\s\S]*MenuIcon[\s\S]*MoonIcon[\s\S]*SunIcon[\s\S]*\} from 'lucide-react';/);
   assert.match(appSource, /import \{[\s\S]*getAppliedAppTheme[\s\S]*getNextAppTheme[\s\S]*setAppTheme[\s\S]*\} from '\.\/appTheme';/);
   assert.match(appSource, /import '\.\/app-theme\.css';/);
   assert.doesNotMatch(appSource, /design-preview\.css/);
@@ -167,23 +167,22 @@ test('sidebar exposes an icon-only theme toggle wired to app theme helpers', () 
   assert.match(appSource, /type="button"/);
   assert.match(appSource, /aria-label=\{themeToggleLabel\}/);
   assert.match(appSource, /title=\{themeToggleLabel\}/);
-  assert.match(appSource, /tabIndex=\{isSidebarOpen \? 0 : -1\}/);
   assert.match(appSource, /<MoonIcon aria-hidden="true" \/>/);
   assert.match(appSource, /<SunIcon aria-hidden="true" \/>/);
   assert.ok(
-    appSource.indexOf('className="theme-toggle"') > appSource.indexOf('className="sidebar-brand"'),
-    'theme toggle should render after sidebar brand',
+    appSource.indexOf('className="theme-toggle"') > appSource.indexOf('<nav className="nav-list">'),
+    'theme toggle should render after nav list in the sidebar bottom block',
   );
   assert.ok(
-    appSource.indexOf('className="theme-toggle"') < appSource.indexOf('<nav className="nav-list">'),
-    'theme toggle should render before nav list',
+    appSource.indexOf('className="theme-toggle"') > appSource.indexOf('className="sidebar-actions"'),
+    'theme toggle should render inside sidebar actions',
   );
   assert.match(styles, /\.theme-toggle/);
   assert.match(styles, /\.theme-toggle svg/);
   assert.match(themeStyles, /:is\([^)]*\.theme-toggle[^)]*\)/);
 });
 
-test('sidebar opens as an overlay without shifting the workspace', () => {
+test('collapsed sidebar reserves a rail and the expanded panel overlays the workspace', () => {
   const appSource = readFileSync(resolve(srcDir, 'App.tsx'), 'utf8');
   const styles = readFileSync(resolve(srcDir, 'styles.css'), 'utf8');
 
@@ -192,18 +191,18 @@ test('sidebar opens as an overlay without shifting the workspace', () => {
   assert.doesNotMatch(styles, /\.app-shell--sidebar-open/);
   assert.match(
     styles,
-    /\.workspace\s*\{[\s\S]*?display:\s*grid;[\s\S]*?justify-items:\s*center;[\s\S]*?\}/,
+    /\.workspace\s*\{[\s\S]*?display:\s*grid;[\s\S]*?justify-items:\s*center;[\s\S]*?padding:\s*32px 32px 32px calc\(var\(--sidebar-rail-width\) \+ 34px\);[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.sidebar\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*var\(--sidebar-toggle-size\);[\s\S]*?height:\s*var\(--sidebar-toggle-size\);[\s\S]*?\}/,
+    /\.sidebar\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*var\(--sidebar-rail-width\);[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.sidebar--open\s*\{[\s\S]*?width:\s*var\(--sidebar-width\);[\s\S]*?height:\s*auto;[\s\S]*?max-height:\s*calc\(100vh - 32px\);[\s\S]*?\}/,
+    /\.sidebar--open\s*\{[\s\S]*?width:\s*var\(--sidebar-width\);[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.workspace:has\(\.catalog-page\)[\s\S]*?padding:\s*80px 20px 20px;[\s\S]*?\}/,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.workspace:has\(\.catalog-page\)[\s\S]*?calc\(var\(--sidebar-rail-width\) \+ 28px\);[\s\S]*?\}/,
   );
 });

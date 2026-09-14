@@ -7,7 +7,7 @@ import test from 'node:test';
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
-const themeStyles = readFileSync(resolve(currentDir, '../src/app-theme.css'), 'utf8');
+const themeStyles = readFileSync(resolve(currentDir, '../src/fluffy-white-theme.css'), 'utf8');
 
 test('sidebar closes when clicking outside of the menu panel', () => {
   assert.match(source, /useRef/);
@@ -19,10 +19,11 @@ test('sidebar closes when clicking outside of the menu panel', () => {
   assert.match(source, /<aside[\s\S]*?ref=\{sidebarRef\}/);
 });
 
-test('collapsed sidebar renders as an icon-only burger control', () => {
+test('collapsed sidebar renders as a visible icon rail', () => {
   assert.match(source, /className="sidebar-toggle"/);
-  assert.match(source, /aria-hidden=\{!isSidebarOpen\}/);
-  assert.match(styles, /\.sidebar:not\(\.sidebar--open\)\s*\{[\s\S]*?border-width:\s*0;[\s\S]*?border-color:\s*transparent;[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;[\s\S]*?\}/);
-  assert.match(styles, /\.sidebar:not\(\.sidebar--open\)\s+\.sidebar-content\s*\{[\s\S]*?display:\s*none;[\s\S]*?\}/);
-  assert.match(themeStyles, /html\[data-app-theme\]\s+\.sidebar:not\(\.sidebar--open\)\s*\{[\s\S]*?border-width:\s*0;[\s\S]*?border-color:\s*transparent;[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;[\s\S]*?\}/);
+  assert.doesNotMatch(source, /aria-hidden=\{!isSidebarOpen\}/);
+  assert.match(styles, /--sidebar-rail-width:\s*78px;/);
+  assert.match(styles, /\.sidebar--open\s*\{[\s\S]*?width:\s*var\(--sidebar-width\);[\s\S]*?\}/);
+  assert.match(styles, /\.sidebar:not\(\.sidebar--open\)\s+\.nav-item\s+span\s*\{[\s\S]*?display:\s*none;[\s\S]*?\}/);
+  assert.match(themeStyles, /:root\[data-app-theme="minimal-luxury"\] body \.app-shell aside\.sidebar\s*\{/);
 });

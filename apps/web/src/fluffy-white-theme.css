@@ -1,0 +1,1717 @@
+/*
+ * Fluffy White — visual layer of the light theme (minimal-luxury).
+ *
+ * Literal port of the reference styleguide (fluffy-white-styleguide…/cabinet).
+ * Every value below was read from the live reference with getComputedStyle,
+ * including :hover and :active states — do not "adapt" them to other palettes.
+ * The dark theme (dark-premium) is not touched by this file.
+ *
+ * Selector prefix `:root[data-app-theme="minimal-luxury"] body` has specificity
+ * (0,2,1): together with the component selector it outranks the generic
+ * `html[data-app-theme] :is(...)` rules from app-theme.css and the single/double
+ * class rules of lazily loaded module stylesheets (training, presentations).
+ */
+
+:root[data-app-theme="minimal-luxury"] {
+  --fw-canvas: #ece9e5;
+  --fw-panel: #faf8f5;
+  --fw-control: #e3ded8;
+  --fw-control-hover: #f0ece7;
+  --fw-line: #c3bbb4;
+  --fw-line-strong: #a69e96;
+  --fw-ink: #000000;
+  --fw-text: #0e0d0c;
+  --fw-muted: #66635f;
+  --fw-hover-bg: rgb(45 38 32 / 10%);
+  --fw-hover-line: rgb(45 38 32 / 17%);
+  --fw-primary-line: rgb(0 0 0 / 20%);
+  --fw-primary-hover: #383c40;
+  --fw-primary-pressed: #202326;
+  --fw-primary-hover-line: rgb(255 255 255 / 20%);
+  --fw-success: #168b5e;
+  --fw-success-soft: rgb(22 163 106 / 13%);
+  --fw-warning: #b87300;
+  --fw-warning-soft: rgb(216 135 0 / 13%);
+  --fw-danger: #cf3150;
+  --fw-danger-soft: rgb(223 59 87 / 13%);
+  --fw-role: #a8221d;
+  --fw-role-soft: rgb(211 30 24 / 20%);
+  --fw-glass-shadow:
+    inset 0 0 0 0.5px rgb(255 255 255 / 24%),
+    inset 0 1px 1px rgb(255 255 255 / 36%),
+    inset 1px 0 2px rgb(255 255 255 / 16%),
+    inset -5px 0 12px rgb(255 255 255 / 7%),
+    inset 0 -5px 12px rgb(255 255 255 / 4%),
+    inset -1px -1px 0 rgb(58 58 55 / 13%),
+    0 20px 56px rgb(70 70 66 / 12%);
+  --fw-lift-shadow: 0 12px 28px rgb(38 40 42 / 17%);
+  --fw-field-shadow:
+    inset 0 0 0 0.5px rgb(255 255 255 / 18%),
+    inset 0 1px 1px rgb(255 255 255 / 28%),
+    inset 1px 0 1px rgb(255 255 255 / 12%),
+    inset -4px 0 9px rgb(255 255 255 / 5.5%),
+    inset 0 -4px 9px rgb(64 64 60 / 5%),
+    inset -1px -1px 0 rgb(54 54 51 / 8%);
+  --fw-field-hover-shadow:
+    0 10px 18px rgb(38 40 42 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 78%),
+    inset 0 -1px 0 rgb(75 77 79 / 8%);
+  --fw-search-shadow: inset 0 1px 0 rgb(255 255 255 / 49%);
+  --fw-search-hover-shadow: 0 8px 20px rgb(45 38 32 / 10%), inset 0 1px 0 rgb(255 255 255 / 82%);
+  --fw-menu-shadow: 0 20px 48px rgb(0 0 0 / 16%), inset 0 1px 0 rgb(255 255 255 / 72%);
+  --fw-avatar-shadow: inset 0 1px 0 rgb(255 255 255 / 82%);
+  --fw-media-glass: rgb(255 255 255 / 28%);
+  --fw-media-label: rgb(24 24 22 / 46%);
+  --fw-ease: cubic-bezier(0.22, 0.75, 0.18, 1);
+  --fw-lift: -1px;
+  --fw-press: 1px;
+  --fw-button-transition:
+    background-color 0.18s,
+    border-color 0.18s,
+    box-shadow 0.18s,
+    transform 0.18s;
+  --fw-field-transition:
+    background-color 0.24s,
+    border-color 0.24s,
+    box-shadow 0.24s,
+    transform 0.24s;
+  background: var(--fw-canvas) fixed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-app-theme="minimal-luxury"] {
+    --fw-lift: 0px;
+    --fw-press: 0px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Canvas: flat #ece9e5 with two blurred orbs (.fw-orb-one / .fw-orb-two).
+ * The orbs sit on body pseudo-elements at z-index -1, so body and the
+ * shells must stay transparent to let them show through.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body,
+:root[data-app-theme="minimal-luxury"] body :is(.app-shell, .workspace, .login-shell) {
+  background: transparent;
+}
+
+:root[data-app-theme="minimal-luxury"] body::before,
+:root[data-app-theme="minimal-luxury"] body::after {
+  position: fixed;
+  z-index: -1;
+  border-radius: 50%;
+  content: "";
+  filter: blur(44px);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body::before {
+  top: -160px;
+  left: -180px;
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(circle, rgb(105 103 100 / 44%), transparent 68%);
+}
+
+:root[data-app-theme="minimal-luxury"] body::after {
+  top: 18%;
+  right: -240px;
+  width: 680px;
+  height: 680px;
+  background: radial-gradient(circle, rgb(105 103 100 / 24%), transparent 69%);
+}
+
+:root[data-app-theme="minimal-luxury"] body ::selection {
+  background: rgb(105 103 100 / 34%);
+  color: var(--fw-text);
+}
+
+/* ---------------------------------------------------------------------------
+ * Typography: 400 for text and controls, 500 for headings.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(h1, h2, h3, h4, h5) {
+  color: var(--fw-ink);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.workspace, .login-shell, [role="dialog"]) :is(strong, b, dd) {
+  font-weight: 500;
+}
+
+:root[data-app-theme="minimal-luxury"] body .eyebrow {
+  margin-bottom: 4px;
+  color: var(--fw-muted);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 16.5px;
+  text-transform: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.muted-text, .helper-text, .table-subtext) {
+  color: var(--fw-muted);
+  font-weight: 400;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(label, .toolbar-field, .catalog-link-field) {
+  gap: 7px;
+  color: var(--fw-muted);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 16.5px;
+  text-transform: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body dt {
+  color: var(--fw-muted);
+  font-weight: 400;
+}
+
+:root[data-app-theme="minimal-luxury"] body label:has(> input:is([type="checkbox"], [type="radio"])) {
+  color: var(--fw-text);
+  font-size: 14px;
+  line-height: 21px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Sidebar (.fw-sidebar-main): 238px / 76px rail, radius 28, solid glass.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar {
+  border: 0;
+  border-radius: 28px;
+  background: var(--fw-panel);
+  box-shadow: var(--fw-glass-shadow);
+  color: var(--fw-ink);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition: width 0.48s var(--fw-ease);
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-title {
+  color: var(--fw-ink);
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-toggle {
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fw-ink);
+  box-shadow: none;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .nav-item {
+  height: 46px;
+  gap: 12px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fw-muted);
+  font-size: 14px;
+  font-weight: 400;
+  padding: 0 12px;
+  transition:
+    background-color 0.22s,
+    border-color 0.22s,
+    box-shadow 0.22s,
+    transform 0.22s,
+    color 0.22s;
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .nav-item svg {
+  color: inherit;
+  transition: color 0.22s;
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .nav-item.nav-item--active {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fw-text);
+  font-weight: 400;
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar :is(.nav-item, .nav-item.nav-item--active):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .nav-subitem {
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--fw-muted);
+  font-weight: 400;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .nav-subitem.nav-subitem--active {
+  border-color: transparent;
+  background: transparent;
+  color: var(--fw-text);
+  font-weight: 400;
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar :is(.nav-subitem, .nav-subitem.nav-subitem--active):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+/* Avatar reads as an outline, never as a filled (pressed-looking) control. */
+:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-avatar {
+  border: 1px solid var(--fw-line);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-user-text b {
+  color: var(--fw-muted);
+  font-weight: 700;
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-user-text small {
+  color: var(--fw-muted);
+}
+
+/*
+ * Nav list: the reference nav does not clip. The platform keeps vertical
+ * scrolling for short viewports, so 2px of block padding (offset by the
+ * margin) leaves room for the 1px hover lift instead of cutting the top edge.
+ */
+:root[data-app-theme="minimal-luxury"] body .sidebar .nav-list {
+  margin-top: 32px;
+  padding-block: 2px;
+}
+
+/*
+ * Bottom block (profile, theme, logout) is styled exactly like nav items:
+ * transparent 46px rows, muted ink, darken + lift on hover, no pressed look.
+ * `.app-shell aside.sidebar .sidebar-bottom` keeps these rules above the
+ * global .secondary-button states declared later in this file.
+ */
+:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fw-muted);
+  font-size: 14px;
+  font-weight: 400;
+  transform: none;
+  transition:
+    background-color 0.22s,
+    border-color 0.22s,
+    box-shadow 0.22s,
+    transform 0.22s,
+    color 0.22s;
+}
+
+:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout):is(:hover, :focus-visible, :active) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+/* Collapsed rail (.fw-sidebar.is-collapsed): 78px, 42px column, logo above the burger. */
+:root[data-app-theme="minimal-luxury"] body .sidebar:not(.sidebar--open) .sidebar-brand {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar:not(.sidebar--open) .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
+/* In the rail every bottom row is a 42x46 icon cell, like the nav items. */
+:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar:not(.sidebar--open) .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
+  width: 100%;
+  height: 46px;
+  justify-content: center;
+  padding: 0;
+}
+
+/* .fw-user-mini in the collapsed reference shows the bare icon without a circle. */
+:root[data-app-theme="minimal-luxury"] body .sidebar:not(.sidebar--open) .sidebar-avatar {
+  width: 18px;
+  height: 18px;
+  border: 0;
+}
+
+/* Burger keeps the reference .fw-brand button states. */
+:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-toggle:is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-toggle:active {
+  transform: translateY(var(--fw-press));
+}
+
+/* ---------------------------------------------------------------------------
+ * Page heads (.fw-page-head): radius 28, padding 24/26, 42px title.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .page-header,
+  .admin-users .page-header,
+  .admin-objects .page-header,
+  .admin-catalog-links .page-header,
+  .admin-feeds .page-header,
+  .admin-import .page-header,
+  .catalog-page .page-header,
+  .admin-home-header,
+  .training-page-header,
+  .training-audio-storage-header,
+  .training-project-editor-header,
+  .assistant-audit-header,
+  .object-detail-header,
+  .object-lot-header,
+  .project-presentations-header,
+  .project-presentation-editor-header,
+  .project-preview-page-header
+) {
+  min-height: 120px;
+  border: 0;
+  border-radius: 28px;
+  background: var(--fw-panel);
+  box-shadow: var(--fw-glass-shadow);
+  color: var(--fw-ink);
+  padding: 24px 26px;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .page-header,
+  .admin-home-header,
+  .training-page-header,
+  .training-audio-storage-header,
+  .training-project-editor-header,
+  .assistant-audit-header,
+  .object-detail-header,
+  .object-lot-header,
+  .project-presentations-header,
+  .project-presentation-editor-header,
+  .project-preview-page-header
+) :is(h1, h2) {
+  color: var(--fw-ink);
+  font-size: 42px;
+  font-weight: 500;
+  letter-spacing: -1.47px;
+  line-height: 1.05;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .page-header,
+  .admin-home-header,
+  .training-page-header,
+  .training-audio-storage-header,
+  .training-project-editor-header,
+  .assistant-audit-header,
+  .object-detail-header,
+  .object-lot-header,
+  .project-presentations-header,
+  .project-presentation-editor-header,
+  .project-preview-page-header
+) > :not(.header-actions) p:not(.eyebrow) {
+  color: var(--fw-muted);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 21px;
+}
+
+@media (max-width: 560px) {
+  :root[data-app-theme="minimal-luxury"] body :is(
+    .page-header,
+    .admin-home-header,
+    .training-page-header,
+    .training-audio-storage-header,
+    .training-project-editor-header,
+    .assistant-audit-header,
+    .object-detail-header,
+    .object-lot-header,
+    .project-presentations-header,
+    .project-presentation-editor-header,
+    .project-preview-page-header
+  ) :is(h1, h2) {
+    font-size: 29px;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Panels on the canvas (.fw-workflow-panel, .fw-catalog-tools, .fw-table-wrap):
+ * radius 24, no border, glass shadow.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .login-panel,
+  .content-panel,
+  .table-panel,
+  .editor-panel,
+  .admin-panel,
+  [data-slot="card"],
+  .toolbar,
+  .admin-users .toolbar,
+  .admin-objects .toolbar,
+  .admin-feeds .toolbar,
+  .admin-import .toolbar,
+  .catalog-quick-links,
+  .catalog-filters,
+  .catalog-sort-bar,
+  .catalog-pagination,
+  .catalog-map-panel,
+  .object-detail-hero,
+  .detail-section,
+  .object-image-carousel,
+  .object-lot-media-panel,
+  .object-lot-info-panel,
+  .training-telegram-strip,
+  .assistant-audit-panel,
+  .lot-presentations-documents-panel,
+  .training-results-table-panel,
+  .training-results-filter-panel,
+  .training-ranking-table-panel,
+  .training-dashboard-project-panel,
+  .training-audio-storage-table-panel,
+  .training-audio-storage-pending-panel,
+  .training-audio-storage-filter-panel,
+  .training-question-panel,
+  .training-result-panel,
+  .training-review-panel,
+  .training-assignments-panel,
+  .training-access-mode-panel,
+  .project-presentation-step-panel
+) {
+  border: 0;
+  border-radius: 24px;
+  background: var(--fw-panel);
+  box-shadow: var(--fw-glass-shadow);
+  color: var(--fw-ink);
+}
+
+:root[data-app-theme="minimal-luxury"] body .login-panel {
+  border-radius: 28px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .toolbar {
+  border-radius: 22px;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-quick-links, .catalog-sort-bar, .object-image-carousel) {
+  overflow: hidden;
+}
+
+/*
+ * Panels nested inside another panel lose the outer glass shadow and read
+ * as an outlined inner block (reference inner radius 18, line #c3bbb4).
+ */
+:root[data-app-theme="minimal-luxury"] body :is(.content-panel, .table-panel, .editor-panel, .admin-panel, [data-slot="card"], .detail-section) :is(
+  .content-panel,
+  .table-panel,
+  .editor-panel,
+  .admin-panel,
+  [data-slot="card"],
+  .toolbar,
+  .detail-section,
+  .feed-run-progress-card,
+  .role-permissions-panel,
+  .registration-password-panel,
+  .training-telegram-strip,
+  .training-results-table-panel,
+  .training-results-filter-panel,
+  .training-ranking-table-panel,
+  .training-dashboard-project-panel,
+  .training-audio-storage-table-panel,
+  .training-audio-storage-pending-panel,
+  .training-audio-storage-filter-panel,
+  .training-question-panel,
+  .training-result-panel,
+  .training-review-panel,
+  .training-assignments-panel,
+  .training-access-mode-panel,
+  .assistant-audit-panel,
+  .assistant-result-card,
+  .project-presentation-step-panel
+) {
+  border: 1px solid var(--fw-line);
+  border-radius: 18px;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Admin home: header and cards stand on the canvas like .fw-admin-grid. */
+:root[data-app-theme="minimal-luxury"] body .content-panel.admin-home-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+:root[data-app-theme="minimal-luxury"] body .admin-home-panel .admin-actions {
+  gap: 16px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Cards standing on the canvas.
+ * ------------------------------------------------------------------------- */
+
+/* .fw-property-card: radius 26, glass at rest, lift shadow on hover. */
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) {
+  overflow: hidden;
+  border: 0;
+  border-radius: 26px;
+  background: var(--fw-panel);
+  box-shadow: var(--fw-glass-shadow);
+  transition:
+    border-color 0.24s,
+    box-shadow 0.24s,
+    transform 0.24s;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item):is(:hover, :focus-within) {
+  border-color: var(--fw-line-strong);
+  background: var(--fw-panel);
+  box-shadow: var(--fw-lift-shadow);
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-media {
+  border-radius: 26px 26px 0 0;
+}
+
+/* List view: rows stand on the canvas as separate cards. */
+:root[data-app-theme="minimal-luxury"] body .catalog-list {
+  gap: 16px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* .fw-admin-card: radius 24, flat at rest. */
+:root[data-app-theme="minimal-luxury"] body .admin-action-card {
+  border: 0;
+  border-radius: 24px;
+  background: var(--fw-panel);
+  box-shadow: none;
+  color: var(--fw-ink);
+  padding: 20px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .admin-action-card p {
+  color: var(--fw-muted);
+  font-size: 14px;
+}
+
+/* .fw-draft: radius 22, glass. */
+:root[data-app-theme="minimal-luxury"] body :is(.training-card-grid > [data-slot="card"], .project-presentation-list-card, .project-presentation-new-card) {
+  border: 0;
+  border-radius: 22px;
+  background: var(--fw-panel);
+  box-shadow: var(--fw-glass-shadow);
+}
+
+:root[data-app-theme="minimal-luxury"] body [data-slot="card"] > [data-slot="card-footer"] {
+  border-top: 1px solid var(--fw-line);
+  border-radius: 0;
+  background: transparent;
+}
+
+/* .fw-workflow-card: clickable card, radius 22, darkens on hover. */
+:root[data-app-theme="minimal-luxury"] body :is(.training-history-row, .training-dashboard-project-row) {
+  border: 1px solid transparent;
+  border-radius: 22px;
+  background: var(--fw-panel);
+  box-shadow: none;
+  color: var(--fw-ink);
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .training-dashboard-project-row {
+  border-radius: 15px;
+  background: transparent;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.training-history-row, .training-dashboard-project-row):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.training-history-row, .training-dashboard-project-row):active {
+  transform: translateY(var(--fw-press));
+}
+
+/* ---------------------------------------------------------------------------
+ * Inner blocks inside panels.
+ * ------------------------------------------------------------------------- */
+
+/* Outlined inner block (.fw-object-map / .fw-dashboard-project frame). */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .lot-presentations-lot-tile,
+  .catalog-link-row,
+  .catalog-link-empty,
+  .feed-run-progress-card,
+  .role-permissions-panel,
+  .registration-password-panel,
+  .upload-row,
+  .gallery-item,
+  .file-list li,
+  .gallery-cover-slot,
+  .gallery-upload-dropzone,
+  .gallery-tile-button,
+  .feed-source-analysis,
+  .feed-source-discovery,
+  .feed-source-filter-json,
+  .report-issue-card,
+  .empty-detail-block,
+  .admin-empty-state,
+  .object-layouts-cta,
+  .cabinet-section-list li,
+  .training-material-row,
+  .training-material-create-card,
+  .training-object-import-card,
+  .object-lot-split-card,
+  .lot-presentations-empty,
+  .project-presentations-empty
+) {
+  border: 1px solid var(--fw-line);
+  border-radius: 18px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fw-ink);
+}
+
+:root[data-app-theme="minimal-luxury"] body .lot-presentations-lot-tile {
+  overflow: hidden;
+}
+
+/* Fact tiles (.fw-object-facts span): #e3ded8, line border, radius 11. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .preview-facts div,
+  .object-detail-metrics div,
+  .object-parameters-grid div,
+  .feature-grid div,
+  .report-summary div,
+  .report-issue-meta div,
+  .feed-source-analysis-object,
+  .feed-source-discovery-platform,
+  .detail-file-list li,
+  .metro-list li,
+  .object-lot-fact-row,
+  .training-fact-row,
+  .training-metrics > div,
+  .object-feed-media-carousel-thumb
+) {
+  border: 1px solid var(--fw-line);
+  border-radius: 11px;
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-ink);
+}
+
+/* Fact pills (.fw-property-facts span): #e3ded8, no border, radius 10, 11px. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .catalog-card-location > span,
+  .catalog-card-metro,
+  .catalog-card-facts div,
+  .catalog-count
+) {
+  border: 0;
+  border-radius: 10px;
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-text);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* .fw-avatar-large: circle, line border, control fill. */
+:root[data-app-theme="minimal-luxury"] body .profile-avatar {
+  overflow: hidden;
+  border: 1px solid var(--fw-line);
+  border-radius: 50%;
+  background: var(--fw-control);
+  box-shadow: var(--fw-avatar-shadow);
+  color: var(--fw-text);
+}
+
+:root[data-app-theme="minimal-luxury"] body .profile-avatar img {
+  border-radius: 50%;
+}
+
+/* Dividers use the reference line colour. */
+:root[data-app-theme="minimal-luxury"] body :is(th, td, .details-list > div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-map-list li, .catalog-quick-links-column, .permission-group, .object-form-section, .user-form-section, .catalog-filter-fields, .object-content-sections, .object-content-section-item, .catalog-links-meta, .catalog-link-column, .table-meta) {
+  border-color: var(--fw-line);
+}
+
+/* ---------------------------------------------------------------------------
+ * Buttons.
+ * ------------------------------------------------------------------------- */
+
+/* Shared geometry of every reference button. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .primary-button,
+  .secondary-button,
+  .success-button,
+  .admin-button,
+  [data-slot="button"],
+  .catalog-filter-toggle,
+  .catalog-filter-reset,
+  .catalog-view-toggle,
+  .catalog-map-button,
+  .catalog-card-link,
+  .catalog-list-item-link,
+  .catalog-pagination-more,
+  .catalog-pagination-arrow,
+  .object-detail-edit-link,
+  .object-detail-action-button,
+  .object-layouts-cta a,
+  .object-feed-units-reset-button,
+  .map-measurement-button,
+  .map-amenity-button
+) {
+  border-radius: 13px;
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: var(--fw-button-transition);
+}
+
+/* .fw-btn-primary: light at rest, inverts to graphite on hover. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .primary-button,
+  .success-button,
+  .admin-button--primary,
+  .admin-button--success,
+  [data-slot="button"][data-variant="default"],
+  .catalog-filter-toggle,
+  .catalog-card-link,
+  .catalog-pagination-more,
+  .object-detail-action-button--primary,
+  .object-layouts-cta a,
+  .training-dashboard-create-action
+) {
+  border: 1px solid var(--fw-primary-line);
+  background: var(--fw-control);
+  color: var(--fw-text);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .primary-button,
+  .success-button,
+  .admin-button--primary,
+  .admin-button--success,
+  [data-slot="button"][data-variant="default"],
+  .catalog-filter-toggle,
+  .catalog-card-link,
+  .catalog-pagination-more,
+  .object-detail-action-button--primary,
+  .object-layouts-cta a,
+  .training-dashboard-create-action
+):not(:disabled, [aria-disabled="true"]):is(:hover, :focus-visible) {
+  border-color: var(--fw-primary-hover-line);
+  background: var(--fw-primary-hover);
+  box-shadow: none;
+  color: #ffffff;
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .primary-button,
+  .success-button,
+  .admin-button--primary,
+  .admin-button--success,
+  [data-slot="button"][data-variant="default"],
+  .catalog-filter-toggle,
+  .catalog-card-link,
+  .catalog-pagination-more,
+  .object-detail-action-button--primary,
+  .object-layouts-cta a,
+  .training-dashboard-create-action
+):not(:disabled, [aria-disabled="true"]):active {
+  border-color: var(--fw-primary-hover-line);
+  background: var(--fw-primary-pressed);
+  color: #ffffff;
+  transform: translateY(var(--fw-press));
+}
+
+/* .fw-btn-ghost / .fw-btn-outline / .fw-select-trigger. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .secondary-button,
+  .admin-button--secondary,
+  [data-slot="button"][data-variant="outline"],
+  [data-slot="button"][data-variant="secondary"],
+  .catalog-filter-reset,
+  .catalog-view-toggle,
+  .catalog-map-button,
+  .catalog-list-item-link,
+  .catalog-pagination-arrow,
+  .catalog-map-list-toggle,
+  .catalog-map-list-header .text-button,
+  .object-detail-edit-link,
+  .object-detail-action-button:not(.object-detail-action-button--primary),
+  .object-files-section .object-detail-action-button,
+  .object-feed-units-reset-button,
+  .map-measurement-button,
+  .map-amenity-button,
+  .feed-source-upload-button,
+  .lot-presentations-create-modal-button
+) {
+  border: 1px solid var(--fw-line);
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-ink);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .secondary-button,
+  .admin-button--secondary,
+  [data-slot="button"][data-variant="outline"],
+  [data-slot="button"][data-variant="secondary"],
+  .catalog-filter-reset,
+  .catalog-view-toggle,
+  .catalog-map-button,
+  .catalog-list-item-link,
+  .catalog-pagination-arrow,
+  .catalog-map-list-toggle,
+  .catalog-map-list-header .text-button,
+  .object-detail-edit-link,
+  .object-detail-action-button:not(.object-detail-action-button--primary),
+  .object-files-section .object-detail-action-button,
+  .object-feed-units-reset-button,
+  .map-measurement-button,
+  .map-amenity-button,
+  .feed-source-upload-button,
+  .lot-presentations-create-modal-button
+):not(:disabled, [aria-disabled="true"], .object-detail-action-button--disabled):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .secondary-button,
+  .admin-button--secondary,
+  [data-slot="button"][data-variant="outline"],
+  [data-slot="button"][data-variant="secondary"],
+  .catalog-filter-reset,
+  .catalog-view-toggle,
+  .catalog-map-button,
+  .catalog-list-item-link,
+  .catalog-pagination-arrow,
+  .catalog-map-list-toggle,
+  .catalog-map-list-header .text-button,
+  .object-detail-edit-link,
+  .object-detail-action-button:not(.object-detail-action-button--primary),
+  .object-files-section .object-detail-action-button,
+  .object-feed-units-reset-button,
+  .map-measurement-button,
+  .map-amenity-button,
+  .feed-source-upload-button,
+  .lot-presentations-create-modal-button
+):not(:disabled, [aria-disabled="true"], .object-detail-action-button--disabled):active {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  color: var(--fw-text);
+  transform: translateY(var(--fw-press));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.map-measurement-button, .map-amenity-button).is-active,
+:root[data-app-theme="minimal-luxury"] body :is(.map-measurement-button, .map-amenity-button)[aria-pressed="true"] {
+  border-color: var(--fw-primary-hover-line);
+  background: var(--fw-primary-hover);
+  color: #ffffff;
+}
+
+/* Transparent row/table buttons (.fw-activity-list button, .fw-table-wrap td button). */
+:root[data-app-theme="minimal-luxury"] body :is(
+  [data-slot="button"][data-variant="ghost"],
+  .admin-button--text,
+  .text-button,
+  .object-title-open,
+  .object-title-edit-button,
+  .quick-edit-cell-button,
+  .searchable-multi-select-clear,
+  .lot-presentations-create-inline,
+  .lot-presentations-search-project,
+  .object-feed-sort-button,
+  .lot-finish-modal-close,
+  .lot-collection-modal-close,
+  .lot-presentations-project-modal-close,
+  .gallery-modal-close,
+  .map-object-card-close
+) {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 400;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  [data-slot="button"][data-variant="ghost"],
+  .admin-button--text,
+  .text-button,
+  .object-title-open,
+  .object-title-edit-button,
+  .quick-edit-cell-button,
+  .searchable-multi-select-clear,
+  .lot-presentations-create-inline,
+  .lot-presentations-search-project,
+  .object-feed-sort-button,
+  .lot-finish-modal-close,
+  .lot-collection-modal-close,
+  .lot-presentations-project-modal-close,
+  .gallery-modal-close,
+  .map-object-card-close
+):not(:disabled, [aria-disabled="true"]):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  [data-slot="button"][data-variant="ghost"],
+  .admin-button--text,
+  .text-button,
+  .object-title-open,
+  .object-title-edit-button,
+  .quick-edit-cell-button,
+  .searchable-multi-select-clear,
+  .lot-presentations-create-inline,
+  .lot-presentations-search-project,
+  .object-feed-sort-button,
+  .lot-finish-modal-close,
+  .lot-collection-modal-close,
+  .lot-presentations-project-modal-close,
+  .gallery-modal-close,
+  .map-object-card-close
+):not(:disabled, [aria-disabled="true"]):active {
+  transform: translateY(var(--fw-press));
+}
+
+/* Compact filled buttons (.fw-draft footer button, .fw-pdf-actions button). */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .icon-action-button,
+  .lot-presentations-comment-button,
+  .gallery-tile-order-button,
+  .gallery-tile-remove-button,
+  .gallery-tile-open-original,
+  .gallery-modal-header-save,
+  .lot-finish-modal-option,
+  .training-dashboard-project-arrow
+) {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-text);
+  font-size: 11px;
+  font-weight: 400;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .icon-action-button,
+  .lot-presentations-comment-button,
+  .gallery-tile-order-button,
+  .gallery-tile-remove-button,
+  .gallery-tile-open-original,
+  .gallery-modal-header-save,
+  .lot-finish-modal-option,
+  .training-dashboard-project-arrow
+):not(:disabled, [aria-disabled="true"]):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .icon-action-button,
+  .lot-presentations-comment-button,
+  .gallery-tile-order-button,
+  .gallery-tile-remove-button,
+  .gallery-tile-open-original,
+  .gallery-modal-header-save,
+  .lot-finish-modal-option,
+  .training-dashboard-project-arrow
+):not(:disabled, [aria-disabled="true"]):active {
+  transform: translateY(var(--fw-press));
+}
+
+/* Destructive actions keep the neutral reference surface with a danger ink. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .danger-button,
+  .admin-button--danger,
+  [data-slot="button"][data-variant="destructive"],
+  .icon-action-button--danger
+) {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-danger);
+  font-weight: 400;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .danger-button,
+  .admin-button--danger,
+  [data-slot="button"][data-variant="destructive"],
+  .icon-action-button--danger
+):not(:disabled, [aria-disabled="true"]):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-danger);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .danger-button,
+  .admin-button--danger,
+  [data-slot="button"][data-variant="destructive"],
+  .icon-action-button--danger
+):not(:disabled, [aria-disabled="true"]):active {
+  transform: translateY(var(--fw-press));
+}
+
+/* Chips (.fw-highlights button): radius 9, no border, 11px. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .catalog-quick-links .text-button,
+  .catalog-quick-links-column li > button,
+  .searchable-multi-select-chip,
+  .permission-chip,
+  .permission-chip--role
+) {
+  border: 0;
+  border-radius: 9px;
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-ink);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16.5px;
+  padding: 7px 9px;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .catalog-quick-links .text-button,
+  .catalog-quick-links-column li > button,
+  .searchable-multi-select-chip
+):is(:hover, :focus-visible) {
+  border: 0;
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .catalog-quick-links .text-button,
+  .catalog-quick-links-column li > button,
+  .searchable-multi-select-chip
+):active {
+  transform: translateY(var(--fw-press));
+}
+
+/* Controls laid over photos (.fw-property-media button / .fw-media-label). */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .carousel-button,
+  .carousel-modal-button,
+  .carousel-modal-close,
+  .carousel-modal-download,
+  .map-object-card-gallery-button,
+  .object-feed-media-carousel-nav,
+  .object-feed-media-carousel-close
+) {
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: var(--fw-media-glass);
+  box-shadow: none;
+  color: #22231f;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .carousel-button,
+  .carousel-modal-button,
+  .carousel-modal-close,
+  .carousel-modal-download,
+  .map-object-card-gallery-button,
+  .object-feed-media-carousel-nav,
+  .object-feed-media-carousel-close
+):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  color: var(--fw-text);
+  outline: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .carousel-counter,
+  .carousel-modal-counter,
+  .carousel-section-filter,
+  .map-object-card-gallery-count,
+  .object-gallery-item figcaption
+) {
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 9px;
+  background: var(--fw-media-label);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 15px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+:root[data-app-theme="minimal-luxury"] body .carousel-thumbnail {
+  border-radius: 13px;
+  border-color: var(--fw-line-strong);
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .carousel-thumbnail:is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .carousel-thumbnail.carousel-thumbnail--active {
+  border-color: var(--fw-text);
+}
+
+/* ---------------------------------------------------------------------------
+ * Tabs (.fw-tabs) and segmented sort (.fw-segmented).
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(.lot-presentations-tabs, .project-presentations-tabs, .assistant-audit-tabs [data-slot="tabs-list"], .login-mode-toggle) {
+  gap: 10px;
+  border-bottom: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .lot-presentations-tab,
+  .project-presentations-tabs > button,
+  [data-slot="tabs-trigger"],
+  .login-mode-button
+) {
+  min-height: 46px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fw-text);
+  font-size: 14px;
+  font-weight: 400;
+  padding: 0 14px;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.lot-presentations-tab, .project-presentations-tabs > button, [data-slot="tabs-trigger"])::after {
+  display: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .lot-presentations-tab.is-active,
+  .project-presentations-tabs > button.is-active,
+  [data-slot="tabs-trigger"][data-state="active"],
+  [data-slot="tabs-trigger"][data-active],
+  .login-mode-button.login-mode-button--active
+) {
+  border-color: var(--fw-line);
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-text);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .lot-presentations-tab,
+  .project-presentations-tabs > button,
+  [data-slot="tabs-trigger"],
+  .login-mode-button
+):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+/* Reference quirk: the active tab clears its fill while hovered. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .lot-presentations-tab.is-active,
+  .project-presentations-tabs > button.is-active,
+  [data-slot="tabs-trigger"][data-state="active"],
+  [data-slot="tabs-trigger"][data-active],
+  .login-mode-button.login-mode-button--active
+):is(:hover, :focus-visible) {
+  border-color: transparent;
+  background: transparent;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .lot-presentations-tab,
+  .project-presentations-tabs > button,
+  [data-slot="tabs-trigger"],
+  .login-mode-button
+):active {
+  transform: translateY(var(--fw-press));
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.project-presentations-tabs > button, [data-slot="tabs-trigger"]) [data-slot="badge"] {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fw-text);
+  font-size: 14px;
+  padding: 3px 7px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-sort-bar {
+  padding: 7px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-sort-row {
+  gap: 8px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-sort-button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  box-shadow: none;
+  color: #111111;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  padding: 0 16px;
+  text-transform: none;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-sort-button.catalog-sort-button--active {
+  background: var(--fw-control);
+  color: var(--fw-text);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-sort-button:is(:hover, :focus-visible) {
+  background: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-sort-button.catalog-sort-button--active:is(:hover, :focus-visible) {
+  background: transparent;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-sort-button:active {
+  transform: translateY(var(--fw-press));
+}
+
+/* ---------------------------------------------------------------------------
+ * Fields.
+ * ------------------------------------------------------------------------- */
+
+/* Form fields (.fw-form-grid input): radius 12, soft inset glass. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="hidden"]),
+  textarea,
+  [data-slot="input"],
+  .quick-edit-input,
+  .searchable-multi-select-control
+) {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--fw-control);
+  box-shadow: var(--fw-field-shadow);
+  color: var(--fw-text);
+  caret-color: var(--fw-text);
+  font-size: 11px;
+  font-weight: 400;
+  outline: none;
+  transition: var(--fw-field-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="hidden"]),
+  textarea,
+  [data-slot="input"],
+  .quick-edit-input
+)::placeholder {
+  color: var(--fw-muted);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="hidden"]),
+  textarea,
+  [data-slot="input"],
+  .quick-edit-input,
+  .searchable-multi-select-control
+):where(:not(:disabled)):is(:hover, :focus, :focus-visible, :focus-within) {
+  border-color: var(--fw-line-strong);
+  background: var(--fw-control-hover);
+  box-shadow: var(--fw-field-hover-shadow);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+/* Search fields (.fw-input / .fw-global-search-field): radius 13, line border. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .catalog-filter-search input,
+  .toolbar-field--search input,
+  .admin-toolbar-search input,
+  .user-toolbar-search input,
+  .lot-presentations-search input,
+  .toolbar-input-shell
+) {
+  border: 1px solid var(--fw-line);
+  border-radius: 13px;
+  background: var(--fw-control);
+  box-shadow: var(--fw-search-shadow);
+  color: var(--fw-text);
+  font-size: 12px;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .catalog-filter-search input,
+  .toolbar-field--search input,
+  .admin-toolbar-search input,
+  .user-toolbar-search input,
+  .lot-presentations-search input,
+  .toolbar-input-shell
+):is(:hover, :focus, :focus-visible, :focus-within) {
+  border-color: var(--fw-line-strong);
+  background: var(--fw-control-hover);
+  box-shadow: var(--fw-search-hover-shadow);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .toolbar-input-shell input,
+:root[data-app-theme="minimal-luxury"] body .toolbar-input-shell input:is(:hover, :focus, :focus-visible) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+/* Select triggers (.fw-select-trigger / .fw-sort-trigger): radius 13, darken on hover. */
+:root[data-app-theme="minimal-luxury"] body :is(
+  select,
+  .multi-select-dropdown-button,
+  .catalog-filter-fields .multi-select-dropdown-button,
+  .object-feed-units-filter .multi-select-dropdown-button,
+  .catalog-pagination-select,
+  .quick-edit-select,
+  .gallery-tile-section-select
+) {
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background-color: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-text);
+  font-size: 14px;
+  font-weight: 400;
+  outline: none;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  select:not(:disabled),
+  .multi-select-dropdown-button,
+  .catalog-filter-fields .multi-select-dropdown-button,
+  .object-feed-units-filter .multi-select-dropdown-button,
+  .catalog-pagination-select,
+  .quick-edit-select,
+  .gallery-tile-section-select
+):is(:hover, :focus-visible, .is-open) {
+  border-color: var(--fw-hover-line);
+  background-color: var(--fw-hover-bg);
+  box-shadow: none;
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+/* Dropdown menus (.fw-select-menu / .fw-sort-menu). */
+:root[data-app-theme="minimal-luxury"] body :is(
+  .multi-select-dropdown-menu,
+  .searchable-multi-select-menu,
+  .lot-presentations-search-popover,
+  [data-slot="dropdown-menu-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"]
+) {
+  gap: 6px;
+  border: 0;
+  border-radius: 18px;
+  background: rgb(250 248 245 / 96%);
+  box-shadow: var(--fw-menu-shadow);
+  padding: 10px;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option) {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: rgb(250 248 245 / 50%);
+  color: var(--fw-text);
+  font-weight: 400;
+  padding: 0 12px;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option--selected, .searchable-multi-select-option--selected) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--fw-text);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option):is(:hover, :focus-visible) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  color: var(--fw-text);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+/* ---------------------------------------------------------------------------
+ * Status badges (.fw-status): radius 8, 10px, 5px 8px.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .status-pill,
+  .role-pill,
+  .import-mode-pill,
+  .feed-format-pill,
+  .panel-count,
+  .training-section-count,
+  .gallery-tile-status,
+  .report-issue-code,
+  .report-issue-severity,
+  .object-feed-status,
+  .feed-unit-status,
+  .lot-presentations-collection-count,
+  [data-slot="badge"]
+) {
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--fw-control);
+  box-shadow: none;
+  color: var(--fw-text);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 15px;
+  padding: 5px 8px;
+  text-transform: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .status-pill--active,
+  .object-status--published,
+  .gallery-tile-status--section,
+  .import-mode-pill--run,
+  .feed-format-pill--cian_xml,
+  .feed-source-status--active,
+  .feed-unit-status--available,
+  .feed-unit-status--booked,
+  .feed-unit-status--reserved,
+  .object-feed-status--available,
+  .object-feed-status--booked,
+  .object-feed-status--reserved,
+  .import-status--success,
+  .training-status--success,
+  .training-status--active
+) {
+  border-color: transparent;
+  background: var(--fw-success-soft);
+  color: var(--fw-success);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .status-pill--invited,
+  .object-status--draft,
+  .feed-format-pill--avito_xml,
+  .import-status--partial,
+  .training-status--warning,
+  .report-summary-item--warning
+) {
+  border-color: transparent;
+  background: var(--fw-warning-soft);
+  color: var(--fw-warning);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  .status-pill--blocked,
+  .import-status--failed,
+  .feed-unit-status--sold,
+  .object-feed-status--sold,
+  .training-status--danger,
+  .report-summary-item--danger
+) {
+  border-color: transparent;
+  background: var(--fw-danger-soft);
+  color: var(--fw-danger);
+}
+
+/* .fw-role on the profile: admin role reads red. */
+:root[data-app-theme="minimal-luxury"] body .role-pill {
+  border-color: transparent;
+  background: var(--fw-role-soft);
+  color: var(--fw-role);
+}
+
+:root[data-app-theme="minimal-luxury"] body .role-pill.role-pill--table {
+  background: transparent;
+  color: var(--fw-ink);
+  font-size: 11px;
+  padding-inline: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Tables (.fw-table-wrap).
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(th, [data-slot="table-head"]) {
+  border-bottom: 1px solid var(--fw-line);
+  background: transparent;
+  color: var(--fw-muted);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.6px;
+  line-height: 15px;
+  text-transform: uppercase;
+}
+
+/* Sort buttons inside headers keep the header typography. */
+:root[data-app-theme="minimal-luxury"] body :is(th, [data-slot="table-head"]) :is(.table-sort-button, [data-slot="button"]) {
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(td, [data-slot="table-cell"]) {
+  border-bottom: 1px solid var(--fw-line);
+  color: var(--fw-ink);
+}
+
+:root[data-app-theme="minimal-luxury"] body tbody tr:hover td {
+  background: transparent;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(tr.is-selected td, .catalog-map-list-item--selected) {
+  background: var(--fw-hover-bg);
+}
+
+:root[data-app-theme="minimal-luxury"] body .table-meta {
+  border-bottom: 1px solid var(--fw-line);
+  color: var(--fw-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* ---------------------------------------------------------------------------
+ * Dialogs and floating panels.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(
+  [data-slot="dialog-content"],
+  .lot-presentations-create-modal,
+  .lot-presentations-project-modal,
+  .lot-presentations-comment-modal,
+  .lot-finish-modal,
+  .lot-collection-modal,
+  .gallery-modal,
+  .gallery-close-confirm,
+  .training-create-dialog,
+  .training-audio-storage-delete-dialog,
+  .project-presentation-preview-dialog,
+  .project-presentation-image-dialog,
+  .map-object-card,
+  .catalog-map-list
+) {
+  border: 0;
+  border-radius: 24px;
+  background: var(--fw-panel);
+  box-shadow: var(--fw-glass-shadow);
+  color: var(--fw-ink);
+}
+
+/* ---------------------------------------------------------------------------
+ * Alerts and notices.
+ * ------------------------------------------------------------------------- */
+
+:root[data-app-theme="minimal-luxury"] body :is(.form-notice, .admin-alert--notice) {
+  border-color: transparent;
+  border-radius: 13px;
+  background: var(--fw-success-soft);
+  color: var(--fw-success);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.admin-alert--error, .deactivation-confirm) {
+  border-color: transparent;
+  border-radius: 13px;
+  background: var(--fw-danger-soft);
+  color: var(--fw-danger);
+}

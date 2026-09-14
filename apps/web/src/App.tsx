@@ -9,7 +9,19 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from 'react';
-import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
+import {
+  BookOpen,
+  Building2,
+  House,
+  Layers,
+  LogOut,
+  MenuIcon,
+  MoonIcon,
+  ShieldCheck,
+  SunIcon,
+  UserRound,
+  type LucideIcon,
+} from 'lucide-react';
 import type { AuthUser, UserStatus } from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
@@ -29,6 +41,7 @@ import { TrainingAdminRoutes, TrainingEmployeeRoutes } from './training/Training
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
+import './fluffy-white-theme.css';
 
 type AppSection = 'cabinet' | 'catalog' | 'presentations' | 'training' | 'admin';
 type LoginMode = 'login' | 'register';
@@ -42,6 +55,7 @@ type NavItem = {
   label: string;
   path: string;
   section: AppSection;
+  icon: LucideIcon;
   requiredPermissions: readonly string[];
   children?: readonly NavChildItem[];
 };
@@ -102,6 +116,7 @@ const navItems: readonly NavItem[] = [
     label: 'Кабинет',
     path: '/cabinet',
     section: 'cabinet',
+    icon: House,
     requiredPermissions: [],
   },
   {
@@ -109,6 +124,7 @@ const navItems: readonly NavItem[] = [
     label: 'Подборки',
     path: '/presentations',
     section: 'presentations',
+    icon: Layers,
     requiredPermissions: [],
   },
   {
@@ -116,6 +132,7 @@ const navItems: readonly NavItem[] = [
     label: 'Обучение',
     path: '/training',
     section: 'training',
+    icon: BookOpen,
     requiredPermissions: ['training:participate'],
   },
   {
@@ -123,6 +140,7 @@ const navItems: readonly NavItem[] = [
     label: 'Админка',
     path: '/admin',
     section: 'admin',
+    icon: ShieldCheck,
     requiredPermissions: ['admin:access'],
   },
   {
@@ -130,6 +148,7 @@ const navItems: readonly NavItem[] = [
     label: 'Каталог',
     path: '/catalog',
     section: 'catalog',
+    icon: Building2,
     requiredPermissions: ['objects:read'],
     children: [
       {
@@ -381,33 +400,21 @@ function AppRoutes() {
         className={isSidebarOpen ? 'sidebar sidebar--open' : 'sidebar'}
         aria-label="Основная навигация"
       >
-        <button
-          className="sidebar-toggle"
-          type="button"
-          aria-controls="main-sidebar-content"
-          aria-expanded={isSidebarOpen}
-          aria-label={isSidebarOpen ? 'Свернуть меню' : 'Раскрыть меню'}
-          onClick={() => setIsSidebarOpen((isOpen) => !isOpen)}
-        >
-          <MenuIcon aria-hidden="true" />
-        </button>
-
-        <div id="main-sidebar-content" className="sidebar-content" aria-hidden={!isSidebarOpen}>
+        <div id="main-sidebar-content" className="sidebar-content">
           <div className="sidebar-brand">
             <img className="sidebar-logo" src={platformLogoUrl} alt="" aria-hidden="true" />
             <h1 className="sidebar-title">Платформа брокеров</h1>
+            <button
+              className="sidebar-toggle"
+              type="button"
+              aria-controls="main-sidebar-content"
+              aria-expanded={isSidebarOpen}
+              aria-label={isSidebarOpen ? 'Свернуть меню' : 'Раскрыть меню'}
+              onClick={() => setIsSidebarOpen((isOpen) => !isOpen)}
+            >
+              <MenuIcon aria-hidden="true" />
+            </button>
           </div>
-
-          <button
-            className="theme-toggle"
-            type="button"
-            aria-label={themeToggleLabel}
-            title={themeToggleLabel}
-            tabIndex={isSidebarOpen ? 0 : -1}
-            onClick={handleThemeToggle}
-          >
-            {isDarkTheme ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
-          </button>
 
           <nav className="nav-list">
             {visibleNavItems.map((item) =>
@@ -417,10 +424,11 @@ function AppRoutes() {
                     aria-haspopup="menu"
                     className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
                     type="button"
-                    tabIndex={isSidebarOpen ? 0 : -1}
+                    title={item.label}
                     onClick={() => navigate(item.path)}
                   >
-                    {item.label}
+                    <item.icon aria-hidden="true" />
+                    <span>{item.label}</span>
                   </button>
                   <div className="nav-submenu" role="menu" aria-label="Разделы каталога">
                     {item.children.map((child) => (
@@ -429,7 +437,6 @@ function AppRoutes() {
                         className={pathname === child.path ? 'nav-subitem nav-subitem--active' : 'nav-subitem'}
                         role="menuitem"
                         type="button"
-                        tabIndex={isSidebarOpen ? 0 : -1}
                         onClick={() => navigate(child.path)}
                       >
                         {child.label}
@@ -442,23 +449,54 @@ function AppRoutes() {
                   key={item.id}
                   className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
                   type="button"
-                  tabIndex={isSidebarOpen ? 0 : -1}
+                  title={item.label}
                   onClick={() => navigate(getNavigationPath(user, item))}
                 >
-                  {item.label}
+                  <item.icon aria-hidden="true" />
+                  <span>{item.label}</span>
                 </button>
               ),
             )}
           </nav>
 
-          <button
-            className="secondary-button"
-            type="button"
-            tabIndex={isSidebarOpen ? 0 : -1}
-            onClick={() => void logout()}
-          >
-            Выйти
-          </button>
+          <div className="sidebar-bottom">
+            <button
+              className="sidebar-user"
+              type="button"
+              aria-label="Открыть профиль"
+              title="Профиль"
+              onClick={() => navigate('/cabinet')}
+            >
+              <span className="sidebar-avatar">
+                <UserRound aria-hidden="true" />
+              </span>
+              <span className="sidebar-user-text">
+                <b>{user.name ?? user.email}</b>
+                <small>{user.role.name}</small>
+              </span>
+            </button>
+            <div className="sidebar-actions">
+              <button
+                className="theme-toggle"
+                type="button"
+                aria-label={themeToggleLabel}
+                title={themeToggleLabel}
+                onClick={handleThemeToggle}
+              >
+                {isDarkTheme ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
+                <span>{isDarkTheme ? 'Светлая тема' : 'Темная тема'}</span>
+              </button>
+              <button
+                className="secondary-button sidebar-logout"
+                type="button"
+                title="Выйти"
+                onClick={() => void logout()}
+              >
+                <LogOut aria-hidden="true" />
+                <span>Выйти</span>
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
 
