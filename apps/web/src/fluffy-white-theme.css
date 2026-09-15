@@ -483,7 +483,6 @@
   .catalog-filters,
   .catalog-pagination,
   .catalog-map-panel,
-  .object-detail-hero,
   .detail-section,
   .object-image-carousel,
   .object-lot-media-panel,
@@ -666,6 +665,55 @@
   border-radius: 26px 26px 0 0;
 }
 
+/* .fw-property-media has no shade: captions carry their own dark glass. */
+:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-media-shade {
+  display: none;
+}
+
+/* .fw-property-body: 11px muted meta, 22px/500 title, 20px/500 price, 11.67px muted price per m². */
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) .catalog-card-meta {
+  color: var(--fw-muted);
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) h3 {
+  color: var(--fw-ink);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.44px;
+  line-height: 25.3px;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-card .catalog-card-price, .catalog-list-item .catalog-list-item-price) {
+  color: var(--fw-ink);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 30px;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) .catalog-card-price-per-meter {
+  color: var(--fw-muted);
+}
+
+/* .fw-property-card .fw-btn: full width, 44px. */
+:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-body .catalog-card-link {
+  width: 100%;
+  min-height: 44px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-list-item .catalog-list-item-media {
+  border-radius: 26px 0 0 26px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-list-item .catalog-list-item-link {
+  min-height: 44px;
+}
+
+@media (max-width: 700px) {
+  :root[data-app-theme="minimal-luxury"] body .catalog-list-item .catalog-list-item-media {
+    border-radius: 26px 26px 0 0;
+  }
+}
+
 /* .fw-property-media > div: photo indicators 12px from the top-right corner, 7px apart. */
 :root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-document-badges {
   gap: 7px;
@@ -840,9 +888,7 @@
 
 /* Fact pills (.fw-property-facts span): #e3ded8, no border, radius 10, 11px. */
 :root[data-app-theme="minimal-luxury"] body :is(
-  .catalog-card-location > span,
-  .catalog-card-metro,
-  .catalog-card-facts div,
+  .catalog-card-facts span,
   .catalog-count
 ) {
   border: 0;
@@ -869,7 +915,7 @@
 }
 
 /* Dividers use the reference line colour. */
-:root[data-app-theme="minimal-luxury"] body :is(th, td, .details-list > div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-map-list li, .catalog-quick-links-column, .permission-group, .object-form-section, .user-form-section, .object-content-sections, .object-content-section-item, .catalog-links-meta, .catalog-link-column, .table-meta) {
+:root[data-app-theme="minimal-luxury"] body :is(th, td, .details-list > div, .object-detail-facts div, .location-list div, .catalog-map-list li, .catalog-quick-links-column, .permission-group, .object-form-section, .user-form-section, .object-content-sections, .object-content-section-item, .catalog-links-meta, .catalog-link-column, .table-meta) {
   border-color: var(--fw-line);
 }
 
@@ -1508,8 +1554,8 @@
   height: 42px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filters .catalog-filter-search-field input,
-:root[data-app-theme="minimal-luxury"] body .catalog-filters .catalog-filter-search-field input:is(:hover, :focus, :focus-visible) {
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-filters, .object-feed-units-toolbar) .catalog-filter-search-field input,
+:root[data-app-theme="minimal-luxury"] body :is(.catalog-filters, .object-feed-units-toolbar) .catalog-filter-search-field input:is(:hover, :focus, :focus-visible) {
   font-size: 12px;
   line-height: 18px;
   padding: 1px 2px;

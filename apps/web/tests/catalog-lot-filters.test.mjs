@@ -80,10 +80,10 @@ test('catalog global lot filters render as pills with range popovers and count a
   assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
   assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
   assert.match(source, /\{ value:\s*'5',\s*label:\s*'5 спален'\s*\}/);
-  assert.match(source, /<CatalogFilterPill\s+ariaLabel="Фильтр каталога по комнатам"[\s\S]*?<DropdownListbox aria-label="Фильтр каталога по комнатам" aria-multiselectable=\{true\}>/);
+  assert.match(source, /<FilterPill\s+ariaLabel="Фильтр каталога по комнатам"[\s\S]*?<DropdownListbox aria-label="Фильтр каталога по комнатам" aria-multiselectable=\{true\}>/);
   assert.match(source, /onChange\(\{\s*lotRooms: formatRoomFilterValues\(/);
   assert.match(multiSelectSource, /aria-multiselectable=\{true\}/);
-  assert.match(source, /<CatalogFilterPill\s+ariaLabel="Фильтр каталога по цене"[\s\S]*?menuClassName="catalog-filter-popover"/);
+  assert.match(source, /<FilterPill\s+ariaLabel="Фильтр каталога по цене"[\s\S]*?menuClassName="catalog-filter-popover"/);
   assert.match(source, /className="catalog-filter-range" aria-label="Диапазон цены лота" role="group"/);
   assert.match(source, /className="catalog-filter-range" aria-label="Диапазон цены за метр лота" role="group"/);
   assert.match(source, /className="catalog-filter-range" aria-label="Диапазон этажа лота" role="group"/);
@@ -113,7 +113,7 @@ test('catalog filter panel is a sticky search row with one bar of filter pills',
     /className="catalog-filter-header-actions"[\s\S]*?className="catalog-filter-reset"[\s\S]*?disabled=\{!filters\.search && countActiveAdvancedFilters\(filters\) === 0\}[\s\S]*?<span>Сбросить<\/span>/,
   );
   assert.match(source, /<div className="catalog-filter-bar" role="group" aria-label="Параметры подбора">/);
-  const pillLabels = [...source.matchAll(/<CatalogFilter(?:Pill|SearchSelect)\s+ariaLabel="([^"]+)"/g)].map((match) => match[1]);
+  const pillLabels = [...source.matchAll(/<(?:FilterPill|CatalogFilterSearchSelect)\s+ariaLabel="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(pillLabels, [
     'Фильтр каталога по разделу',
     'Фильтр каталога по застройщику',
@@ -163,7 +163,7 @@ test('catalog result cards show matched lot count only for lot-filtered results'
   assert.match(source, /typeof object\.matchedFeedUnitsCount !== 'number'/);
   assert.match(source, /Найдено лотов: \$\{formatNumber\(matchedLotsCount\)\}/);
   assert.match(source, /className="catalog-matched-lots-badge"/);
-  assert.match(source, /className="catalog-card-matched-lots-badge"/);
+  assert.match(source, /className="catalog-card-media-label catalog-card-matched-lots-badge"/);
   assert.match(source, /const matchedLotsLabel = getCatalogMatchedLotsLabel\(object, filters\);/);
   assert.match(source, /const matchedLotsCount = getCatalogMatchedLotsCount\(object, filters\);/);
 });

@@ -13,7 +13,6 @@ import {
 } from 'react';
 import {
   CheckIcon,
-  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   LayoutGridIcon,
@@ -49,18 +48,14 @@ import { matchesSearchVariants } from '@platforma/shared/search-normalization';
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import { DropdownEmpty, DropdownListbox, DropdownOption, DropdownSearchInput } from '../components/Dropdown';
 import {
-  DropdownContent,
-  DropdownEmpty,
-  DropdownListbox,
-  DropdownOption,
-  DropdownRoot,
-  DropdownSearchInput,
-  DropdownTrigger,
-  joinDropdownClassNames,
-  useDropdownState,
-  type DropdownCloseReason,
-} from '../components/Dropdown';
+  FilterPill,
+  FilterPopoverFooter,
+  formatCompactMoney,
+  formatPillSelection,
+  formatRangeValue,
+} from '../components/FilterPill';
 import { SelectDropdown } from '../components/SelectDropdown';
 import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
@@ -758,7 +753,7 @@ function CatalogFilters({
   const selectedObjectType = catalogObjectTypeOptions.find((option) => option.value === filters.objectType);
   const selectedRoomValues = getRoomFilterValues(filters.lotRooms);
   const priceValue = formatCatalogPriceFilterValue(filters);
-  const floorValue = formatCatalogRangeValue(filters.lotFloorMin, filters.lotFloorMax, (value) => value);
+  const floorValue = formatRangeValue(filters.lotFloorMin, filters.lotFloorMax, (value) => value);
   const completionYearOptions = getCatalogCompletionYearOptions(filters.completionYear);
 
   function handleCurrencyInputBackspace(event: KeyboardEvent<HTMLInputElement>, patchKey: keyof CatalogFilters) {
@@ -815,7 +810,7 @@ function CatalogFilters({
       </div>
 
       <div className="catalog-filter-bar" role="group" aria-label="Параметры подбора">
-        <CatalogFilterPill
+        <FilterPill
           ariaLabel="Фильтр каталога по разделу"
           isSet={filters.objectType !== 'ALL'}
           label="Все разделы"
@@ -836,7 +831,7 @@ function CatalogFilters({
               ))}
             </DropdownListbox>
           )}
-        </CatalogFilterPill>
+        </FilterPill>
 
         <span aria-hidden="true" className="catalog-filter-divider" />
 
@@ -903,7 +898,7 @@ function CatalogFilters({
           }
         />
 
-        <CatalogFilterPill
+        <FilterPill
           ariaLabel="Фильтр каталога по сроку сдачи"
           isSet={Boolean(filters.completionYear)}
           label="Срок сдачи"
@@ -932,11 +927,11 @@ function CatalogFilters({
               ))}
             </DropdownListbox>
           )}
-        </CatalogFilterPill>
+        </FilterPill>
 
         <span aria-hidden="true" className="catalog-filter-divider" />
 
-        <CatalogFilterPill
+        <FilterPill
           ariaLabel="Фильтр каталога по цене"
           isSet={Boolean(priceValue)}
           label="Цена"
@@ -1003,19 +998,19 @@ function CatalogFilters({
                 </div>
               </div>
 
-              <CatalogFilterPopoverFooter
+              <FilterPopoverFooter
                 onClear={() => onChange({ lotPriceMin: '', lotPriceMax: '', lotPricePerMeterMin: '', lotPricePerMeterMax: '' })}
                 onDone={() => close('select')}
               />
             </>
           )}
-        </CatalogFilterPill>
+        </FilterPill>
 
-        <CatalogFilterPill
+        <FilterPill
           ariaLabel="Фильтр каталога по комнатам"
           isSet={selectedRoomValues.length > 0}
           label="Комнаты"
-          value={formatCatalogPillSelection(
+          value={formatPillSelection(
             catalogRoomOptions.filter((option) => selectedRoomValues.includes(option.value)).map((option) => option.label),
           )}
         >
@@ -1044,9 +1039,9 @@ function CatalogFilters({
               ))}
             </DropdownListbox>
           )}
-        </CatalogFilterPill>
+        </FilterPill>
 
-        <CatalogFilterPill
+        <FilterPill
           ariaLabel="Фильтр каталога по этажу"
           isSet={Boolean(floorValue)}
           label="Этаж"
@@ -1082,13 +1077,13 @@ function CatalogFilters({
                 </div>
               </div>
 
-              <CatalogFilterPopoverFooter
+              <FilterPopoverFooter
                 onClear={() => onChange({ lotFloorMin: '', lotFloorMax: '' })}
                 onDone={() => close('select')}
               />
             </>
           )}
-        </CatalogFilterPill>
+        </FilterPill>
       </div>
     </section>
   );
@@ -1133,112 +1128,12 @@ function useCatalogStickyPanel(panelRef: RefObject<HTMLElement | null>) {
   return isStuck;
 }
 
-function CatalogFilterPill({
-  ariaLabel,
-  children,
-  disabled = false,
-  isSet,
-  label,
-  menuClassName,
-  value,
-}: {
-  ariaLabel: string;
-  children: (close: (reason: DropdownCloseReason) => void) => ReactNode;
-  disabled?: boolean;
-  isSet: boolean;
-  label: string;
-  menuClassName?: string;
-  value: string;
-}) {
-  const menuId = useId();
-  const { isOpen, open, close, onOpenChange } = useDropdownState();
-  const showsValue = isSet && Boolean(value);
-  const showsKey = showsValue && !label.startsWith('Все ');
-
-  return (
-    <DropdownRoot open={isOpen && !disabled} onOpenChange={onOpenChange}>
-      <DropdownTrigger aria-controls={isOpen ? menuId : undefined} aria-haspopup="dialog" onOpen={open}>
-        <button
-          aria-expanded={isOpen}
-          className={joinDropdownClassNames('catalog-filter-pill', showsValue && 'is-set', isOpen && 'is-open')}
-          disabled={disabled}
-          title={showsValue ? `${ariaLabel}: ${value}` : ariaLabel}
-          type="button"
-        >
-          {showsKey ? <span className="catalog-filter-pill-key">{label}</span> : null}
-          <span className="catalog-filter-pill-value">{showsValue ? value : label}</span>
-          <ChevronDownIcon aria-hidden="true" className="catalog-filter-pill-chevron" />
-        </button>
-      </DropdownTrigger>
-
-      <DropdownContent id={menuId} aria-label={ariaLabel} className={menuClassName} onRequestClose={close}>
-        {children(close)}
-      </DropdownContent>
-    </DropdownRoot>
-  );
-}
-
-function CatalogFilterPopoverFooter({ onClear, onDone }: { onClear: () => void; onDone: () => void }) {
-  return (
-    <div className="catalog-filter-popover-footer">
-      <button className="catalog-filter-popover-clear" type="button" onClick={onClear}>
-        Очистить
-      </button>
-      <button className="catalog-filter-popover-done" type="button" onClick={onDone}>
-        Готово
-      </button>
-    </div>
-  );
-}
-
-function formatCatalogPillSelection(labels: string[]) {
-  const [firstLabel] = labels;
-
-  if (!firstLabel) {
-    return '';
-  }
-
-  return labels.length > 1 ? `${firstLabel} +${labels.length - 1}` : firstLabel;
-}
-
-function formatCatalogCompactMoney(value: string) {
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount)) {
-    return value;
-  }
-
-  const format = (number: number) => number.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
-
-  if (amount >= 1_000_000) {
-    return `${format(amount / 1_000_000)} млн`;
-  }
-
-  if (amount >= 1_000) {
-    return `${format(amount / 1_000)} тыс`;
-  }
-
-  return format(amount);
-}
-
-function formatCatalogRangeValue(min: string, max: string, formatValue: (value: string) => string) {
-  if (min && max) {
-    return `${formatValue(min)} – ${formatValue(max)}`;
-  }
-
-  if (min) {
-    return `от ${formatValue(min)}`;
-  }
-
-  return max ? `до ${formatValue(max)}` : '';
-}
-
 function formatCatalogPriceFilterValue(filters: CatalogFilters) {
-  const lotPrice = formatCatalogRangeValue(filters.lotPriceMin, filters.lotPriceMax, formatCatalogCompactMoney);
-  const pricePerMeter = formatCatalogRangeValue(
+  const lotPrice = formatRangeValue(filters.lotPriceMin, filters.lotPriceMax, formatCompactMoney);
+  const pricePerMeter = formatRangeValue(
     filters.lotPricePerMeterMin,
     filters.lotPricePerMeterMax,
-    formatCatalogCompactMoney,
+    formatCompactMoney,
   );
 
   if (lotPrice && pricePerMeter) {
@@ -1319,12 +1214,12 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
   }
 
   return (
-    <CatalogFilterPill
+    <FilterPill
       ariaLabel={ariaLabel}
       disabled={disabled}
       isSet={hasSelectedOptions}
       label={label}
-      value={formatCatalogPillSelection(selectedOptions.map((option) => getPillLabel(option)))}
+      value={formatPillSelection(selectedOptions.map((option) => getPillLabel(option)))}
     >
       {() => (
         <>
@@ -1359,7 +1254,7 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
           </DropdownListbox>
         </>
       )}
-    </CatalogFilterPill>
+    </FilterPill>
   );
 }
 
@@ -2238,9 +2133,7 @@ function CatalogListItem({
   const coverImage = object.coverImage;
   const objectHref = buildCatalogObjectHref(object.slug, filters);
   const matchedLotsLabel = getCatalogMatchedLotsLabel(object, filters);
-  const developerLabel = object.developer?.name ?? 'Не указан';
   const districtLabel = getObjectDistrictLabel(object);
-  const metroLabel = formatListMetroStations(object.metroStations);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
 
   return (
@@ -2257,46 +2150,33 @@ function CatalogListItem({
         ) : (
           <CatalogMediaState title="Нет обложки" text="Показываем данные объекта" tone="empty" />
         )}
+        {matchedLotsLabel ? <span className="catalog-matched-lots-badge">{matchedLotsLabel}</span> : null}
       </a>
 
       <div className="catalog-list-item-body">
+        <span className="catalog-card-meta">
+          {districtLabel}
+          <CatalogCardMetroLabel stations={object.metroStations} />
+        </span>
         <h3>
-          <a href={objectHref} rel="noopener noreferrer" target="_blank">
+          <a href={objectHref} rel="noopener noreferrer" target="_blank" title={object.title}>
             {object.title}
           </a>
         </h3>
-        <dl className="catalog-list-item-details">
-          <div>
-            <dt>Застройщик</dt>
-            <dd>{developerLabel}</dd>
-          </div>
-          <div>
-            <dt>Район</dt>
-            <dd>{districtLabel}</dd>
-          </div>
-          <div>
-            <dt>Метро</dt>
-            <dd>{metroLabel ?? 'Не указано'}</dd>
-          </div>
-          <div>
-            <dt>Завершение строительства</dt>
-            <dd>{formatListCompletion(object.completionYear, object.completionQuarter)}</dd>
-          </div>
-          <div>
-            <dt>Площадь</dt>
-            <dd>{areaLabel}</dd>
-          </div>
-        </dl>
-        <p className="catalog-list-item-price">
-          Цена: {formatRequestedPriceFrom(getCatalogPriceFrom(object))} | Цена за м²:{' '}
+        <p className="catalog-list-item-price">{formatRequestedPriceFrom(getCatalogPriceFrom(object))}</p>
+        <span className="catalog-card-price-per-meter">
           {formatRequestedPricePerMeterFrom(getCatalogPricePerMeterFrom(object))}
-        </p>
-        {matchedLotsLabel ? <span className="catalog-matched-lots-badge">{matchedLotsLabel}</span> : null}
+        </span>
+        <div className="catalog-card-facts catalog-list-item-facts">
+          <span>Срок · {formatCatalogCardFact(formatCompletion(object.completionYear, object.completionQuarter))}</span>
+          <span>Площадь · {formatCatalogCardFact(areaLabel)}</span>
+          <span>Застройщик · {object.developer?.name ?? '—'}</span>
+        </div>
       </div>
 
       <div className="catalog-list-item-action">
         <a className="catalog-list-item-link" href={objectHref} rel="noopener noreferrer" target="_blank">
-          Подробнее
+          Открыть объект
         </a>
       </div>
     </article>
@@ -2321,6 +2201,7 @@ function CatalogCard({
   const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation || hasImportedLotsBadge || hasAerotourBadge;
   const districtLabel = getObjectDistrictLabel(object);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
+  const developerName = object.developer?.name ?? null;
 
   return (
     <article className="catalog-card">
@@ -2337,13 +2218,20 @@ function CatalogCard({
           <CatalogMediaState title="Нет обложки" text="Показываем данные объекта" tone="empty" />
         )}
         <span aria-hidden="true" className="catalog-card-media-shade" />
-        {hasVisibleBadges ? (
+        {hasVisibleBadges || developerName ? (
           <span className="catalog-card-badges">
-            {object.status === 'PUBLISHED' ? null : (
-              <span className={`status-pill catalog-card-status object-status object-status--${object.status.toLowerCase()}`}>
-                {objectStatusLabels[object.status]}
-              </span>
-            )}
+            <span className="catalog-card-labels">
+              {object.status === 'PUBLISHED' ? null : (
+                <span className={`status-pill catalog-card-status object-status object-status--${object.status.toLowerCase()}`}>
+                  {objectStatusLabels[object.status]}
+                </span>
+              )}
+              {developerName ? (
+                <span className="catalog-card-media-label" title={`Застройщик: ${developerName}`}>
+                  {developerName}
+                </span>
+              ) : null}
+            </span>
             {hasPresentation || hasImportedLotsBadge || hasAerotourBadge ? (
               <span className="catalog-card-document-badges">
                 {hasImportedLotsBadge ? (
@@ -2377,48 +2265,31 @@ function CatalogCard({
             ) : null}
           </span>
         ) : null}
+        {matchedLotsCount !== null ? (
+          <span className="catalog-card-media-label catalog-card-matched-lots-badge">
+            {formatNumber(matchedLotsCount)} {formatCatalogLotsWord(matchedLotsCount)} по фильтру
+          </span>
+        ) : null}
       </a>
       <div className="catalog-card-body">
-        <div className="catalog-card-heading">
-          <h3>
-            <a href={objectHref} rel="noopener noreferrer" target="_blank" title={object.title}>
-              {object.title}
-            </a>
-          </h3>
-        </div>
-        <div className="catalog-card-price-row">
-          <p className="catalog-card-price">{formatPriceFrom(getCatalogPriceFrom(object))}</p>
-          <span>{formatPricePerMeterFrom(getCatalogPricePerMeterFrom(object))}</span>
-        </div>
-        <div className="catalog-card-location" aria-label="Район и метро">
-          <span title={districtLabel}>{districtLabel}</span>
+        <span className="catalog-card-meta">
+          {districtLabel}
           <CatalogCardMetroLabel stations={object.metroStations} />
-        </div>
-        <dl className="catalog-card-facts">
-          <div>
-            <dt>Срок</dt>
-            <dd>{formatCompletion(object.completionYear, object.completionQuarter)}</dd>
-          </div>
-          <div>
-            <dt>Площадь</dt>
-            <dd>{areaLabel}</dd>
-          </div>
-          <div>
-            <dt>Застройщик</dt>
-            <dd>{object.developer?.name ?? 'Не указан'}</dd>
-          </div>
-          {matchedLotsCount !== null ? (
-            <div className="catalog-card-matched-lots-badge">
-              <dt>Найдено лотов</dt>
-              <dd>{formatNumber(matchedLotsCount)}</dd>
-            </div>
-          ) : null}
-        </dl>
-        <div className="catalog-card-actions">
-          <a className="catalog-card-link" href={objectHref} rel="noopener noreferrer" target="_blank">
-            Подробнее
+        </span>
+        <h3>
+          <a href={objectHref} rel="noopener noreferrer" target="_blank" title={object.title}>
+            {object.title}
           </a>
+        </h3>
+        <p className="catalog-card-price">{formatPriceFrom(getCatalogPriceFrom(object))}</p>
+        <span className="catalog-card-price-per-meter">{formatPricePerMeterFrom(getCatalogPricePerMeterFrom(object))}</span>
+        <div className="catalog-card-facts">
+          <span>Срок · {formatCatalogCardFact(formatCompletion(object.completionYear, object.completionQuarter))}</span>
+          <span>Площадь · {formatCatalogCardFact(areaLabel)}</span>
         </div>
+        <a className="catalog-card-link" href={objectHref} rel="noopener noreferrer" target="_blank">
+          Открыть объект
+        </a>
       </div>
     </article>
   );
@@ -2452,38 +2323,43 @@ function CatalogDocumentIcon() {
   );
 }
 
+/** Metro part of the card meta line: «· м. Тверская, Чеховская». */
 function CatalogCardMetroLabel({ stations }: { stations: ObjectMetroStationLink[] }) {
   if (stations.length === 0) {
     return null;
   }
 
-  const visibleStations = stations.slice(0, 2);
-  const hiddenCount = stations.length - visibleStations.length;
   const metroLabel = formatMetroStations(stations) ?? undefined;
 
   return (
-    <span className="catalog-card-metro" aria-label={metroLabel} title={metroLabel}>
-      <span className="catalog-card-metro-prefix">Метро</span>
-      {visibleStations.map((station, index) => {
-        const lineColor = normalizeLineColor(station.lineColor);
-
-        return (
-          <span className="catalog-card-metro-station" key={station.id}>
-            <span
-              aria-hidden="true"
-              className="catalog-card-metro-dot"
-              style={lineColor ? { background: lineColor } : undefined}
-            />
-            <span className="catalog-card-metro-name">
-              {station.name}
-              {index < visibleStations.length - 1 ? ',' : ''}
-            </span>
-          </span>
-        );
-      })}
-      {hiddenCount > 0 ? <span className="catalog-card-metro-more">+{hiddenCount}</span> : null}
+    <span className="catalog-card-metro" title={metroLabel}>
+      {` · м. ${stations.map((station) => station.name).join(', ')}`}
     </span>
   );
+}
+
+/** Card facts use typographic ranges and a dash for missing values: «71,1–366 м²», «—». */
+function formatCatalogCardFact(value: string) {
+  if (value.startsWith('Не указ')) {
+    return '—';
+  }
+
+  return value.replace(/(\d)\.(\d)/g, '$1,$2').replace(/(\d)\s*-\s*(\d)/g, '$1–$2');
+}
+
+function formatCatalogLotsWord(count: number) {
+  const lastTwoDigits = count % 100;
+  const lastDigit = count % 10;
+
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 14) {
+    return 'лотов';
+  }
+
+  if (lastDigit === 1) {
+    return 'лот';
+  }
+
+  return lastDigit >= 2 && lastDigit <= 4 ? 'лота' : 'лотов';
 }
 
 function CatalogMediaState({
@@ -3071,16 +2947,6 @@ function formatCompactRussianNumber(value: number) {
   }).format(value);
 }
 
-function normalizeLineColor(value: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  const trimmedValue = value.trim();
-
-  return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/iu.test(trimmedValue) ? trimmedValue : null;
-}
-
 function hasExternalObjectUrl(value: string | null) {
   const trimmedValue = value?.trim();
 
@@ -3108,24 +2974,12 @@ function formatMetroStations(stations: ObjectMetroStationLink[]) {
   return `Метро ${visibleStations.join(', ')}${hiddenCount > 0 ? ` +${hiddenCount}` : ''}`;
 }
 
-function formatListMetroStations(stations: ObjectMetroStationLink[]) {
-  return formatMetroStations(stations)?.replace(/^Метро /, '') ?? null;
-}
-
 function formatCompletion(year: number | null, quarter: number | null) {
   if (!year) {
     return 'Не указан';
   }
 
   return quarter ? `${quarter} кв. ${year}` : String(year);
-}
-
-function formatListCompletion(year: number | null, quarter: number | null) {
-  if (!year) {
-    return 'Не указан';
-  }
-
-  return quarter ? `${quarter} кв. ${year} г.` : `${year} г.`;
 }
 
 function escapeHtml(value: string) {

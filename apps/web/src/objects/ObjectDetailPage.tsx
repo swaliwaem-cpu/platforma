@@ -6,8 +6,12 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  Building2Icon,
   DownloadIcon,
+  MapIcon,
   PencilIcon,
+  RotateCcwIcon,
+  SearchIcon,
   XIcon,
 } from 'lucide-react';
 import type {
@@ -38,8 +42,8 @@ import {
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
-import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
-import { SelectDropdown } from '../components/SelectDropdown';
+import { DropdownListbox, DropdownOption } from '../components/Dropdown';
+import { FilterPill, FilterPopoverFooter, formatCompactMoney, formatPillSelection, formatRangeValue } from '../components/FilterPill';
 import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
@@ -51,6 +55,7 @@ import {
   formatCompletion,
   formatPrice,
   formatPriceFrom,
+  formatPricePerMeterFrom,
   getLocationRows,
   getObjectContentSections,
   getObjectDistrictLocation,
@@ -432,16 +437,29 @@ function ObjectDetail({
   });
   const mapPoints = useMemo(() => getObjectMapPoints(object, mapBalloonImageUrl), [mapBalloonImageUrl, object]);
   const editObjectPath = `/admin/objects/${object.id}/edit`;
+  const metroNames = object.metroStations.map((station) => station.name).join(', ');
+  const headerLocationLine = [locationLine.line.split(' / ').join(' · '), metroNames ? `м. ${metroNames}` : null]
+    .filter(Boolean)
+    .join(' · ');
+  const summaryFacts = useMemo(() => getObjectSummaryFacts(object, parameterRows), [object, parameterRows]);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const isDescriptionLong = descriptionParagraphs.join(' ').length > 420;
+
+  function scrollToSection(sectionId: string) {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   return (
     <div className="object-detail-page">
+      <button className="text-button object-detail-back" type="button" onClick={onBack}>
+        <ChevronLeftIcon aria-hidden="true" />
+        Вернуться к каталогу
+      </button>
+
       <header className="page-header object-detail-header">
         <div>
-          <button className="text-button" type="button" onClick={onBack}>
-            Вернуться к каталогу
-          </button>
           <h2>{object.title}</h2>
-          <p className="object-detail-location-line">{locationLine.line}</p>
+          <p className="object-detail-location-line">{headerLocationLine}</p>
         </div>
         {object.status !== 'PUBLISHED' || canEditObject ? (
           <div className="object-detail-header-actions">
@@ -460,128 +478,154 @@ function ObjectDetail({
         ) : null}
       </header>
 
-      <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />
+      {/* Reference .fw-object-layout: gallery next to the price summary with facts, documents and the lots shortcut. */}
+      <div className="object-detail-hero">
+        <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />
 
-      <div className="object-parameters-files-grid">
-        <section className="detail-section object-parameters-section" aria-labelledby="object-parameters-title">
-          <div>
-            <h3 id="object-parameters-title">Основные параметры</h3>
-          </div>
+        <aside className="detail-section object-parameters-section" aria-labelledby="object-parameters-title">
+          <p className="eyebrow" id="object-parameters-title">
+            Стоимость
+          </p>
+          <strong className="object-detail-summary-price">{formatPriceFrom(object.feedPriceFrom ?? object.priceFrom)}</strong>
+          <small className="object-detail-summary-price-meter">
+            {formatPricePerMeterFrom(object.feedPricePerMeterFrom ?? object.pricePerMeterFrom)}
+          </small>
 
-          <dl className="object-parameters-grid">
-            {parameterRows.map((row) => (
-              <div key={row.label}>
-                <dt>{row.label}</dt>
-                <dd>{row.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
+          {summaryFacts.length > 0 ? (
+            <dl className="object-parameters-grid">
+              {summaryFacts.map((row) => (
+                <div key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
 
-        <section className="detail-section object-files-section" aria-labelledby="object-files-title">
-          <div>
-            <h3 id="object-files-title">Файлы и документы</h3>
-          </div>
+          <section className="object-files-section" aria-labelledby="object-files-title">
+            <h3 className="sr-only" id="object-files-title">
+              Файлы и документы
+            </h3>
+            <div className="object-detail-actions object-files-primary-actions" aria-label="Действия по объекту">
+              {primaryPresentationFile ? (
+                <SecureFileButton
+                  accessToken={accessToken}
+                  className="object-detail-action-button object-detail-action-button--primary"
+                  fileId={primaryPresentationFile.file.id}
+                  label={<FileActionLabel>Презентация</FileActionLabel>}
+                  openingLabel="Открываем презентацию"
+                  wrapperClassName="object-detail-action"
+                />
+              ) : (
+                <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
+                  <FileActionLabel>Презентация</FileActionLabel>
+                </button>
+              )}
 
-          <div className="object-detail-actions object-files-primary-actions" aria-label="Действия по объекту">
-            {primaryPresentationFile ? (
-              <SecureFileButton
-                accessToken={accessToken}
-                className="object-detail-action-button object-detail-action-button--primary"
-                fileId={primaryPresentationFile.file.id}
-                label={<FileActionLabel>Презентация</FileActionLabel>}
-                openingLabel="Открываем презентацию"
-                wrapperClassName="object-detail-action"
-              />
-            ) : (
-              <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
-                <FileActionLabel>Презентация</FileActionLabel>
-              </button>
-            )}
+              {aerotourUrl ? (
+                <a
+                  className="object-detail-action-button object-detail-action-button--secondary"
+                  href={aerotourUrl}
+                  referrerPolicy="no-referrer"
+                  rel="noopener noreferrer nofollow"
+                  target="_blank"
+                >
+                  <FileActionLabel>Аэротур</FileActionLabel>
+                </a>
+              ) : null}
 
-            {aerotourUrl ? (
-              <a
-                className="object-detail-action-button object-detail-action-button--secondary"
-                href={aerotourUrl}
-                referrerPolicy="no-referrer"
-                rel="noopener noreferrer nofollow"
-                target="_blank"
-              >
-                <FileActionLabel>Аэротур</FileActionLabel>
-              </a>
-            ) : null}
-
-            {object.layoutsUrl ? (
-              <a
-                className="object-detail-action-button object-detail-action-button--secondary"
-                href={object.layoutsUrl}
-                referrerPolicy="no-referrer"
-                rel="noopener noreferrer nofollow"
-                target="_blank"
-              >
-                <FileActionLabel>Планировки</FileActionLabel>
-              </a>
-            ) : (
-              <button
-                className="object-detail-action-button object-detail-action-button--disabled object-detail-action-button--missing"
-                disabled
-                type="button"
-              >
-                <FileActionLabel>Планировки</FileActionLabel>
-              </button>
-            )}
-          </div>
-
-          {listedFiles.length > 0 ? (
-            <FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />
-          ) : (
-            <div className="detail-file-group object-files-additional">
-              <h4>Дополнительные файлы</h4>
-              <p className="muted-text object-files-empty">Не загружены.</p>
+              {object.layoutsUrl ? (
+                <a
+                  className="object-detail-action-button object-detail-action-button--secondary"
+                  href={object.layoutsUrl}
+                  referrerPolicy="no-referrer"
+                  rel="noopener noreferrer nofollow"
+                  target="_blank"
+                >
+                  <FileActionLabel>Планировки</FileActionLabel>
+                </a>
+              ) : (
+                <button
+                  className="object-detail-action-button object-detail-action-button--disabled object-detail-action-button--missing"
+                  disabled
+                  type="button"
+                >
+                  <FileActionLabel>Планировки</FileActionLabel>
+                </button>
+              )}
             </div>
-          )}
-        </section>
+
+            {listedFiles.length > 0 ? (
+              <FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />
+            ) : null}
+          </section>
+
+          <button className="object-detail-summary-cta" type="button" onClick={() => scrollToSection('object-lots')}>
+            Подобрать лот
+          </button>
+        </aside>
       </div>
-
-      <ObjectFeedUnitsSection accessToken={accessToken} navigate={navigate} object={object} />
-
-      <section className="detail-section object-map-section" aria-labelledby="object-map-title">
-        <div>
-          <p className="eyebrow">Карта</p>
-          <h3 id="object-map-title">Локация и расположение</h3>
-        </div>
-
-        <PlatformMap
-          ariaLabel="Карта объекта"
-          emptyState={{
-            eyebrow: 'Карта объекта',
-            title: 'Координаты не указаны',
-            description: 'Добавьте широту и долготу в карточке объекта, чтобы показать его на карте.',
-          }}
-          points={mapPoints}
-        />
-      </section>
 
       <div className="object-description-location-grid">
         <section className="detail-section object-description-section" aria-labelledby="object-description-title">
           <div>
-            <p className="eyebrow">Описание</p>
+            <p className="eyebrow">О проекте</p>
             <h3 id="object-description-title">Описание и особенности</h3>
           </div>
           {descriptionParagraphs.length > 0 ? (
-            <div className="object-description">
-              {descriptionParagraphs.map((paragraph) => (
-                <p key={paragraph}>{paragraph}</p>
-              ))}
-            </div>
+            <>
+              <div
+                className={
+                  isDescriptionLong && !isDescriptionExpanded
+                    ? 'object-description object-description--collapsed'
+                    : 'object-description'
+                }
+              >
+                {descriptionParagraphs.map((paragraph) => (
+                  <p key={paragraph}>{paragraph}</p>
+                ))}
+              </div>
+              {isDescriptionLong ? (
+                <button
+                  aria-expanded={isDescriptionExpanded}
+                  className="text-button object-description-toggle"
+                  type="button"
+                  onClick={() => setIsDescriptionExpanded((isExpanded) => !isExpanded)}
+                >
+                  {isDescriptionExpanded ? 'Свернуть' : 'Читать полностью'}
+                </button>
+              ) : null}
+            </>
           ) : (
             <p className="muted-text">Описание пока не заполнено.</p>
           )}
+
+          {object.developer ? (
+            <div className="object-developer-row">
+              <span className="object-developer-icon" aria-hidden="true">
+                <Building2Icon />
+              </span>
+              <span className="object-developer-name">
+                <small>Застройщик</small>
+                <b>{object.developer.name}</b>
+              </span>
+              <a
+                className="object-detail-edit-link object-developer-link"
+                href={`/catalog?developerId=${object.developer.id}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  navigate(`/catalog?developerId=${object.developer?.id ?? ''}`);
+                }}
+              >
+                Все проекты
+              </a>
+            </div>
+          ) : null}
         </section>
 
         <section className="detail-section object-location-section" aria-labelledby="object-location-title">
           <div>
-            <p className="eyebrow">Район</p>
+            <p className="eyebrow">Расположение</p>
             <h3 id="object-location-title">Район, окружение и метро</h3>
           </div>
 
@@ -607,8 +651,15 @@ function ObjectDetail({
           ) : (
             <p className="muted-text">Метро не указано.</p>
           )}
+
+          <button className="object-location-map-button" type="button" onClick={() => scrollToSection('object-map')}>
+            <MapIcon aria-hidden="true" />
+            Показать на карте
+          </button>
         </section>
       </div>
+
+      <ObjectFeedUnitsSection accessToken={accessToken} navigate={navigate} object={object} />
 
       <section className="detail-section object-content-detail-section" aria-labelledby="object-content-sections-title">
         <div>
@@ -636,8 +687,45 @@ function ObjectDetail({
         </div>
       </section>
 
+      <section className="detail-section object-map-section" id="object-map" aria-labelledby="object-map-title">
+        <div>
+          <p className="eyebrow">Карта</p>
+          <h3 id="object-map-title">Локация и расположение</h3>
+        </div>
+
+        <PlatformMap
+          ariaLabel="Карта объекта"
+          emptyState={{
+            eyebrow: 'Карта объекта',
+            title: 'Координаты не указаны',
+            description: 'Добавьте широту и долготу в карточке объекта, чтобы показать его на карте.',
+          }}
+          points={mapPoints}
+        />
+      </section>
     </div>
   );
+}
+
+/** Summary plaques «Срок · 2028»: short labels and filled values only; the price sits above them. */
+function getObjectSummaryFacts(object: RealEstateObjectDetail, rows: Array<{ label: string; value: string }>) {
+  const valueByLabel = new Map(rows.map((row) => [row.label, row.value]));
+  const facts = [
+    ['Срок', valueByLabel.get('Срок сдачи')],
+    ['Площадь', object.feedAreaRange ?? valueByLabel.get('Площадь квартир')],
+    ['Класс', valueByLabel.get('Класс недвижимости')],
+    ['Этажность', valueByLabel.get('Этажность')],
+    ['Потолки', valueByLabel.get('Высота потолков')],
+    ['Застройщик', valueByLabel.get('Застройщик')],
+  ] as const;
+
+  return facts.flatMap(([label, value]) => {
+    if (!value || value.startsWith('Не указ')) {
+      return [];
+    }
+
+    return [{ label, value: value.replace(/(\d)\.(\d)/g, '$1,$2').replace(/(\d)\s*-\s*(\d)/g, '$1–$2') }];
+  });
 }
 
 function ObjectImageCarousel({
@@ -931,6 +1019,7 @@ function ObjectFeedUnitsSection({
   const [expandedCompletionGroups, setExpandedCompletionGroups] = useState<Set<string>>(() => new Set());
   const [expandedRoomGroups, setExpandedRoomGroups] = useState<Set<string>>(() => new Set());
   const [visibleRoomLotCounts, setVisibleRoomLotCounts] = useState<Record<string, number>>({});
+  const [searchFilter, setSearchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [priceMinFilter, setPriceMinFilter] = useState(initialFilters.priceMin);
@@ -948,7 +1037,8 @@ function ObjectFeedUnitsSection({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const hasActiveFilters = Boolean(
-    statusFilter ||
+    searchFilter.trim() ||
+      statusFilter ||
       typeFilter ||
       priceMinFilter ||
       priceMaxFilter ||
@@ -963,8 +1053,16 @@ function ObjectFeedUnitsSection({
   const showFeedUnitsSkeleton = isLoading && groups.length === 0;
   const feedUnitsTableColumnCount = 11;
   const feedUnitsUpdatedAt = object.feedUpdatedAt ? formatObjectFeedUpdatedAt(object.feedUpdatedAt) : null;
+  const priceFilterValue = formatObjectFeedPriceFilterValue(
+    priceMinFilter,
+    priceMaxFilter,
+    pricePerMeterMinFilter,
+    pricePerMeterMaxFilter,
+  );
+  const floorFilterValue = formatRangeValue(floorMinFilter, floorMaxFilter, (value) => value);
   const feedUnitFiltersKey = [
     object.id,
+    searchFilter.trim(),
     statusFilter,
     typeFilter,
     priceMinFilter,
@@ -1006,6 +1104,7 @@ function ObjectFeedUnitsSection({
           params.set('type', typeFilter);
         }
 
+        setOptionalParam(params, 'search', searchFilter.trim());
         setOptionalParam(params, 'priceMin', priceMinFilter);
         setOptionalParam(params, 'priceMax', priceMaxFilter);
         setOptionalParam(params, 'pricePerMeterMin', pricePerMeterMinFilter);
@@ -1066,6 +1165,7 @@ function ObjectFeedUnitsSection({
     pricePerMeterMaxFilter,
     pricePerMeterMinFilter,
     roomFilter,
+    searchFilter,
     sortBy,
     sortDirection,
     statusFilter,
@@ -1073,6 +1173,7 @@ function ObjectFeedUnitsSection({
   ]);
 
   function resetFilters() {
+    setSearchFilter('');
     setStatusFilter('');
     setTypeFilter('');
     setPriceMinFilter('');
@@ -1149,7 +1250,7 @@ function ObjectFeedUnitsSection({
     <section className="detail-section object-feed-units-section" aria-labelledby="object-feed-units-title">
       <div className="object-feed-units-heading">
         <div className="object-feed-units-heading-title">
-          <p className="eyebrow">Фид</p>
+          <p className="eyebrow">Планировки и цены</p>
           <h3 id="object-feed-units-title">Лоты</h3>
           {feedUnitsUpdatedAt ? (
             <p className="object-feed-updated-at">Обновлено: {feedUnitsUpdatedAt}</p>
@@ -1159,190 +1260,356 @@ function ObjectFeedUnitsSection({
       </div>
 
       <div className="object-feed-units-toolbar" aria-label="Фильтры лотов">
-        <label className="object-feed-units-filter object-feed-units-filter--status">
-          <span>Статус</span>
-          <SelectDropdown
+        <div className="catalog-filter-search-row">
+          <label className="catalog-filter-search">
+            <span className="sr-only">Поиск лота</span>
+            <span className="catalog-filter-search-field">
+              <SearchIcon aria-hidden="true" />
+              <input
+                placeholder="Номер квартиры, корпус или адрес"
+                type="search"
+                value={searchFilter}
+                onChange={(event) => {
+                  setSearchFilter(event.target.value);
+                  setVisibleRoomLotCounts({});
+                }}
+              />
+            </span>
+          </label>
+
+          <div className="catalog-filter-header-actions">
+            <button
+              aria-label="Сбросить фильтры лотов"
+              className="catalog-filter-reset object-feed-units-reset-button"
+              disabled={!hasActiveFilters}
+              type="button"
+              onClick={resetFilters}
+            >
+              <RotateCcwIcon aria-hidden="true" className="catalog-filter-reset-icon" />
+              <span>Сбросить</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="catalog-filter-bar" role="group" aria-label="Параметры лотов">
+          <FilterPill
             ariaLabel="Фильтр лотов по статусу"
-            options={[{ value: '', label: 'Доступные и резерв' }, ...feedUnitStatusFilterOptions]}
-            value={statusFilter}
-            onChange={(value) => {
-              setStatusFilter(value);
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
+            isSet={Boolean(statusFilter)}
+            label="Доступные и резерв"
+            value={feedUnitStatusFilterOptions.find((option) => option.value === statusFilter)?.label ?? ''}
+          >
+            {(close) => (
+              <DropdownListbox aria-label="Фильтр лотов по статусу">
+                {[{ value: '', label: 'Доступные и резерв' }, ...feedUnitStatusFilterOptions].map((option) => (
+                  <DropdownOption
+                    key={option.value || 'public'}
+                    label={option.label}
+                    selected={option.value === statusFilter}
+                    onSelect={() => {
+                      setStatusFilter(option.value);
+                      setVisibleRoomLotCounts({});
+                      close('select');
+                    }}
+                  />
+                ))}
+              </DropdownListbox>
+            )}
+          </FilterPill>
 
-        <label className="object-feed-units-filter object-feed-units-filter--type">
-          <span>Тип</span>
-          <SelectDropdown
+          <FilterPill
             ariaLabel="Фильтр лотов по типу"
-            options={[{ value: '', label: 'Все типы' }, ...feedUnitTypeFilterOptions]}
-            value={typeFilter}
-            onChange={(value) => {
-              setTypeFilter(value);
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
+            isSet={Boolean(typeFilter)}
+            label="Все типы"
+            value={feedUnitTypeFilterOptions.find((option) => option.value === typeFilter)?.label ?? ''}
+          >
+            {(close) => (
+              <DropdownListbox aria-label="Фильтр лотов по типу">
+                {[{ value: '', label: 'Все типы' }, ...feedUnitTypeFilterOptions].map((option) => (
+                  <DropdownOption
+                    key={option.value || 'all'}
+                    label={option.label}
+                    selected={option.value === typeFilter}
+                    onSelect={() => {
+                      setTypeFilter(option.value);
+                      setVisibleRoomLotCounts({});
+                      close('select');
+                    }}
+                  />
+                ))}
+              </DropdownListbox>
+            )}
+          </FilterPill>
 
-        <div
-          className="object-feed-units-filter-range object-feed-units-filter-range--price"
-          aria-label="Диапазон цены лота"
-        >
-          <label className="object-feed-units-filter">
-            <span>Цена от</span>
-            <input
-              inputMode="decimal"
-              placeholder="0 ₽"
-              type="text"
-              value={formatCurrencyInputValue(priceMinFilter)}
-              onChange={(event) => {
-                setPriceMinFilter(sanitizeDecimalText(event.target.value));
-                setVisibleRoomLotCounts({});
-              }}
-              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPriceMinFilter)}
-            />
-          </label>
+          <span aria-hidden="true" className="catalog-filter-divider" />
 
-          <label className="object-feed-units-filter">
-            <span>Цена до</span>
-            <input
-              inputMode="decimal"
-              placeholder="50 000 000 ₽"
-              type="text"
-              value={formatCurrencyInputValue(priceMaxFilter)}
-              onChange={(event) => {
-                setPriceMaxFilter(sanitizeDecimalText(event.target.value));
-                setVisibleRoomLotCounts({});
-              }}
-              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPriceMaxFilter)}
-            />
-          </label>
-        </div>
+          <FilterPill
+            ariaLabel="Фильтр лотов по цене"
+            isSet={Boolean(priceFilterValue)}
+            label="Цена"
+            menuClassName="catalog-filter-popover"
+            value={priceFilterValue}
+          >
+            {(close) => (
+              <>
+                <div className="catalog-filter-range object-feed-units-filter-range--price" aria-label="Диапазон цены лота" role="group">
+                  <span className="catalog-filter-range-title">Цена лота</span>
+                  <div className="catalog-filter-range-field">
+                    <label>
+                      от
+                      <input
+                        inputMode="decimal"
+                        placeholder="0 ₽"
+                        type="text"
+                        value={formatCurrencyInputValue(priceMinFilter)}
+                        onChange={(event) => {
+                          setPriceMinFilter(sanitizeDecimalText(event.target.value));
+                          setVisibleRoomLotCounts({});
+                        }}
+                        onKeyDown={(event) => handleCurrencyInputBackspace(event, setPriceMinFilter)}
+                      />
+                    </label>
+                    <i aria-hidden="true" />
+                    <label>
+                      до
+                      <input
+                        inputMode="decimal"
+                        placeholder="50 000 000 ₽"
+                        type="text"
+                        value={formatCurrencyInputValue(priceMaxFilter)}
+                        onChange={(event) => {
+                          setPriceMaxFilter(sanitizeDecimalText(event.target.value));
+                          setVisibleRoomLotCounts({});
+                        }}
+                        onKeyDown={(event) => handleCurrencyInputBackspace(event, setPriceMaxFilter)}
+                      />
+                    </label>
+                  </div>
+                </div>
 
-        <div
-          className="object-feed-units-filter-range object-feed-units-filter-range--floor"
-          aria-label="Диапазон этажа лота"
-        >
-          <label className="object-feed-units-filter">
-            <span>Этаж от</span>
-            <input
-              inputMode="numeric"
-              placeholder="1"
-              type="text"
-              value={floorMinFilter}
-              onChange={(event) => {
-                setFloorMinFilter(sanitizeIntegerText(event.target.value, 3));
-                setVisibleRoomLotCounts({});
-              }}
-            />
-          </label>
+                <div
+                  className="catalog-filter-range object-feed-units-filter-range--price-meter"
+                  aria-label="Диапазон цены за метр лота"
+                  role="group"
+                >
+                  <span className="catalog-filter-range-title">Цена за м²</span>
+                  <div className="catalog-filter-range-field">
+                    <label>
+                      от
+                      <input
+                        inputMode="decimal"
+                        placeholder="0 ₽"
+                        type="text"
+                        value={formatCurrencyInputValue(pricePerMeterMinFilter)}
+                        onChange={(event) => {
+                          setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
+                          setVisibleRoomLotCounts({});
+                        }}
+                        onKeyDown={(event) => handleCurrencyInputBackspace(event, setPricePerMeterMinFilter)}
+                      />
+                    </label>
+                    <i aria-hidden="true" />
+                    <label>
+                      до
+                      <input
+                        inputMode="decimal"
+                        placeholder="500 000 ₽"
+                        type="text"
+                        value={formatCurrencyInputValue(pricePerMeterMaxFilter)}
+                        onChange={(event) => {
+                          setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
+                          setVisibleRoomLotCounts({});
+                        }}
+                        onKeyDown={(event) => handleCurrencyInputBackspace(event, setPricePerMeterMaxFilter)}
+                      />
+                    </label>
+                  </div>
+                </div>
 
-          <label className="object-feed-units-filter">
-            <span>Этаж до</span>
-            <input
-              inputMode="numeric"
-              placeholder="25"
-              type="text"
-              value={floorMaxFilter}
-              onChange={(event) => {
-                setFloorMaxFilter(sanitizeIntegerText(event.target.value, 3));
-                setVisibleRoomLotCounts({});
-              }}
-            />
-          </label>
-        </div>
+                <FilterPopoverFooter
+                  onClear={() => {
+                    setPriceMinFilter('');
+                    setPriceMaxFilter('');
+                    setPricePerMeterMinFilter('');
+                    setPricePerMeterMaxFilter('');
+                    setVisibleRoomLotCounts({});
+                  }}
+                  onDone={() => close('select')}
+                />
+              </>
+            )}
+          </FilterPill>
 
-        <label className="object-feed-units-filter object-feed-units-filter--completion-year">
-          <span>Год сдачи</span>
-          <input
-            inputMode="numeric"
-            placeholder="2028"
-            type="text"
-            value={completionYearFilter}
-            onChange={(event) => {
-              const nextYear = sanitizeIntegerText(event.target.value, 4);
-
-              setCompletionYearFilter(nextYear);
-              if (!nextYear) {
-                setCompletionQuarterFilter('');
-              }
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
-
-        <label className="object-feed-units-filter object-feed-units-filter--completion-quarter">
-          <span>Квартал</span>
-          <SelectDropdown
-            ariaLabel="Фильтр лотов по кварталу сдачи"
-            disabled={!completionYearFilter}
-            options={[{ value: '', label: 'Любой' }, ...feedUnitQuarterFilterOptions]}
-            value={completionQuarterFilter}
-            onChange={(value) => {
-              setCompletionQuarterFilter(value);
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
-
-        <label className="object-feed-units-filter object-feed-units-filter--rooms">
-          <span>Комнаты</span>
-          <MultiSelectDropdown
+          <FilterPill
             ariaLabel="Фильтр лотов по комнатам"
-            options={feedUnitRoomFilterOptions}
-            placeholder="Любые"
-            values={getFeedUnitRoomFilterValues(roomFilter)}
-            onChange={(values) => {
-              setRoomFilter(formatFeedUnitRoomFilterValues(values));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
+            isSet={Boolean(roomFilter)}
+            label="Комнаты"
+            value={formatPillSelection(
+              feedUnitRoomFilterOptions
+                .filter((option) => getFeedUnitRoomFilterValues(roomFilter).includes(option.value))
+                .map((option) => option.label),
+            )}
+          >
+            {() => (
+              <DropdownListbox aria-label="Фильтр лотов по комнатам" aria-multiselectable={true}>
+                <DropdownOption
+                  label="Любые"
+                  selected={!roomFilter}
+                  onSelect={() => {
+                    setRoomFilter('');
+                    setVisibleRoomLotCounts({});
+                  }}
+                />
+                {feedUnitRoomFilterOptions.map((option) => {
+                  const selectedValues = getFeedUnitRoomFilterValues(roomFilter);
+                  const isSelected = selectedValues.includes(option.value);
 
-        <div
-          className="object-feed-units-filter-range object-feed-units-filter-range--price-meter"
-          aria-label="Диапазон цены за метр лота"
-        >
-          <label className="object-feed-units-filter">
-            <span>Цена за метр от</span>
-            <input
-              inputMode="decimal"
-              placeholder="0 ₽"
-              type="text"
-              value={formatCurrencyInputValue(pricePerMeterMinFilter)}
-              onChange={(event) => {
-                setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
-                setVisibleRoomLotCounts({});
-              }}
-              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPricePerMeterMinFilter)}
-            />
-          </label>
+                  return (
+                    <DropdownOption
+                      key={option.value}
+                      label={option.label}
+                      selected={isSelected}
+                      onSelect={() => {
+                        setRoomFilter(
+                          formatFeedUnitRoomFilterValues(
+                            isSelected
+                              ? selectedValues.filter((value) => value !== option.value)
+                              : [...selectedValues, option.value],
+                          ),
+                        );
+                        setVisibleRoomLotCounts({});
+                      }}
+                    />
+                  );
+                })}
+              </DropdownListbox>
+            )}
+          </FilterPill>
 
-          <label className="object-feed-units-filter">
-            <span>Цена за метр до</span>
-            <input
-              inputMode="decimal"
-              placeholder="500 000 ₽"
-              type="text"
-              value={formatCurrencyInputValue(pricePerMeterMaxFilter)}
-              onChange={(event) => {
-                setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
-                setVisibleRoomLotCounts({});
-              }}
-              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPricePerMeterMaxFilter)}
-            />
-          </label>
+          <FilterPill
+            ariaLabel="Фильтр лотов по этажу"
+            isSet={Boolean(floorFilterValue)}
+            label="Этаж"
+            menuClassName="catalog-filter-popover"
+            value={floorFilterValue}
+          >
+            {(close) => (
+              <>
+                <div className="catalog-filter-range object-feed-units-filter-range--floor" aria-label="Диапазон этажа лота" role="group">
+                  <span className="catalog-filter-range-title">Этаж</span>
+                  <div className="catalog-filter-range-field">
+                    <label>
+                      от
+                      <input
+                        inputMode="numeric"
+                        placeholder="1"
+                        type="text"
+                        value={floorMinFilter}
+                        onChange={(event) => {
+                          setFloorMinFilter(sanitizeIntegerText(event.target.value, 3));
+                          setVisibleRoomLotCounts({});
+                        }}
+                      />
+                    </label>
+                    <i aria-hidden="true" />
+                    <label>
+                      до
+                      <input
+                        inputMode="numeric"
+                        placeholder="25"
+                        type="text"
+                        value={floorMaxFilter}
+                        onChange={(event) => {
+                          setFloorMaxFilter(sanitizeIntegerText(event.target.value, 3));
+                          setVisibleRoomLotCounts({});
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <FilterPopoverFooter
+                  onClear={() => {
+                    setFloorMinFilter('');
+                    setFloorMaxFilter('');
+                    setVisibleRoomLotCounts({});
+                  }}
+                  onDone={() => close('select')}
+                />
+              </>
+            )}
+          </FilterPill>
+
+          <FilterPill
+            ariaLabel="Фильтр лотов по сроку сдачи"
+            isSet={Boolean(completionYearFilter)}
+            label="Срок сдачи"
+            menuClassName="catalog-filter-popover"
+            value={
+              completionYearFilter
+                ? [feedUnitQuarterFilterOptions.find((option) => option.value === completionQuarterFilter)?.label, completionYearFilter]
+                    .filter(Boolean)
+                    .join(' ')
+                : ''
+            }
+          >
+            {(close) => (
+              <>
+                <div className="catalog-filter-range object-feed-units-filter--completion-year" role="group" aria-label="Год сдачи">
+                  <span className="catalog-filter-range-title">Год сдачи</span>
+                  <div className="catalog-filter-range-field catalog-filter-range-field--single">
+                    <label>
+                      год
+                      <input
+                        inputMode="numeric"
+                        placeholder="2028"
+                        type="text"
+                        value={completionYearFilter}
+                        onChange={(event) => {
+                          const nextYear = sanitizeIntegerText(event.target.value, 4);
+
+                          setCompletionYearFilter(nextYear);
+                          if (!nextYear) {
+                            setCompletionQuarterFilter('');
+                          }
+                          setVisibleRoomLotCounts({});
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="catalog-filter-range object-feed-units-filter--completion-quarter" role="group" aria-label="Квартал">
+                  <span className="catalog-filter-range-title">Квартал</span>
+                  <div className="object-feed-units-quarters">
+                    {[{ value: '', label: 'Любой' }, ...feedUnitQuarterFilterOptions].map((option) => (
+                      <button
+                        aria-pressed={completionQuarterFilter === option.value}
+                        disabled={!completionYearFilter}
+                        key={option.value || 'any'}
+                        type="button"
+                        onClick={() => {
+                          setCompletionQuarterFilter(option.value);
+                          setVisibleRoomLotCounts({});
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <FilterPopoverFooter
+                  onClear={() => {
+                    setCompletionYearFilter('');
+                    setCompletionQuarterFilter('');
+                    setVisibleRoomLotCounts({});
+                  }}
+                  onDone={() => close('select')}
+                />
+              </>
+            )}
+          </FilterPill>
         </div>
-
-        <button
-          className="text-button object-feed-units-reset-button"
-          disabled={!hasActiveFilters}
-          type="button"
-          onClick={resetFilters}
-        >
-          Сбросить
-        </button>
       </div>
 
       {showFeedUnitsSkeleton ? (
@@ -1526,11 +1793,20 @@ function ObjectFeedRoomGroup({
         type="button"
         onClick={() => onToggleRoomGroup(roomExpansionKey)}
       >
-        {isExpanded ? <ChevronDownIcon aria-hidden="true" /> : <ChevronRightIcon aria-hidden="true" />}
-        <strong>{roomGroup.label}</strong>
-        <span>{formatFeedUnitRange(roomGroup.areaMin, roomGroup.areaMax, formatArea)}</span>
-        <span>{formatFeedUnitRange(roomGroup.priceMin, roomGroup.priceMax, (value) => formatFeedUnitPrice(value, null))}</span>
-        <b>{formatNumber(roomGroup.total)}</b>
+        <span className="object-feed-room-name">
+          <strong>{roomGroup.label}</strong>
+          <small>
+            {formatFeedUnitRange(roomGroup.areaMin, roomGroup.areaMax, formatArea)} ·{' '}
+            {formatNumber(roomGroup.total)} {formatPlural(roomGroup.total, ['лот', 'лота', 'лотов'])}
+          </small>
+        </span>
+        <span className="object-feed-room-price">
+          {formatFeedUnitRange(roomGroup.priceMin, roomGroup.priceMax, (value) => formatFeedUnitPrice(value, null))}
+        </span>
+        <span className="object-feed-room-toggle">
+          {isExpanded ? 'Скрыть' : 'Показать'}
+          {isExpanded ? <ChevronDownIcon aria-hidden="true" /> : <ChevronRightIcon aria-hidden="true" />}
+        </span>
       </button>
 
       {isExpanded ? (
@@ -2376,6 +2652,18 @@ function getInitialObjectFeedUnitFiltersFromLocation(): InitialObjectFeedUnitFil
 
 function parseInitialObjectFeedUnitRooms(value: string | null) {
   return formatFeedUnitRoomFilterValues(getFeedUnitRoomFilterValues(value ?? ''));
+}
+
+/** Price pill value: lot price range first, price per m² as «+1» or on its own. */
+function formatObjectFeedPriceFilterValue(priceMin: string, priceMax: string, pricePerMeterMin: string, pricePerMeterMax: string) {
+  const lotPrice = formatRangeValue(priceMin, priceMax, formatCompactMoney);
+  const pricePerMeter = formatRangeValue(pricePerMeterMin, pricePerMeterMax, formatCompactMoney);
+
+  if (lotPrice && pricePerMeter) {
+    return `${lotPrice} +1`;
+  }
+
+  return lotPrice || (pricePerMeter ? `за м² ${pricePerMeter}` : '');
 }
 
 function makeRoomGroupExpansionKey(completionGroupKey: string, roomGroupKey: string) {

@@ -412,7 +412,7 @@ html[data-app-theme] :is(.quick-edit-cell-button:hover, .quick-edit-cell-button:
   box-shadow: var(--app-theme-focus-primary);
 }
 
-html[data-app-theme] :is(th, td, .catalog-links-meta, .catalog-link-column, .object-form-section, .user-form-section, .permission-group, .object-content-sections, .object-content-section-item, .details-list > div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-list-item + .catalog-list-item, .catalog-map-list li) {
+html[data-app-theme] :is(th, td, .catalog-links-meta, .catalog-link-column, .object-form-section, .user-form-section, .permission-group, .object-content-sections, .object-content-section-item, .details-list > div, .object-detail-facts div, .location-list div, .catalog-map-list li) {
   border-color: var(--app-theme-border-soft);
 }
 
@@ -585,7 +585,7 @@ html[data-app-theme] :is(.admin-button--danger:hover, .admin-button--danger:focu
   color: var(--app-theme-danger-foreground);
 }
 
-html[data-app-theme] :is(.profile-avatar, .catalog-card-location > span, .catalog-card-facts div, .catalog-count) {
+html[data-app-theme] :is(.profile-avatar, .catalog-card-facts span, .catalog-count) {
   border-color: var(--app-theme-border-soft);
   background: var(--app-theme-surface-soft);
   color: var(--app-theme-ink-800);
@@ -714,7 +714,7 @@ html[data-app-theme="dark-premium"] :is(.carousel-button, .carousel-counter, .ca
   color: #ffffff;
 }
 
-html[data-app-theme="minimal-luxury"] :is(.sidebar, .login-panel, .content-panel, .table-panel, .editor-panel, .admin-panel, .catalog-card, .catalog-list, .catalog-filters, .catalog-sort-bar, .catalog-quick-links, .object-detail-hero, .detail-section) {
+html[data-app-theme="minimal-luxury"] :is(.sidebar, .login-panel, .content-panel, .table-panel, .editor-panel, .admin-panel, .catalog-card, .catalog-list, .catalog-filters, .catalog-sort-bar, .catalog-quick-links, .detail-section) {
   box-shadow: var(--app-theme-shadow-panel);
 }
 

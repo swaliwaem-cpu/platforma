@@ -109,3 +109,24 @@ test('catalog floor plan svg uses the provided noun floor plan silhouette', () =
   assert.match(floorPlanSvg, /M41 57h6v1H41z/);
   assert.doesNotMatch(floorPlanSvg, /stroke=/);
 });
+
+test('catalog card follows the reference property card layout', () => {
+  const cardSource = catalogSource.match(/function CatalogCard\([\s\S]*?\n\}\n/)?.[0] ?? '';
+  const fluffyWhiteCardSource = readFileSync(resolve(currentDir, '../src/fluffy-white-theme.css'), 'utf8');
+
+  assert.match(cardSource, /<span className="catalog-card-media-label" title=\{`Застройщик: \$\{developerName\}`\}>/);
+  assert.match(cardSource, /\{formatNumber\(matchedLotsCount\)\} \{formatCatalogLotsWord\(matchedLotsCount\)\} по фильтру/);
+  assert.match(cardSource, /<span className="catalog-card-meta">[\s\S]*?\{districtLabel\}[\s\S]*?<CatalogCardMetroLabel stations=\{object\.metroStations\} \/>/);
+  assert.match(cardSource, /<p className="catalog-card-price">[\s\S]*?<span className="catalog-card-price-per-meter">/);
+  assert.match(cardSource, /<span>Срок · \{formatCatalogCardFact\(formatCompletion\(object\.completionYear, object\.completionQuarter\)\)\}<\/span>/);
+  assert.match(cardSource, /<span>Площадь · \{formatCatalogCardFact\(areaLabel\)\}<\/span>/);
+  assert.match(cardSource, />\s*Открыть объект\s*</);
+  assert.doesNotMatch(cardSource, /catalog-card-location|catalog-card-actions|<dl className="catalog-card-facts">/);
+  assert.match(catalogSource, /return value\.replace\(\/\(\\d\)\\\.\(\\d\)\/g, '\$1,\$2'\)\.replace\(\/\(\\d\)\\s\*-\\s\*\(\\d\)\/g, '\$1–\$2'\);/);
+
+  assert.match(stylesSource, /\.catalog-card-media \{[\s\S]*?height: 230px;/);
+  assert.match(stylesSource, /\.catalog-card-facts \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);[\s\S]*?margin: auto 0 12px;/);
+  assert.match(stylesSource, /\.catalog-list-item \{[\s\S]*?grid-template-columns: 320px minmax\(0, 1fr\) auto;/);
+  assert.match(fluffyWhiteCardSource, /:is\(\.catalog-card, \.catalog-list-item\) h3 \{[\s\S]*?font-size: 22px;[\s\S]*?font-weight: 500;[\s\S]*?letter-spacing: -0\.44px;/);
+});
+

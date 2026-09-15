@@ -85,7 +85,7 @@ test('objects admin form persists and validates aerotour url', () => {
   assert.match(source, /if \(form\.aerotourUrl\.trim\(\)\) \{[\s\S]*?return 'Ссылка на аэротур должна начинаться с http:\/\/ или https:\/\/';[\s\S]*?return 'Ссылка на аэротур некорректна';[\s\S]*?\}/);
 });
 
-test('public object detail renders files beside parameters and content sections after description', () => {
+test('public object detail renders files in the summary and content sections after description', () => {
   assert.match(objectDetailViewModelSource, /function getObjectContentSections|export function getObjectContentSections/);
   assert.match(objectDetailViewModelSource, /label:\s*'Архитектура'/);
   assert.match(objectDetailViewModelSource, /label:\s*'Инфраструктура'/);
@@ -104,9 +104,9 @@ test('public object detail renders files beside parameters and content sections 
   assert.notEqual(descriptionIndex, -1, 'description section should exist');
   assert.notEqual(contentIndex, -1, 'content sections should exist');
   assert.ok(parametersIndex < filesIndex);
-  assert.ok(filesIndex < mapIndex);
-  assert.ok(mapIndex < descriptionIndex);
+  assert.ok(filesIndex < descriptionIndex);
   assert.ok(descriptionIndex < contentIndex);
+  assert.ok(contentIndex < mapIndex);
 
   assert.match(objectDetailSource, /getObjectContentSections\(object\)/);
   assert.match(objectDetailSource, /object-content-sections/);
