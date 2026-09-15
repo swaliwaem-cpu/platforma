@@ -63,7 +63,7 @@ test('catalog reset keeps the current route section instead of merging everythin
 
 test('catalog map switch preserves the active object section through query params', () => {
   assert.match(source, /onOpenMap=\{\(\) => navigate\(`\/catalog\/map\$\{buildCatalogQuery\(filters, viewMode\)\}`\)\}/);
-  assert.match(source, /onOpenCatalog=\{\(\) =>[\s\S]*getCatalogListPathname\(filters\.objectType\)[\s\S]*omitObjectType: filters\.objectType !== 'ALL'/);
+  assert.match(source, /function openCatalogViewMode\(nextViewMode: CatalogViewMode\) \{\s*if \(isMapView\) \{[\s\S]*?getCatalogListPathname\(filters\.objectType\)[\s\S]*?buildCatalogQuery\(filters, nextViewMode, \{\s*omitObjectType: filters\.objectType !== 'ALL'/);
   assert.match(source, /function getNextCatalogPathname\(currentPathname: string, objectType: CatalogObjectTypeFilter\)/);
   assert.match(source, /if \(currentPathname === '\/catalog\/map'\) \{[\s\S]*return currentPathname;/);
 });

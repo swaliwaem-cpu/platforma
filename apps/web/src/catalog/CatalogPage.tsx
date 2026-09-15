@@ -10,14 +10,16 @@ import {
   type ReactNode,
 } from 'react';
 import {
-  ArrowDownIcon,
-  ArrowUpDownIcon,
-  ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  FunnelIcon,
+  LayoutGridIcon,
+  ListIcon,
+  MapIcon,
   RefreshCwIcon,
+  SearchIcon,
 } from 'lucide-react';
 import type {
   CatalogLinksResponse,
@@ -486,8 +488,20 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
     pushCatalogLocation(nextPathname, nextSearch);
   }
 
-  function toggleCatalogViewMode() {
-    const nextViewMode: CatalogViewMode = viewMode === 'list' ? 'cards' : 'list';
+  function openCatalogViewMode(nextViewMode: CatalogViewMode) {
+    if (isMapView) {
+      navigate(
+        `${getCatalogListPathname(filters.objectType)}${buildCatalogQuery(filters, nextViewMode, {
+          omitObjectType: filters.objectType !== 'ALL',
+        })}`,
+      );
+      return;
+    }
+
+    if (nextViewMode === viewMode) {
+      return;
+    }
+
     const nextSearch = buildCatalogQuery(filters, nextViewMode, {
       omitObjectType: shouldOmitCatalogObjectTypeParam(pathname),
     });
@@ -547,20 +561,6 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
         />
       ) : null}
 
-      <CatalogViewActions
-        isMapView={isMapView}
-        viewMode={viewMode}
-        onOpenCatalog={() =>
-          navigate(
-            `${getCatalogListPathname(filters.objectType)}${buildCatalogQuery(filters, viewMode, {
-              omitObjectType: filters.objectType !== 'ALL',
-            })}`,
-          )
-        }
-        onOpenMap={() => navigate(`/catalog/map${buildCatalogQuery(filters, viewMode)}`)}
-        onToggleViewMode={toggleCatalogViewMode}
-      />
-
       <CatalogFilters
         directories={directories}
         filters={filters}
@@ -569,7 +569,16 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
         onReset={resetFilters}
       />
 
-      {!isMapView ? <CatalogSortBar filters={filters} onChange={updateFilters} /> : null}
+      <CatalogResultsBar
+        filters={filters}
+        isLoading={isMapView ? isMapLoading : isLoading}
+        isMapView={isMapView}
+        total={isMapView ? mapTotal : total}
+        viewMode={viewMode}
+        onOpenMap={() => navigate(`/catalog/map${buildCatalogQuery(filters, viewMode)}`)}
+        onSortChange={updateFilters}
+        onViewModeChange={openCatalogViewMode}
+      />
 
       {directoryError ? <p className="form-error">{directoryError}</p> : null}
 
@@ -601,49 +610,6 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           onLoadMore={loadMoreObjects}
           onPageChange={(page) => updateFilters({ page }, { resetPage: false })}
         />
-      )}
-    </div>
-  );
-}
-
-function CatalogViewActions({
-  isMapView,
-  viewMode,
-  onOpenCatalog,
-  onOpenMap,
-  onToggleViewMode,
-}: {
-  isMapView: boolean;
-  viewMode: CatalogViewMode;
-  onOpenCatalog: () => void;
-  onOpenMap: () => void;
-  onToggleViewMode: () => void;
-}) {
-  return (
-    <div className="catalog-view-actions" aria-label="Переключение вида каталога">
-      {isMapView ? (
-        <>
-          <button className="catalog-view-toggle" type="button" onClick={onOpenCatalog}>
-            Список
-          </button>
-          <button aria-current="page" className="catalog-map-button" type="button" onClick={onOpenMap}>
-            Карта
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            aria-pressed={viewMode === 'list'}
-            className={`catalog-view-toggle${viewMode === 'list' ? ' catalog-view-toggle--list' : ''}`}
-            type="button"
-            onClick={onToggleViewMode}
-          >
-            Карточками / Списком
-          </button>
-          <button className="catalog-map-button" type="button" onClick={onOpenMap}>
-            Показать на карте
-          </button>
-        </>
       )}
     </div>
   );
@@ -770,7 +736,7 @@ function CatalogFilters({
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const activeAdvancedFilterCount = countActiveAdvancedFilters(filters);
-  const filterButtonLabel = isExpanded ? 'Скрыть фильтры' : '+ Фильтры';
+  const filterButtonLabel = isExpanded ? 'Скрыть фильтры' : 'Фильтры';
 
   function handleCurrencyInputBackspace(event: KeyboardEvent<HTMLInputElement>, patchKey: keyof CatalogFilters) {
     if (event.key !== 'Backspace' || event.altKey || event.ctrlKey || event.metaKey) {
@@ -796,12 +762,15 @@ function CatalogFilters({
       <div className="catalog-filter-search-row">
         <label className="catalog-filter-search">
           Поиск
-          <input
-            placeholder="Название, адрес, застройщик"
-            type="search"
-            value={filters.search}
-            onChange={(event) => onChange({ search: event.target.value })}
-          />
+          <span className="catalog-filter-search-field">
+            <SearchIcon aria-hidden="true" />
+            <input
+              placeholder="Название, адрес, застройщик"
+              type="search"
+              value={filters.search}
+              onChange={(event) => onChange({ search: event.target.value })}
+            />
+          </span>
         </label>
 
         <div className="catalog-filter-header-actions">
@@ -814,6 +783,7 @@ function CatalogFilters({
             type="button"
             onClick={() => setIsExpanded((currentValue) => !currentValue)}
           >
+            <FunnelIcon aria-hidden="true" />
             {filterButtonLabel}
             {activeAdvancedFilterCount > 0 ? <span>{activeAdvancedFilterCount}</span> : null}
           </button>
@@ -1189,88 +1159,223 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
   );
 }
 
-function CatalogSortBar({
+type CatalogSortOption = { sortBy: CatalogSortField; sortDirection: SortDirection; label: string };
+
+const defaultCatalogSortOption: CatalogSortOption = { sortBy: 'createdAt', sortDirection: 'desc', label: 'Сначала новые' };
+
+const catalogSortOptions: ReadonlyArray<CatalogSortOption> = [
+  defaultCatalogSortOption,
+  { sortBy: 'createdAt', sortDirection: 'asc', label: 'Сначала старые' },
+  { sortBy: 'priceFrom', sortDirection: 'asc', label: 'Сначала дешевле' },
+  { sortBy: 'priceFrom', sortDirection: 'desc', label: 'Сначала дороже' },
+  { sortBy: 'pricePerMeterFrom', sortDirection: 'asc', label: 'Дешевле за м²' },
+  { sortBy: 'pricePerMeterFrom', sortDirection: 'desc', label: 'Дороже за м²' },
+  { sortBy: 'completionDate', sortDirection: 'asc', label: 'Сначала ранняя сдача' },
+  { sortBy: 'completionDate', sortDirection: 'desc', label: 'Сначала поздняя сдача' },
+];
+
+const catalogViewModeOptions: ReadonlyArray<{ value: CatalogViewMode; label: string; icon: typeof LayoutGridIcon }> = [
+  { value: 'cards', label: 'Карточки', icon: LayoutGridIcon },
+  { value: 'list', label: 'Список', icon: ListIcon },
+];
+
+function CatalogResultsBar({
+  filters,
+  isLoading,
+  isMapView,
+  total,
+  viewMode,
+  onOpenMap,
+  onSortChange,
+  onViewModeChange,
+}: {
+  filters: CatalogFilters;
+  isLoading: boolean;
+  isMapView: boolean;
+  total: number;
+  viewMode: CatalogViewMode;
+  onOpenMap: () => void;
+  onSortChange: (patch: Partial<CatalogFilters>, options?: { resetPage: boolean }) => void;
+  onViewModeChange: (viewMode: CatalogViewMode) => void;
+}) {
+  return (
+    <div className="catalog-results-bar">
+      <p className="catalog-results-count" aria-live="polite">
+        {isLoading ? (
+          'Загрузка'
+        ) : (
+          <>
+            <b>{formatNumber(total)}</b> {formatCatalogObjectsWord(total)} в подборке
+          </>
+        )}
+      </p>
+
+      <div className="catalog-view-segmented" role="group" aria-label="Вид каталога">
+        {catalogViewModeOptions.map((option) => {
+          const isActive = !isMapView && viewMode === option.value;
+          const Icon = option.icon;
+
+          return (
+            <button
+              key={option.value}
+              aria-pressed={isActive}
+              className={isActive ? 'catalog-view-segment is-active' : 'catalog-view-segment'}
+              type="button"
+              onClick={() => onViewModeChange(option.value)}
+            >
+              <Icon aria-hidden="true" />
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        aria-current={isMapView ? 'page' : undefined}
+        className={isMapView ? 'catalog-results-map-button is-active' : 'catalog-results-map-button'}
+        type="button"
+        onClick={onOpenMap}
+      >
+        <MapIcon aria-hidden="true" />
+        На карте
+      </button>
+
+      {!isMapView ? <CatalogSortSelect filters={filters} onChange={onSortChange} /> : null}
+    </div>
+  );
+}
+
+function CatalogSortSelect({
   filters,
   onChange,
 }: {
   filters: CatalogFilters;
   onChange: (patch: Partial<CatalogFilters>, options?: { resetPage: boolean }) => void;
 }) {
-  function onSortChange(sortBy: CatalogSortField) {
-    const sortDirection =
-      filters.sortBy === sortBy
-        ? toggleCatalogSortDirection(filters.sortDirection)
-        : getDefaultCatalogSortDirection(sortBy);
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const shouldFocusSelectedOptionRef = useRef(false);
+  const listboxId = useId();
+  const selectedOption =
+    catalogSortOptions.find(
+      (option) => option.sortBy === filters.sortBy && option.sortDirection === filters.sortDirection,
+    ) ?? defaultCatalogSortOption;
 
-    onChange({ sortBy, sortDirection });
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (shouldFocusSelectedOptionRef.current) {
+      shouldFocusSelectedOptionRef.current = false;
+      containerRef.current?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')?.focus();
+    }
+
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && containerRef.current?.contains(event.target)) {
+        return;
+      }
+
+      setIsOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handleDocumentPointerDown);
+
+    return () => document.removeEventListener('pointerdown', handleDocumentPointerDown);
+  }, [isOpen]);
+
+  function selectOption(option: CatalogSortOption) {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+
+    if (option !== selectedOption) {
+      onChange({ sortBy: option.sortBy, sortDirection: option.sortDirection });
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape' && isOpen) {
+      event.preventDefault();
+      setIsOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (!isOpen) {
+      shouldFocusSelectedOptionRef.current = true;
+      setIsOpen(true);
+      return;
+    }
+
+    const options = Array.from(containerRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+    const currentIndex = options.findIndex((option) => option === document.activeElement);
+    const nextIndex =
+      currentIndex < 0
+        ? event.key === 'ArrowDown'
+          ? 0
+          : options.length - 1
+        : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+
+    options[nextIndex]?.focus();
+  }
+
+  function handleBlur(event: FocusEvent<HTMLDivElement>) {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+
+    setIsOpen(false);
   }
 
   return (
-    <section className="catalog-sort-bar" aria-label="Сортировка каталога">
-      <div className="catalog-sort-row">
-        <span className="catalog-sort-spacer" aria-hidden="true" />
-        <CatalogSortButton
-          active={filters.sortBy === 'priceFrom'}
-          direction={filters.sortDirection}
-          onClick={() => onSortChange('priceFrom')}
-        >
-          Цена
-        </CatalogSortButton>
-        <CatalogSortButton
-          active={filters.sortBy === 'pricePerMeterFrom'}
-          direction={filters.sortDirection}
-          onClick={() => onSortChange('pricePerMeterFrom')}
-        >
-          Цена м²
-        </CatalogSortButton>
-        <CatalogSortButton
-          active={filters.sortBy === 'completionDate'}
-          direction={filters.sortDirection}
-          onClick={() => onSortChange('completionDate')}
-        >
-          Срок
-        </CatalogSortButton>
-        <CatalogSortButton
-          active={filters.sortBy === 'createdAt'}
-          direction={filters.sortDirection}
-          onClick={() => onSortChange('createdAt')}
-        >
-          Добавлен
-        </CatalogSortButton>
-      </div>
-    </section>
-  );
-}
-
-function CatalogSortButton({
-  active,
-  children,
-  direction,
-  onClick,
-}: {
-  active: boolean;
-  children: ReactNode;
-  direction: SortDirection;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      aria-pressed={active}
-      className={active ? 'catalog-sort-button catalog-sort-button--active' : 'catalog-sort-button'}
-      type="button"
-      onClick={onClick}
+    <div
+      ref={containerRef}
+      className={isOpen ? 'catalog-sort is-open' : 'catalog-sort'}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
     >
-      {children}
-      {active ? (
-        direction === 'asc' ? (
-          <ArrowUpIcon aria-hidden="true" />
-        ) : (
-          <ArrowDownIcon aria-hidden="true" />
-        )
-      ) : (
-        <ArrowUpDownIcon aria-hidden="true" />
-      )}
-    </button>
+      <button
+        ref={triggerRef}
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label={`Сортировка: ${selectedOption.label}`}
+        className="catalog-sort-trigger"
+        type="button"
+        onClick={() => setIsOpen((currentValue) => !currentValue)}
+      >
+        <span>{selectedOption.label}</span>
+        <ChevronRightIcon aria-hidden="true" />
+      </button>
+
+      {isOpen ? (
+        <div id={listboxId} className="catalog-sort-menu" role="listbox" aria-label="Сортировка">
+          {catalogSortOptions.map((option) => {
+            const isSelected = option === selectedOption;
+
+            return (
+              <button
+                key={`${option.sortBy}-${option.sortDirection}`}
+                aria-selected={isSelected}
+                className={isSelected ? 'catalog-sort-option is-active' : 'catalog-sort-option'}
+                role="option"
+                type="button"
+                onClick={() => selectOption(option)}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2579,14 +2684,6 @@ function parseCatalogPageSize(value: string | null): CatalogPageSize {
     : defaultFilters.limit;
 }
 
-function getDefaultCatalogSortDirection(sortBy: CatalogSortField): SortDirection {
-  return sortBy === 'completionDate' ? 'asc' : 'desc';
-}
-
-function toggleCatalogSortDirection(direction: SortDirection): SortDirection {
-  return direction === 'asc' ? 'desc' : 'asc';
-}
-
 function parseTextParam(value: string | null) {
   return value?.trim() ?? '';
 }
@@ -2676,6 +2773,21 @@ function appendUniqueCatalogObjects(
   });
 
   return [...currentObjects, ...uniqueNextObjects];
+}
+
+function formatCatalogObjectsWord(count: number) {
+  const lastTwoDigits = count % 100;
+  const lastDigit = count % 10;
+
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 14) {
+    return 'объектов';
+  }
+
+  if (lastDigit === 1) {
+    return 'объект';
+  }
+
+  return lastDigit >= 2 && lastDigit <= 4 ? 'объекта' : 'объектов';
 }
 
 function formatCatalogCount(isLoading: boolean, total: number) {

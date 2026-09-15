@@ -757,3 +757,21 @@ html[data-app-theme="dark-premium"] .sidebar :is(.sidebar-avatar, .sidebar-user-
 html[data-app-theme="dark-premium"] .sidebar .sidebar-user-text b {
   color: var(--app-theme-ink-900);
 }
+
+/* Catalog search field: the wrapper is the control, the inner input stays bare. */
+html[data-app-theme="dark-premium"] .catalog-filter-search-field {
+  border-color: var(--app-theme-border-strong);
+  background: var(--app-theme-control);
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-search-field:focus-within {
+  border-color: var(--app-theme-primary);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-search .catalog-filter-search-field input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}

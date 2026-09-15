@@ -107,23 +107,23 @@ test('catalog object detail links open in new browser tabs', () => {
   assert.doesNotMatch(mapPopupSource, /data-map-point-id/);
 });
 
-test('catalog view controls render below quick links instead of inside the header', () => {
+test('catalog view controls render in the results bar below filters instead of inside the header', () => {
   const quickLinksIndex = source.indexOf('<CatalogQuickLinks');
-  const viewActionsIndex = source.indexOf('<CatalogViewActions');
   const filtersIndex = source.indexOf('\n      <CatalogFilters');
+  const resultsBarIndex = source.indexOf('<CatalogResultsBar');
 
-  assert.match(source, /function CatalogViewActions\(/);
+  assert.match(source, /function CatalogResultsBar\(/);
   assert.ok(quickLinksIndex > -1, 'quick links should render on the catalog page');
-  assert.ok(viewActionsIndex > quickLinksIndex, 'view controls should render after quick links');
-  assert.ok(filtersIndex > viewActionsIndex, 'filters should render after view controls');
-  assert.doesNotMatch(
-    source,
-    /<header className="page-header">[\s\S]*catalog-view-toggle[\s\S]*<\/header>/,
-  );
-  assert.doesNotMatch(
-    source,
-    /<header className="page-header">[\s\S]*catalog-map-button[\s\S]*<\/header>/,
-  );
+  assert.ok(filtersIndex > quickLinksIndex, 'filters should render after quick links');
+  assert.ok(resultsBarIndex > filtersIndex, 'results bar should render after filters');
+  assert.match(source, /className="catalog-view-segmented" role="group" aria-label="Вид каталога"/);
+  assert.match(source, /\{ value: 'cards', label: 'Карточки', icon: LayoutGridIcon \}/);
+  assert.match(source, /\{ value: 'list', label: 'Список', icon: ListIcon \}/);
+  assert.match(source, /aria-pressed=\{isActive\}/);
+  assert.match(source, /className=\{isMapView \? 'catalog-results-map-button is-active' : 'catalog-results-map-button'\}/);
+  assert.match(source, /<MapIcon aria-hidden="true" \/>\s*На карте/);
+  assert.doesNotMatch(source, /<header className="page-header">[\s\S]*catalog-view-segment[\s\S]*<\/header>/);
+  assert.doesNotMatch(source, /<header className="page-header">[\s\S]*catalog-results-map-button[\s\S]*<\/header>/);
 });
 
 test('catalog filters include krtName in URL and API requests', () => {
@@ -184,10 +184,7 @@ test('catalog search ignores stale object responses from previous characters', (
   assert.match(source, /mapObjectsRequestIdRef\.current \+= 1;[\s\S]*?setMapObjects\(\[\]\);/);
 });
 
-test('catalog sorting renders below filters and drives URL and object request params', () => {
-  const filtersIndex = source.indexOf('\n      <CatalogFilters');
-  const sortIndex = source.indexOf('<CatalogSortBar');
-
+test('catalog sorting is a dropdown in the results bar and drives URL and object request params', () => {
   assert.match(source, /type CatalogSortField = 'createdAt' \| 'priceFrom' \| 'pricePerMeterFrom' \| 'completionDate';/);
   assert.match(source, /type SortDirection = 'asc' \| 'desc';/);
   assert.match(source, /sortBy: CatalogSortField;/);
@@ -197,21 +194,25 @@ test('catalog sorting renders below filters and drives URL and object request pa
   assert.match(source, /setCatalogSortParams\(params, filters\)/);
   assert.match(source, /sortBy: filters\.sortBy,/);
   assert.match(source, /sortDirection: filters\.sortDirection,/);
-  assert.match(source, /function CatalogSortBar\(/);
-  assert.match(source, /function CatalogSortButton\(/);
-  assert.match(source, /onSortChange\('priceFrom'\)/);
-  assert.match(source, /onSortChange\('pricePerMeterFrom'\)/);
-  assert.match(source, /onSortChange\('completionDate'\)/);
-  assert.match(source, /onSortChange\('createdAt'\)/);
-  assert.match(source, />\s*Цена\s*</);
-  assert.match(source, />\s*Цена м²\s*</);
-  assert.match(source, />\s*Срок\s*</);
-  assert.match(source, />\s*Добавлен\s*</);
-  assert.doesNotMatch(source, /<span>Сортировка<\/span>/);
-  assert.doesNotMatch(source, /<strong>\{activeSortLabel\}<\/strong>/);
-  assert.doesNotMatch(source, /Порядок по умолчанию/);
-  assert.ok(filtersIndex > -1, 'filters should render on the catalog page');
-  assert.ok(sortIndex > filtersIndex, 'sort controls should render below filters');
+  assert.match(source, /function CatalogSortSelect\(/);
+  assert.match(source, /\{!isMapView \? <CatalogSortSelect filters=\{filters\} onChange=\{onSortChange\} \/> : null\}/);
+  assert.match(source, /aria-haspopup="listbox"/);
+  assert.match(source, /role="listbox" aria-label="Сортировка"/);
+  assert.match(source, /role="option"/);
+  assert.match(source, /onChange\(\{ sortBy: option\.sortBy, sortDirection: option\.sortDirection \}\)/);
+
+  [
+    ['createdAt', 'desc', 'Сначала новые'],
+    ['createdAt', 'asc', 'Сначала старые'],
+    ['priceFrom', 'asc', 'Сначала дешевле'],
+    ['priceFrom', 'desc', 'Сначала дороже'],
+    ['pricePerMeterFrom', 'asc', 'Дешевле за м²'],
+    ['pricePerMeterFrom', 'desc', 'Дороже за м²'],
+    ['completionDate', 'asc', 'Сначала ранняя сдача'],
+    ['completionDate', 'desc', 'Сначала поздняя сдача'],
+  ].forEach(([sortBy, sortDirection, label]) => {
+    assert.match(source, new RegExp(`sortBy: '${sortBy}', sortDirection: '${sortDirection}', label: '${label}'`));
+  });
 });
 
 test('catalog quick links use calm responsive columns without new UI dependencies', () => {
@@ -224,25 +225,24 @@ test('catalog quick links use calm responsive columns without new UI dependencie
 });
 
 test('catalog action buttons use ink instead of forest green', () => {
-  const mapButtonStyles = getStandaloneStyleBlock('.catalog-map-button');
   const cardLinkStyles = getStandaloneStyleBlock('.catalog-card-link');
   const listLinkHoverStyles = styles.match(/\.catalog-list-item-link:hover,\s*\.catalog-list-item-link:focus-visible\s*\{([^}]*)\}/)?.[1];
 
   assert.ok(listLinkHoverStyles, 'Expected to find catalog list item link hover styles');
-  assert.match(mapButtonStyles, /background:\s*var\(--catalog-ink-900\)/);
   assert.match(cardLinkStyles, /background:\s*var\(--catalog-ink-900\)/);
   assert.match(listLinkHoverStyles, /background:\s*var\(--catalog-ink-900\)/);
-  assert.doesNotMatch(mapButtonStyles, /catalog-forest/);
   assert.doesNotMatch(cardLinkStyles, /catalog-forest/);
   assert.doesNotMatch(listLinkHoverStyles, /catalog-forest/);
 });
 
-test('catalog sorting controls keep catalog panel styling and responsive wrapping', () => {
-  assert.match(styles, /\.catalog-sort-bar\s*\{[\s\S]*display:\s*grid;[\s\S]*border:\s*1px solid var\(--catalog-border\)/);
-  assert.match(styles, /\.catalog-sort-row\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) repeat\(4,\s*minmax\(118px,\s*auto\)\)/);
-  assert.match(styles, /\.catalog-sort-button\s*\{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent/);
-  assert.match(styles, /\.catalog-sort-button--active\s*\{[\s\S]*color:\s*var\(--catalog-blue-deep\)/);
-  assert.doesNotMatch(styles, /\.catalog-sort-heading/);
-  assert.doesNotMatch(styles, /\.catalog-sort-reset/);
-  assert.match(styles, /@media \(max-width:\s*700px\)\s*\{[\s\S]*\.catalog-sort-row\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+test('catalog results bar keeps a wrapping toolbar with an animated sort menu', () => {
+  assert.match(styles, /\.catalog-results-bar\s*\{[\s\S]*display:\s*flex;[\s\S]*min-height:\s*58px;[\s\S]*gap:\s*10px;/);
+  assert.match(styles, /\.catalog-sort\s*\{[\s\S]*position:\s*relative;[\s\S]*min-width:\s*176px;/);
+  assert.match(styles, /\.catalog-sort-trigger svg\s*\{[\s\S]*transform:\s*rotate\(90deg\);/);
+  assert.match(styles, /\.catalog-sort\.is-open \.catalog-sort-trigger svg\s*\{[\s\S]*transform:\s*rotate\(-90deg\);/);
+  assert.match(styles, /\.catalog-sort-menu\s*\{[\s\S]*top:\s*calc\(100% \+ 9px\);[\s\S]*animation:\s*catalog-sort-drop/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.catalog-sort-menu\s*\{\s*animation:\s*none;/);
+  assert.match(styles, /@media \(max-width:\s*820px\)\s*\{[\s\S]*\.catalog-results-bar\s*\{[\s\S]*flex-wrap:\s*wrap;/);
+  assert.doesNotMatch(styles, /\.catalog-sort-bar/);
+  assert.doesNotMatch(styles, /\.catalog-view-toggle/);
 });
