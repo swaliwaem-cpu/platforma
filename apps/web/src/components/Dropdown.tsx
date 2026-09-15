@@ -238,7 +238,8 @@ function focusInitialDropdownItem(container: HTMLElement) {
   const option = selectedOption ?? getDropdownOptions(container)[0];
 
   if (!option) {
-    container.focus({ preventScroll: true });
+    const firstField = container.querySelector<HTMLElement>('input:not(:disabled), button:not(:disabled)');
+    (firstField ?? container).focus({ preventScroll: true });
     return;
   }
 
@@ -258,7 +259,11 @@ function handleDropdownKeyDown(
   const searchInput = container.querySelector<HTMLInputElement>('[data-dropdown-search]');
   const activeElement = document.activeElement as HTMLElement | null;
   const activeIndex = activeElement ? options.indexOf(activeElement) : -1;
-  const isSearchFocused = Boolean(searchInput && activeElement === searchInput);
+  const isOptionFocused = activeIndex !== -1;
+
+  if (options.length === 0) {
+    return;
+  }
 
   if (event.key === 'ArrowDown') {
     event.preventDefault();
@@ -278,7 +283,9 @@ function handleDropdownKeyDown(
     return;
   }
 
-  if (isSearchFocused) {
+  // Arrow keys above move between options; everything below only applies while an option has focus,
+  // so text fields and buttons inside a popover keep their native Tab/Home/End behaviour.
+  if (!isOptionFocused) {
     return;
   }
 

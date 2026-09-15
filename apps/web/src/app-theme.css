@@ -273,7 +273,7 @@ html[data-app-theme] :is(
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(input, select, textarea, [data-slot="input"], .catalog-filter-search input, .catalog-filter-fields input, .catalog-filter-fields select, .catalog-filter-fields .multi-select-dropdown-button, .catalog-link-field input, .catalog-link-field select, .object-feed-units-filter .multi-select-dropdown-button, .multi-select-dropdown-button) {
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"], .catalog-filter-search input, .catalog-link-field input, .catalog-link-field select, .object-feed-units-filter .multi-select-dropdown-button, .multi-select-dropdown-button) {
   border-color: var(--app-theme-border-strong);
   background: var(--app-theme-control);
   color: var(--app-theme-ink-900);
@@ -331,14 +331,14 @@ html[data-app-theme] :is([data-slot="skeleton"], .feed-table-skeleton, .import-t
   background: color-mix(in srgb, var(--app-theme-surface-muted) 78%, var(--app-theme-border-soft));
 }
 
-html[data-app-theme] :is(.primary-button, .admin-button--primary, .catalog-filter-toggle, .catalog-map-button, .catalog-card-link, .catalog-list-item-link:hover, .catalog-list-item-link:focus-visible) {
+html[data-app-theme] :is(.primary-button, .admin-button--primary, .catalog-map-button, .catalog-card-link, .catalog-list-item-link:hover, .catalog-list-item-link:focus-visible) {
   border-color: var(--app-theme-primary);
   background: var(--app-theme-primary);
   color: var(--app-theme-primary-foreground);
   box-shadow: none;
 }
 
-html[data-app-theme] :is(.primary-button:hover, .primary-button:focus-visible, .admin-button--primary:hover, .admin-button--primary:focus-visible, .catalog-filter-toggle:hover, .catalog-filter-toggle:focus-visible, .catalog-map-button:hover, .catalog-map-button:focus-visible, .catalog-card-link:hover, .catalog-card-link:focus-visible) {
+html[data-app-theme] :is(.primary-button:hover, .primary-button:focus-visible, .admin-button--primary:hover, .admin-button--primary:focus-visible, .catalog-map-button:hover, .catalog-map-button:focus-visible, .catalog-card-link:hover, .catalog-card-link:focus-visible) {
   border-color: var(--app-theme-primary-deep);
   background: var(--app-theme-primary-deep);
   color: var(--app-theme-primary-foreground);
@@ -412,7 +412,7 @@ html[data-app-theme] :is(.quick-edit-cell-button:hover, .quick-edit-cell-button:
   box-shadow: var(--app-theme-focus-primary);
 }
 
-html[data-app-theme] :is(th, td, .catalog-links-meta, .catalog-link-column, .object-form-section, .user-form-section, .permission-group, .catalog-filter-fields, .object-content-sections, .object-content-section-item, .details-list > div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-list-item + .catalog-list-item, .catalog-map-list li) {
+html[data-app-theme] :is(th, td, .catalog-links-meta, .catalog-link-column, .object-form-section, .user-form-section, .permission-group, .object-content-sections, .object-content-section-item, .details-list > div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-list-item + .catalog-list-item, .catalog-map-list li) {
   border-color: var(--app-theme-border-soft);
 }
 
@@ -591,39 +591,6 @@ html[data-app-theme] :is(.profile-avatar, .catalog-card-location > span, .catalo
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme="minimal-luxury"] .catalog-card-floor-plan-badge {
-  --catalog-floor-plan-badge-bg: var(--app-theme-accent);
-  --catalog-floor-plan-badge-border: var(--app-theme-accent);
-  --catalog-floor-plan-badge-color: #fffefa;
-  --catalog-floor-plan-icon-filter: brightness(0) invert(1);
-}
-
-html[data-app-theme="minimal-luxury"] .catalog-card-aerotour-badge {
-  --catalog-aerotour-badge-bg: var(--app-theme-accent);
-  --catalog-aerotour-badge-border: var(--app-theme-accent);
-  --catalog-aerotour-badge-color: #fffefa;
-  --catalog-aerotour-icon-filter: brightness(0) invert(1);
-}
-
-html[data-app-theme="dark-premium"] .catalog-card-floor-plan-badge {
-  --catalog-floor-plan-badge-bg: var(--app-theme-primary);
-  --catalog-floor-plan-badge-border: var(--app-theme-primary);
-  --catalog-floor-plan-badge-color: #000000;
-  --catalog-floor-plan-icon-filter: brightness(0);
-}
-
-html[data-app-theme="dark-premium"] .catalog-card-aerotour-badge {
-  --catalog-aerotour-badge-bg: var(--app-theme-primary);
-  --catalog-aerotour-badge-border: var(--app-theme-primary);
-  --catalog-aerotour-badge-color: #000000;
-  --catalog-aerotour-icon-filter: brightness(0);
-}
-
-html[data-app-theme] .catalog-card-media .catalog-card-aerotour-icon {
-  filter: var(--catalog-aerotour-icon-filter);
-  object-fit: contain;
-}
-
 html[data-app-theme="minimal-luxury"] .object-lot-aerotour-link {
   --object-lot-aerotour-bg: var(--app-theme-accent);
   --object-lot-aerotour-border: var(--app-theme-accent);
@@ -636,10 +603,35 @@ html[data-app-theme="dark-premium"] .object-lot-aerotour-link {
   --object-lot-aerotour-icon-filter: brightness(0);
 }
 
-html[data-app-theme] :is(.catalog-card-pdf-badge--active) {
-  border-color: color-mix(in srgb, var(--app-theme-accent) 32%, var(--app-theme-border));
-  background: var(--app-theme-accent);
-  color: var(--app-theme-primary-foreground);
+/* Dark theme photo indicators: the Fluffy White 36px square on the dark card surface, gold on hover. */
+html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge) {
+  border-color: var(--app-theme-border);
+  background: color-mix(in srgb, var(--app-theme-surface) 86%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: none;
+  color: var(--app-theme-ink-900);
+  pointer-events: auto;
+  transition:
+    border-color 0.18s,
+    color 0.18s,
+    transform 0.18s;
+}
+
+html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):hover {
+  border-color: var(--app-theme-primary);
+  color: var(--app-theme-primary);
+  transform: translateY(-1px);
+}
+
+html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):active {
+  transform: translateY(1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge) {
+    transform: none;
+  }
 }
 
 html[data-app-theme] :is(.catalog-card-media, .catalog-list-item-media, .map-object-card-image, .preview-media, .gallery-thumb, .gallery-cover-preview, .gallery-cover-placeholder, .object-image-carousel--empty, .object-carousel-media, .carousel-thumbnail, .object-gallery-item, .map-fallback, .map-balloon-image) {
@@ -717,11 +709,6 @@ html[data-app-theme="dark-premium"] :is(.sidebar-logo, .catalog-card-media img, 
   filter: saturate(0.92) contrast(1.02);
 }
 
-html[data-app-theme] .catalog-card-media .catalog-card-floor-plan-icon {
-  filter: var(--catalog-floor-plan-icon-filter);
-  object-fit: contain;
-}
-
 html[data-app-theme="dark-premium"] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .carousel-modal-download, .object-gallery-item figcaption) {
   background: rgb(0 0 0 / 72%);
   color: #ffffff;
@@ -731,7 +718,7 @@ html[data-app-theme="minimal-luxury"] :is(.sidebar, .login-panel, .content-panel
   box-shadow: var(--app-theme-shadow-panel);
 }
 
-html[data-app-theme="minimal-luxury"] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .catalog-filter-toggle, .object-detail-action-button) {
+html[data-app-theme="minimal-luxury"] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .object-detail-action-button) {
   font-weight: 760;
 }
 
@@ -781,4 +768,54 @@ html[data-app-theme="dark-premium"] .searchable-multi-select-value input:is(:hov
   border-color: transparent;
   background: transparent;
   box-shadow: none;
+}
+
+/* Catalog filter pills and range popovers (dark theme). */
+html[data-app-theme="dark-premium"] .catalog-filter-pill {
+  border-color: var(--app-theme-border);
+  background: var(--app-theme-control);
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-pill:not(:disabled):is(:hover, :focus-visible, .is-open) {
+  border-color: var(--app-theme-primary);
+  outline: none;
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-pill.is-set {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-primary);
+  color: var(--app-theme-primary-foreground);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-pill.is-set :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
+  color: color-mix(in srgb, var(--app-theme-primary-foreground) 64%, transparent);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-range-field {
+  border-color: var(--app-theme-border-strong);
+  background: var(--app-theme-control);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-range-field:focus-within {
+  border-color: var(--app-theme-primary);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-range-field input,
+html[data-app-theme="dark-premium"] .catalog-filter-range-field input:is(:hover, :focus, :focus-visible) {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filter-popover-done {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-primary);
+  color: var(--app-theme-primary-foreground);
+}
+
+html[data-app-theme="dark-premium"] .catalog-filters.is-stuck {
+  box-shadow: 0 14px 32px rgb(0 0 0 / 42%);
 }

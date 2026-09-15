@@ -666,6 +666,45 @@
   border-radius: 26px 26px 0 0;
 }
 
+/* .fw-property-media > div: photo indicators 12px from the top-right corner, 7px apart. */
+:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-document-badges {
+  gap: 7px;
+}
+
+/* .fw-property-media button: every photo indicator (floor plan, aerotour, PDF) is a 36px glass square, radius 11, 18px glyph. */
+:root[data-app-theme="minimal-luxury"] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge) {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 28%);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: none;
+  color: rgb(34 35 31);
+  padding: 0;
+  pointer-events: auto;
+  transition:
+    background-color 0.18s,
+    border-color 0.18s,
+    box-shadow 0.18s,
+    transform 0.18s;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):hover {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  color: var(--fw-text);
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):active {
+  transform: translateY(var(--fw-press));
+}
+
 /* List view: rows stand on the canvas as separate cards. */
 :root[data-app-theme="minimal-luxury"] body .catalog-list {
   gap: 16px;
@@ -830,7 +869,7 @@
 }
 
 /* Dividers use the reference line colour. */
-:root[data-app-theme="minimal-luxury"] body :is(th, td, .details-list > div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-map-list li, .catalog-quick-links-column, .permission-group, .object-form-section, .user-form-section, .catalog-filter-fields, .object-content-sections, .object-content-section-item, .catalog-links-meta, .catalog-link-column, .table-meta) {
+:root[data-app-theme="minimal-luxury"] body :is(th, td, .details-list > div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-map-list li, .catalog-quick-links-column, .permission-group, .object-form-section, .user-form-section, .object-content-sections, .object-content-section-item, .catalog-links-meta, .catalog-link-column, .table-meta) {
   border-color: var(--fw-line);
 }
 
@@ -845,7 +884,6 @@
   .success-button,
   .admin-button,
   [data-slot="button"],
-  .catalog-filter-toggle,
   .catalog-filter-reset,
   .catalog-results-map-button,
   .catalog-sort-trigger,
@@ -933,7 +971,6 @@
   [data-slot="button"][data-variant="outline"],
   [data-slot="button"][data-variant="secondary"],
   .catalog-filter-reset,
-  .catalog-filter-toggle,
   .catalog-results-map-button,
   .catalog-sort-trigger,
   .catalog-list-item-link,
@@ -961,7 +998,6 @@
   [data-slot="button"][data-variant="outline"],
   [data-slot="button"][data-variant="secondary"],
   .catalog-filter-reset,
-  .catalog-filter-toggle,
   .catalog-results-map-button,
   .catalog-sort-trigger,
   .catalog-list-item-link,
@@ -991,7 +1027,6 @@
   [data-slot="button"][data-variant="outline"],
   [data-slot="button"][data-variant="secondary"],
   .catalog-filter-reset,
-  .catalog-filter-toggle,
   .catalog-results-map-button,
   .catalog-sort-trigger,
   .catalog-list-item-link,
@@ -1454,11 +1489,18 @@
   gap: 8px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-header-actions :is(.catalog-filter-reset, .catalog-filter-toggle) {
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-header-actions .catalog-filter-reset {
   width: auto;
   max-width: none;
   flex: none;
   padding: 0 16px;
+}
+
+@media (max-width: 700px) {
+  :root[data-app-theme="minimal-luxury"] body .catalog-filter-header-actions .catalog-filter-reset {
+    width: 42px;
+    padding: 0;
+  }
 }
 
 /* .fw-input: 42px field, 12px text, bare inner input. */
@@ -1473,17 +1515,125 @@
   padding: 1px 2px;
 }
 
-@media (max-width: 820px) {
-  :root[data-app-theme="minimal-luxury"] body .catalog-filters .catalog-filter-search-row {
-    grid-template-columns: 1fr;
-  }
+/* Pinned panel: the reference lift shadow joins the glass shadow while it floats over the cards. */
+:root[data-app-theme="minimal-luxury"] body .catalog-filters.is-stuck {
+  box-shadow: var(--fw-glass-shadow), var(--fw-lift-shadow);
+}
 
-  :root[data-app-theme="minimal-luxury"] body .catalog-filters .catalog-filter-header-actions {
-    display: flex;
-    flex-direction: row;
-    align-items: flex-end;
-    justify-content: flex-end;
-  }
+/* Filter pills (.fw-select-trigger at 36px): control fill, darken + lift on hover, ink when a value is set. */
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-divider {
+  background: var(--fw-line);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill {
+  border: 1px solid transparent;
+  background: var(--fw-control);
+  color: var(--fw-text);
+  font-weight: 400;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
+  color: var(--fw-muted);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill:not(:disabled):is(:hover, :focus-visible, .is-open) {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill:not(:disabled):active {
+  transform: translateY(var(--fw-press));
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set {
+  border-color: var(--fw-text);
+  background: var(--fw-text);
+  color: #ffffff;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
+  color: rgb(255 255 255 / 62%);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set:not(:disabled):is(:hover, :focus-visible, .is-open) {
+  border-color: var(--fw-primary-hover);
+  background: var(--fw-primary-hover);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set:not(:disabled):active {
+  background: var(--fw-primary-pressed);
+}
+
+/* Range popovers: merged «от — до» field in the reference field style. */
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-title {
+  color: var(--fw-muted);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--fw-control);
+  box-shadow: var(--fw-field-shadow);
+  transition: var(--fw-field-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field:is(:hover, :focus-within) {
+  border-color: var(--fw-line-strong);
+  background: var(--fw-control-hover);
+  box-shadow: var(--fw-field-hover-shadow);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field i {
+  background: var(--fw-line);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field label {
+  color: var(--fw-muted);
+  font-size: 11px;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover .catalog-filter-range-field input,
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover .catalog-filter-range-field input:is(:hover, :focus, :focus-visible) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fw-text);
+  font-size: 12px;
+  padding: 0;
+  transform: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-clear {
+  color: var(--fw-muted);
+  font-size: 11px;
+  text-decoration-color: var(--fw-line);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-clear:hover {
+  color: var(--fw-text);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-done {
+  border-color: var(--fw-text);
+  border-radius: 12px;
+  background: var(--fw-text);
+  color: #ffffff;
+  font-size: 13px;
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-done:hover {
+  border-color: var(--fw-primary-hover);
+  background: var(--fw-primary-hover);
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-done:active {
+  background: var(--fw-primary-pressed);
+  transform: translateY(var(--fw-press));
 }
 
 /* Reference ≤560px: segments and the map button collapse to icons. */
@@ -1586,7 +1736,6 @@
 :root[data-app-theme="minimal-luxury"] body :is(
   select,
   .multi-select-dropdown-button,
-  .catalog-filter-fields .multi-select-dropdown-button,
   .object-feed-units-filter .multi-select-dropdown-button,
   .catalog-pagination-select,
   .quick-edit-select,
@@ -1606,7 +1755,6 @@
 :root[data-app-theme="minimal-luxury"] body :is(
   select:not(:disabled),
   .multi-select-dropdown-button,
-  .catalog-filter-fields .multi-select-dropdown-button,
   .object-feed-units-filter .multi-select-dropdown-button,
   .catalog-pagination-select,
   .quick-edit-select,

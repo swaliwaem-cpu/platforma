@@ -143,9 +143,8 @@ test('catalog filters include residential and commercial object type in URL and 
   assert.match(source, /function setCatalogObjectTypeParam\(params: URLSearchParams, value: CatalogObjectTypeFilter\)/);
   assert.equal(countMatches(source, /setCatalogObjectTypeParam\(params, filters\.objectType\);/g), 2);
   assert.match(source, /if \(!options\.omitObjectType\) \{/);
-  assert.match(source, />\s*Раздел\s*</);
-  assert.match(source, /value=\{filters\.objectType\}/);
-  assert.match(source, /<SelectDropdown<CatalogObjectTypeFilter>[\s\S]*?options=\{catalogObjectTypeOptions\}[\s\S]*?onChange=\{\(objectType\) => onChange\(\{ objectType \}\)\}/);
+  assert.match(source, /<CatalogFilterPill\s+ariaLabel="Фильтр каталога по разделу"[\s\S]*?isSet=\{filters\.objectType !== 'ALL'\}[\s\S]*?label="Все разделы"/);
+  assert.match(source, /catalogObjectTypeOptions\.map\(\(option\) => \([\s\S]*?selected=\{option\.value === filters\.objectType\}[\s\S]*?onChange\(\{ objectType: option\.value \}\);/);
   assert.match(source, /\{ value: 'ALL', label: 'Все' \}/);
   assert.match(source, /\{ value: 'RESIDENTIAL', label: 'Жилая' \}/);
   assert.match(source, /\{ value: 'COMMERCIAL', label: 'Коммерция' \}/);

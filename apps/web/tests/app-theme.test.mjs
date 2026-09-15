@@ -75,7 +75,7 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
 
   assert.match(
     styles,
-    /html\[data-app-theme\] :is\([\s\S]*?\.catalog-filter-fields \.multi-select-dropdown-button[\s\S]*?\.object-feed-units-filter \.multi-select-dropdown-button[\s\S]*?\)\s*\{[\s\S]*?background:\s*var\(--app-theme-control\);[\s\S]*?color:\s*var\(--app-theme-ink-900\);[\s\S]*?\}/,
+    /html\[data-app-theme\] :is\([\s\S]*?\.object-feed-units-filter \.multi-select-dropdown-button[\s\S]*?\)\s*\{[\s\S]*?background:\s*var\(--app-theme-control\);[\s\S]*?color:\s*var\(--app-theme-ink-900\);[\s\S]*?\}/,
   );
   assert.match(
     styles,

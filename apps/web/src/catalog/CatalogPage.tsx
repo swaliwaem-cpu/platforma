@@ -5,20 +5,22 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FocusEvent,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import {
   CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  FunnelIcon,
   LayoutGridIcon,
   ListIcon,
   MapIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
   SearchIcon,
 } from 'lucide-react';
 import type {
@@ -55,9 +57,10 @@ import {
   DropdownRoot,
   DropdownSearchInput,
   DropdownTrigger,
+  joinDropdownClassNames,
   useDropdownState,
+  type DropdownCloseReason,
 } from '../components/Dropdown';
-import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { SelectDropdown } from '../components/SelectDropdown';
 import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
@@ -750,9 +753,13 @@ function CatalogFilters({
   onChange: (patch: Partial<CatalogFilters>, options?: { resetPage: boolean }) => void;
   onReset: () => void;
 }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const activeAdvancedFilterCount = countActiveAdvancedFilters(filters);
-  const filterButtonLabel = isExpanded ? 'Скрыть фильтры' : 'Фильтры';
+  const panelRef = useRef<HTMLElement | null>(null);
+  const isStuck = useCatalogStickyPanel(panelRef);
+  const selectedObjectType = catalogObjectTypeOptions.find((option) => option.value === filters.objectType);
+  const selectedRoomValues = getRoomFilterValues(filters.lotRooms);
+  const priceValue = formatCatalogPriceFilterValue(filters);
+  const floorValue = formatCatalogRangeValue(filters.lotFloorMin, filters.lotFloorMax, (value) => value);
+  const completionYearOptions = getCatalogCompletionYearOptions(filters.completionYear);
 
   function handleCurrencyInputBackspace(event: KeyboardEvent<HTMLInputElement>, patchKey: keyof CatalogFilters) {
     if (event.key !== 'Backspace' || event.altKey || event.ctrlKey || event.metaKey) {
@@ -774,10 +781,14 @@ function CatalogFilters({
   }
 
   return (
-    <section className={`catalog-filters${isExpanded ? ' catalog-filters--expanded' : ''}`} aria-label="Фильтры каталога">
+    <section
+      ref={panelRef}
+      className={isStuck ? 'catalog-filters is-stuck' : 'catalog-filters'}
+      aria-label="Фильтры каталога"
+    >
       <div className="catalog-filter-search-row">
         <label className="catalog-filter-search">
-          Поиск
+          <span className="sr-only">Поиск</span>
           <span className="catalog-filter-search-field">
             <SearchIcon aria-hidden="true" />
             <input
@@ -790,206 +801,463 @@ function CatalogFilters({
         </label>
 
         <div className="catalog-filter-header-actions">
-          <button className="catalog-filter-reset" type="button" onClick={onReset}>
-            Сбросить
-          </button>
           <button
-            aria-expanded={isExpanded}
-            className="catalog-filter-toggle"
+            aria-label="Сбросить фильтры"
+            className="catalog-filter-reset"
+            disabled={!filters.search && countActiveAdvancedFilters(filters) === 0}
             type="button"
-            onClick={() => setIsExpanded((currentValue) => !currentValue)}
+            onClick={onReset}
           >
-            <FunnelIcon aria-hidden="true" />
-            {filterButtonLabel}
-            {activeAdvancedFilterCount > 0 ? <span>{activeAdvancedFilterCount}</span> : null}
+            <RotateCcwIcon aria-hidden="true" className="catalog-filter-reset-icon" />
+            <span>Сбросить</span>
           </button>
         </div>
       </div>
 
-      {isExpanded ? (
-        <div className="catalog-filter-fields">
-          <label>
-            Раздел
-            <SelectDropdown<CatalogObjectTypeFilter>
-              ariaLabel="Фильтр каталога по разделу"
-              emptyValue="ALL"
-              options={catalogObjectTypeOptions}
-              value={filters.objectType}
-              onChange={(objectType) => onChange({ objectType })}
-            />
-          </label>
+      <div className="catalog-filter-bar" role="group" aria-label="Параметры подбора">
+        <CatalogFilterPill
+          ariaLabel="Фильтр каталога по разделу"
+          isSet={filters.objectType !== 'ALL'}
+          label="Все разделы"
+          value={selectedObjectType?.label ?? ''}
+        >
+          {(close) => (
+            <DropdownListbox aria-label="Фильтр каталога по разделу">
+              {catalogObjectTypeOptions.map((option) => (
+                <DropdownOption
+                  key={option.value}
+                  label={option.value === 'ALL' ? 'Все разделы' : option.label}
+                  selected={option.value === filters.objectType}
+                  onSelect={() => {
+                    onChange({ objectType: option.value });
+                    close('select');
+                  }}
+                />
+              ))}
+            </DropdownListbox>
+          )}
+        </CatalogFilterPill>
 
-          <label>
-            Застройщик
-            <CatalogFilterSearchSelect
-              ariaLabel="Фильтр каталога по застройщику"
-              disabled={isDirectoriesLoading}
-              emptyLabel="Застройщики не найдены"
-              getOptionLabel={(developer) => developer.name}
-              getSearchValues={(developer) => [developer.name, developer.slug]}
-              options={directories.developers}
-              placeholder="Все застройщики"
-              searchPlaceholder="Поиск застройщика"
-              selectedIds={getCatalogFilterIdValues(filters.developerId)}
-              onSelectedIdsChange={(developerIds) =>
-                onChange({ developerId: formatCatalogFilterIdValues(developerIds) })
-              }
-            />
-          </label>
+        <span aria-hidden="true" className="catalog-filter-divider" />
 
-          <label>
-            Район
-            <CatalogFilterSearchSelect
-              ariaLabel="Фильтр каталога по району"
-              disabled={isDirectoriesLoading}
-              emptyLabel="Районы не найдены"
-              getOptionLabel={(location) => location.name}
-              getSearchValues={(location) => [location.name, location.slug]}
-              options={directories.districtLocations}
-              placeholder="Все районы"
-              searchPlaceholder="Поиск района"
-              selectedIds={getCatalogFilterIdValues(filters.locationId)}
-              onSelectedIdsChange={(locationIds) =>
-                onChange({ locationId: formatCatalogFilterIdValues(locationIds) })
-              }
-            />
-          </label>
+        <CatalogFilterSearchSelect
+          ariaLabel="Фильтр каталога по застройщику"
+          disabled={isDirectoriesLoading}
+          emptyLabel="Застройщики не найдены"
+          getOptionLabel={(developer) => developer.name}
+          getSearchValues={(developer) => [developer.name, developer.slug]}
+          label="Застройщик"
+          options={directories.developers}
+          placeholder="Все застройщики"
+          searchPlaceholder="Поиск застройщика"
+          selectedIds={getCatalogFilterIdValues(filters.developerId)}
+          onSelectedIdsChange={(developerIds) =>
+            onChange({ developerId: formatCatalogFilterIdValues(developerIds) })
+          }
+        />
 
-          <label>
-            Окружение
-            <CatalogFilterSearchSelect
-              ariaLabel="Фильтр каталога по окружению"
-              disabled={isDirectoriesLoading}
-              emptyLabel="Окружение не найдено"
-              getOptionLabel={(location) => location.name}
-              getSearchValues={(location) => [location.name, location.slug]}
-              options={directories.areaLocations}
-              placeholder="Все окружения"
-              searchPlaceholder="Поиск окружения"
-              selectedIds={getCatalogFilterIdValues(filters.areaId)}
-              onSelectedIdsChange={(areaIds) => onChange({ areaId: formatCatalogFilterIdValues(areaIds) })}
-            />
-          </label>
+        <CatalogFilterSearchSelect
+          ariaLabel="Фильтр каталога по району"
+          disabled={isDirectoriesLoading}
+          emptyLabel="Районы не найдены"
+          getOptionLabel={(location) => location.name}
+          getSearchValues={(location) => [location.name, location.slug]}
+          label="Район"
+          options={directories.districtLocations}
+          placeholder="Все районы"
+          searchPlaceholder="Поиск района"
+          selectedIds={getCatalogFilterIdValues(filters.locationId)}
+          onSelectedIdsChange={(locationIds) =>
+            onChange({ locationId: formatCatalogFilterIdValues(locationIds) })
+          }
+        />
 
-          <label>
-            Метро
-            <CatalogFilterSearchSelect
-              ariaLabel="Фильтр каталога по метро"
-              disabled={isDirectoriesLoading}
-              emptyLabel="Метро не найдено"
-              getOptionLabel={(station) => (station.lineName ? `${station.name}, ${station.lineName}` : station.name)}
-              getSearchValues={(station) => [station.name, station.slug, station.lineName]}
-              options={directories.metroStations}
-              placeholder="Все станции"
-              searchPlaceholder="Поиск метро"
-              selectedIds={getCatalogFilterIdValues(filters.metroStationId)}
-              onSelectedIdsChange={(metroStationIds) =>
-                onChange({ metroStationId: formatCatalogFilterIdValues(metroStationIds) })
-              }
-            />
-          </label>
+        <CatalogFilterSearchSelect
+          ariaLabel="Фильтр каталога по окружению"
+          disabled={isDirectoriesLoading}
+          emptyLabel="Окружение не найдено"
+          getOptionLabel={(location) => location.name}
+          getSearchValues={(location) => [location.name, location.slug]}
+          label="Окружение"
+          options={directories.areaLocations}
+          placeholder="Все окружения"
+          searchPlaceholder="Поиск окружения"
+          selectedIds={getCatalogFilterIdValues(filters.areaId)}
+          onSelectedIdsChange={(areaIds) => onChange({ areaId: formatCatalogFilterIdValues(areaIds) })}
+        />
 
-          <label>
-            Срок, год
-            <input
-              inputMode="numeric"
-              placeholder="2026"
-              type="text"
-              value={filters.completionYear}
-              onChange={(event) => onChange({ completionYear: sanitizeIntegerText(event.target.value, 4) })}
-            />
-          </label>
+        <CatalogFilterSearchSelect
+          ariaLabel="Фильтр каталога по метро"
+          disabled={isDirectoriesLoading}
+          emptyLabel="Метро не найдено"
+          getOptionLabel={(station) => (station.lineName ? `${station.name}, ${station.lineName}` : station.name)}
+          getPillLabel={(station) => station.name}
+          getSearchValues={(station) => [station.name, station.slug, station.lineName]}
+          label="Метро"
+          options={directories.metroStations}
+          placeholder="Все станции"
+          searchPlaceholder="Поиск метро"
+          selectedIds={getCatalogFilterIdValues(filters.metroStationId)}
+          onSelectedIdsChange={(metroStationIds) =>
+            onChange({ metroStationId: formatCatalogFilterIdValues(metroStationIds) })
+          }
+        />
 
-          <div className="catalog-filter-range" aria-label="Диапазон цены лота">
-            <label>
-              Цена от
-              <input
-                inputMode="decimal"
-                placeholder="0 ₽"
-                type="text"
-                value={formatCurrencyInputValue(filters.lotPriceMin)}
-                onChange={(event) => onChange({ lotPriceMin: sanitizeDecimalText(event.target.value) })}
-                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPriceMin')}
+        <CatalogFilterPill
+          ariaLabel="Фильтр каталога по сроку сдачи"
+          isSet={Boolean(filters.completionYear)}
+          label="Срок сдачи"
+          value={filters.completionYear}
+        >
+          {(close) => (
+            <DropdownListbox aria-label="Фильтр каталога по сроку сдачи">
+              <DropdownOption
+                label="Любой срок"
+                selected={!filters.completionYear}
+                onSelect={() => {
+                  onChange({ completionYear: '' });
+                  close('select');
+                }}
               />
-            </label>
+              {completionYearOptions.map((year) => (
+                <DropdownOption
+                  key={year}
+                  label={year}
+                  selected={year === filters.completionYear}
+                  onSelect={() => {
+                    onChange({ completionYear: year });
+                    close('select');
+                  }}
+                />
+              ))}
+            </DropdownListbox>
+          )}
+        </CatalogFilterPill>
 
-            <label>
-              Цена до
-              <input
-                inputMode="decimal"
-                placeholder="50 000 000 ₽"
-                type="text"
-                value={formatCurrencyInputValue(filters.lotPriceMax)}
-                onChange={(event) => onChange({ lotPriceMax: sanitizeDecimalText(event.target.value) })}
-                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPriceMax')}
+        <span aria-hidden="true" className="catalog-filter-divider" />
+
+        <CatalogFilterPill
+          ariaLabel="Фильтр каталога по цене"
+          isSet={Boolean(priceValue)}
+          label="Цена"
+          menuClassName="catalog-filter-popover"
+          value={priceValue}
+        >
+          {(close) => (
+            <>
+              <div className="catalog-filter-range" aria-label="Диапазон цены лота" role="group">
+                <span className="catalog-filter-range-title">Цена лота</span>
+                <div className="catalog-filter-range-field">
+                  <label>
+                    от
+                    <input
+                      inputMode="decimal"
+                      placeholder="0 ₽"
+                      type="text"
+                      value={formatCurrencyInputValue(filters.lotPriceMin)}
+                      onChange={(event) => onChange({ lotPriceMin: sanitizeDecimalText(event.target.value) })}
+                      onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPriceMin')}
+                    />
+                  </label>
+                  <i aria-hidden="true" />
+                  <label>
+                    до
+                    <input
+                      inputMode="decimal"
+                      placeholder="50 000 000 ₽"
+                      type="text"
+                      value={formatCurrencyInputValue(filters.lotPriceMax)}
+                      onChange={(event) => onChange({ lotPriceMax: sanitizeDecimalText(event.target.value) })}
+                      onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPriceMax')}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="catalog-filter-range" aria-label="Диапазон цены за метр лота" role="group">
+                <span className="catalog-filter-range-title">Цена за м²</span>
+                <div className="catalog-filter-range-field">
+                  <label>
+                    от
+                    <input
+                      inputMode="decimal"
+                      placeholder="0 ₽"
+                      type="text"
+                      value={formatCurrencyInputValue(filters.lotPricePerMeterMin)}
+                      onChange={(event) => onChange({ lotPricePerMeterMin: sanitizeDecimalText(event.target.value) })}
+                      onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPricePerMeterMin')}
+                    />
+                  </label>
+                  <i aria-hidden="true" />
+                  <label>
+                    до
+                    <input
+                      inputMode="decimal"
+                      placeholder="500 000 ₽"
+                      type="text"
+                      value={formatCurrencyInputValue(filters.lotPricePerMeterMax)}
+                      onChange={(event) => onChange({ lotPricePerMeterMax: sanitizeDecimalText(event.target.value) })}
+                      onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPricePerMeterMax')}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <CatalogFilterPopoverFooter
+                onClear={() => onChange({ lotPriceMin: '', lotPriceMax: '', lotPricePerMeterMin: '', lotPricePerMeterMax: '' })}
+                onDone={() => close('select')}
               />
-            </label>
-          </div>
+            </>
+          )}
+        </CatalogFilterPill>
 
-          <label>
-            Сколько комнат
-            <MultiSelectDropdown
-              ariaLabel="Фильтр каталога по комнатам"
-              options={catalogRoomOptions}
-              placeholder="Любые лоты"
-              values={getRoomFilterValues(filters.lotRooms)}
-              onChange={(values) => onChange({ lotRooms: formatRoomFilterValues(values) })}
-            />
-          </label>
-
-          <div className="catalog-filter-range" aria-label="Диапазон этажа лота">
-            <label>
-              Этаж от
-              <input
-                inputMode="numeric"
-                placeholder="1"
-                type="text"
-                value={filters.lotFloorMin}
-                onChange={(event) => onChange({ lotFloorMin: sanitizeIntegerText(event.target.value, 3) })}
+        <CatalogFilterPill
+          ariaLabel="Фильтр каталога по комнатам"
+          isSet={selectedRoomValues.length > 0}
+          label="Комнаты"
+          value={formatCatalogPillSelection(
+            catalogRoomOptions.filter((option) => selectedRoomValues.includes(option.value)).map((option) => option.label),
+          )}
+        >
+          {() => (
+            <DropdownListbox aria-label="Фильтр каталога по комнатам" aria-multiselectable={true}>
+              <DropdownOption
+                label="Любые лоты"
+                selected={selectedRoomValues.length === 0}
+                onSelect={() => onChange({ lotRooms: '' })}
               />
-            </label>
+              {catalogRoomOptions.map((option) => (
+                <DropdownOption
+                  key={option.value}
+                  label={option.label}
+                  selected={selectedRoomValues.includes(option.value)}
+                  onSelect={() =>
+                    onChange({
+                      lotRooms: formatRoomFilterValues(
+                        selectedRoomValues.includes(option.value)
+                          ? selectedRoomValues.filter((value) => value !== option.value)
+                          : [...selectedRoomValues, option.value],
+                      ),
+                    })
+                  }
+                />
+              ))}
+            </DropdownListbox>
+          )}
+        </CatalogFilterPill>
 
-            <label>
-              Этаж до
-              <input
-                inputMode="numeric"
-                placeholder="25"
-                type="text"
-                value={filters.lotFloorMax}
-                onChange={(event) => onChange({ lotFloorMax: sanitizeIntegerText(event.target.value, 3) })}
-              />
-            </label>
-          </div>
+        <CatalogFilterPill
+          ariaLabel="Фильтр каталога по этажу"
+          isSet={Boolean(floorValue)}
+          label="Этаж"
+          menuClassName="catalog-filter-popover"
+          value={floorValue}
+        >
+          {(close) => (
+            <>
+              <div className="catalog-filter-range" aria-label="Диапазон этажа лота" role="group">
+                <span className="catalog-filter-range-title">Этаж</span>
+                <div className="catalog-filter-range-field">
+                  <label>
+                    от
+                    <input
+                      inputMode="numeric"
+                      placeholder="1"
+                      type="text"
+                      value={filters.lotFloorMin}
+                      onChange={(event) => onChange({ lotFloorMin: sanitizeIntegerText(event.target.value, 3) })}
+                    />
+                  </label>
+                  <i aria-hidden="true" />
+                  <label>
+                    до
+                    <input
+                      inputMode="numeric"
+                      placeholder="25"
+                      type="text"
+                      value={filters.lotFloorMax}
+                      onChange={(event) => onChange({ lotFloorMax: sanitizeIntegerText(event.target.value, 3) })}
+                    />
+                  </label>
+                </div>
+              </div>
 
-          <div className="catalog-filter-range" aria-label="Диапазон цены за метр лота">
-            <label>
-              Цена за метр от
-              <input
-                inputMode="decimal"
-                placeholder="0 ₽"
-                type="text"
-                value={formatCurrencyInputValue(filters.lotPricePerMeterMin)}
-                onChange={(event) => onChange({ lotPricePerMeterMin: sanitizeDecimalText(event.target.value) })}
-                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPricePerMeterMin')}
+              <CatalogFilterPopoverFooter
+                onClear={() => onChange({ lotFloorMin: '', lotFloorMax: '' })}
+                onDone={() => close('select')}
               />
-            </label>
-
-            <label>
-              Цена за метр до
-              <input
-                inputMode="decimal"
-                placeholder="500 000 ₽"
-                type="text"
-                value={formatCurrencyInputValue(filters.lotPricePerMeterMax)}
-                onChange={(event) => onChange({ lotPricePerMeterMax: sanitizeDecimalText(event.target.value) })}
-                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPricePerMeterMax')}
-              />
-            </label>
-          </div>
-        </div>
-      ) : null}
+            </>
+          )}
+        </CatalogFilterPill>
+      </div>
     </section>
   );
+}
+
+/** Marks the filter panel while it is pinned to the top of the viewport. */
+function useCatalogStickyPanel(panelRef: RefObject<HTMLElement | null>) {
+  const [isStuck, setIsStuck] = useState(false);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+
+    if (!panel) {
+      return;
+    }
+
+    let frameId = 0;
+
+    const update = () => {
+      frameId = 0;
+      const stickyTop = Number.parseFloat(getComputedStyle(panel).top);
+
+      setIsStuck(Number.isFinite(stickyTop) && window.scrollY > 0 && panel.getBoundingClientRect().top <= stickyTop + 0.5);
+    };
+    const scheduleUpdate = () => {
+      if (!frameId) {
+        frameId = window.requestAnimationFrame(update);
+      }
+    };
+
+    update();
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
+    };
+  }, [panelRef]);
+
+  return isStuck;
+}
+
+function CatalogFilterPill({
+  ariaLabel,
+  children,
+  disabled = false,
+  isSet,
+  label,
+  menuClassName,
+  value,
+}: {
+  ariaLabel: string;
+  children: (close: (reason: DropdownCloseReason) => void) => ReactNode;
+  disabled?: boolean;
+  isSet: boolean;
+  label: string;
+  menuClassName?: string;
+  value: string;
+}) {
+  const menuId = useId();
+  const { isOpen, open, close, onOpenChange } = useDropdownState();
+  const showsValue = isSet && Boolean(value);
+  const showsKey = showsValue && !label.startsWith('Все ');
+
+  return (
+    <DropdownRoot open={isOpen && !disabled} onOpenChange={onOpenChange}>
+      <DropdownTrigger aria-controls={isOpen ? menuId : undefined} aria-haspopup="dialog" onOpen={open}>
+        <button
+          aria-expanded={isOpen}
+          className={joinDropdownClassNames('catalog-filter-pill', showsValue && 'is-set', isOpen && 'is-open')}
+          disabled={disabled}
+          title={showsValue ? `${ariaLabel}: ${value}` : ariaLabel}
+          type="button"
+        >
+          {showsKey ? <span className="catalog-filter-pill-key">{label}</span> : null}
+          <span className="catalog-filter-pill-value">{showsValue ? value : label}</span>
+          <ChevronDownIcon aria-hidden="true" className="catalog-filter-pill-chevron" />
+        </button>
+      </DropdownTrigger>
+
+      <DropdownContent id={menuId} aria-label={ariaLabel} className={menuClassName} onRequestClose={close}>
+        {children(close)}
+      </DropdownContent>
+    </DropdownRoot>
+  );
+}
+
+function CatalogFilterPopoverFooter({ onClear, onDone }: { onClear: () => void; onDone: () => void }) {
+  return (
+    <div className="catalog-filter-popover-footer">
+      <button className="catalog-filter-popover-clear" type="button" onClick={onClear}>
+        Очистить
+      </button>
+      <button className="catalog-filter-popover-done" type="button" onClick={onDone}>
+        Готово
+      </button>
+    </div>
+  );
+}
+
+function formatCatalogPillSelection(labels: string[]) {
+  const [firstLabel] = labels;
+
+  if (!firstLabel) {
+    return '';
+  }
+
+  return labels.length > 1 ? `${firstLabel} +${labels.length - 1}` : firstLabel;
+}
+
+function formatCatalogCompactMoney(value: string) {
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount)) {
+    return value;
+  }
+
+  const format = (number: number) => number.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+
+  if (amount >= 1_000_000) {
+    return `${format(amount / 1_000_000)} млн`;
+  }
+
+  if (amount >= 1_000) {
+    return `${format(amount / 1_000)} тыс`;
+  }
+
+  return format(amount);
+}
+
+function formatCatalogRangeValue(min: string, max: string, formatValue: (value: string) => string) {
+  if (min && max) {
+    return `${formatValue(min)} – ${formatValue(max)}`;
+  }
+
+  if (min) {
+    return `от ${formatValue(min)}`;
+  }
+
+  return max ? `до ${formatValue(max)}` : '';
+}
+
+function formatCatalogPriceFilterValue(filters: CatalogFilters) {
+  const lotPrice = formatCatalogRangeValue(filters.lotPriceMin, filters.lotPriceMax, formatCatalogCompactMoney);
+  const pricePerMeter = formatCatalogRangeValue(
+    filters.lotPricePerMeterMin,
+    filters.lotPricePerMeterMax,
+    formatCatalogCompactMoney,
+  );
+
+  if (lotPrice && pricePerMeter) {
+    return `${lotPrice} +1`;
+  }
+
+  return lotPrice || (pricePerMeter ? `за м² ${pricePerMeter}` : '');
+}
+
+function getCatalogCompletionYearOptions(selectedYear: string) {
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 9 }, (_, index) => String(currentYear - 1 + index));
+
+  if (selectedYear && !years.includes(selectedYear)) {
+    years.push(selectedYear);
+    years.sort();
+  }
+
+  return years;
 }
 
 type CatalogFilterSearchSelectOption = {
@@ -1001,7 +1269,9 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
   disabled = false,
   emptyLabel,
   getOptionLabel,
+  getPillLabel = getOptionLabel,
   getSearchValues,
+  label,
   options,
   placeholder,
   searchPlaceholder,
@@ -1012,7 +1282,9 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
   disabled?: boolean;
   emptyLabel: string;
   getOptionLabel: (option: T) => string;
+  getPillLabel?: (option: T) => string;
   getSearchValues: (option: T) => Array<string | null | undefined>;
+  label: string;
   options: T[];
   placeholder: string;
   searchPlaceholder: string;
@@ -1021,14 +1293,12 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
 }) {
   const [query, setQuery] = useState('');
   const listboxId = useId();
-  const { isOpen, open, close, onOpenChange } = useDropdownState({ onClose: () => setQuery('') });
   const selectedValueSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedOptions = useMemo(
     () => options.filter((option) => selectedValueSet.has(option.id)),
     [options, selectedValueSet],
   );
   const hasSelectedOptions = selectedOptions.length > 0;
-  const selectedLabel = selectedOptions.map((option) => getOptionLabel(option)).join(', ');
   const filteredOptions = useMemo(() => {
     const matchedOptions = options.filter((option) => matchesSearchVariants(query, getSearchValues(option)));
 
@@ -1049,24 +1319,15 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
   }
 
   return (
-    <div className="multi-select-dropdown">
-      <DropdownRoot open={isOpen && !disabled} onOpenChange={onOpenChange}>
-        <DropdownTrigger aria-controls={isOpen ? listboxId : undefined} onOpen={open}>
-          <button
-            aria-expanded={isOpen}
-            aria-label={ariaLabel}
-            className={isOpen ? 'multi-select-dropdown-button is-open' : 'multi-select-dropdown-button'}
-            disabled={disabled}
-            type="button"
-          >
-            <span className={hasSelectedOptions ? 'multi-select-dropdown-value' : 'multi-select-dropdown-value is-empty'}>
-              {hasSelectedOptions ? selectedLabel : placeholder}
-            </span>
-            <ChevronDownIcon aria-hidden="true" className="multi-select-dropdown-chevron" />
-          </button>
-        </DropdownTrigger>
-
-        <DropdownContent onRequestClose={close}>
+    <CatalogFilterPill
+      ariaLabel={ariaLabel}
+      disabled={disabled}
+      isSet={hasSelectedOptions}
+      label={label}
+      value={formatCatalogPillSelection(selectedOptions.map((option) => getPillLabel(option)))}
+    >
+      {() => (
+        <>
           <DropdownSearchInput
             aria-controls={listboxId}
             aria-label={`${ariaLabel}: поиск`}
@@ -1096,9 +1357,9 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
               <DropdownEmpty>{emptyLabel}</DropdownEmpty>
             )}
           </DropdownListbox>
-        </DropdownContent>
-      </DropdownRoot>
-    </div>
+        </>
+      )}
+    </CatalogFilterPill>
   );
 }
 
@@ -2091,25 +2352,27 @@ function CatalogCard({
                     aria-label="Есть импортированные лоты"
                     title="Есть импортированные лоты"
                   >
-                    <img
-                      alt=""
+                    <span
                       aria-hidden="true"
                       className="catalog-card-floor-plan-icon"
-                      src={floorPlanIconUrl}
+                      style={getCatalogCardIconMaskStyle(floorPlanIconUrl)}
                     />
                   </span>
                 ) : null}
                 {hasAerotourBadge ? (
                   <span className="catalog-card-aerotour-badge" aria-label="Есть аэротур" title="Есть аэротур">
-                    <img
-                      alt=""
+                    <span
                       aria-hidden="true"
                       className="catalog-card-aerotour-icon"
-                      src={aerotourIconUrl}
+                      style={getCatalogCardIconMaskStyle(aerotourIconUrl)}
                     />
                   </span>
                 ) : null}
-                {hasPresentation ? <span className="catalog-card-pdf-badge catalog-card-pdf-badge--active">PDF</span> : null}
+                {hasPresentation ? (
+                  <span className="catalog-card-pdf-badge" aria-label="Есть PDF-презентация" role="img" title="Есть PDF-презентация">
+                    <CatalogDocumentIcon />
+                  </span>
+                ) : null}
               </span>
             ) : null}
           </span>
@@ -2158,6 +2421,34 @@ function CatalogCard({
         </div>
       </div>
     </article>
+  );
+}
+
+/** Paints a monochrome asset in the badge text color, so every photo indicator shares one glyph color. */
+function getCatalogCardIconMaskStyle(iconUrl: string): CSSProperties {
+  const maskImage = `url("${iconUrl}")`;
+
+  return { maskImage, WebkitMaskImage: maskImage };
+}
+
+/** Document glyph from the Fluffy White property card (24px grid, 1.8 stroke). */
+function CatalogDocumentIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="catalog-card-pdf-icon"
+      fill="none"
+      height="18"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+      width="18"
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16h16V8Z" />
+      <path d="M14 2v6h6M8 13h8M8 17h6" />
+    </svg>
   );
 }
 

@@ -75,27 +75,25 @@ test('catalog page title reflects the active residential commercial or all secti
   assert.match(source, /return isMapView \? 'Все объекты на карте' : 'Все объекты недвижимости';/);
 });
 
-test('catalog global lot filters render controls and count as active advanced filters', () => {
+test('catalog global lot filters render as pills with range popovers and count as active advanced filters', () => {
   assert.match(source, /const catalogRoomOptions = \[/);
   assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
   assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
   assert.match(source, /\{ value:\s*'5',\s*label:\s*'5 спален'\s*\}/);
-  assert.match(source, /import \{ MultiSelectDropdown \} from '\.\.\/components\/MultiSelectDropdown';/);
-  assert.match(source, /<MultiSelectDropdown[\s\S]*?ariaLabel="Фильтр каталога по комнатам"[\s\S]*?values=\{getRoomFilterValues\(filters\.lotRooms\)\}[\s\S]*?onChange=\{\(values\) => onChange\(\{ lotRooms: formatRoomFilterValues\(values\) \}\)\}/);
+  assert.match(source, /<CatalogFilterPill\s+ariaLabel="Фильтр каталога по комнатам"[\s\S]*?<DropdownListbox aria-label="Фильтр каталога по комнатам" aria-multiselectable=\{true\}>/);
+  assert.match(source, /onChange\(\{\s*lotRooms: formatRoomFilterValues\(/);
   assert.match(multiSelectSource, /aria-multiselectable=\{true\}/);
-  assert.match(source, /className="catalog-filter-range" aria-label="Диапазон цены лота"/);
-  assert.match(source, />\s*Цена от\s*</);
-  assert.match(source, />\s*Цена до\s*</);
-  assert.match(source, /className="catalog-filter-range" aria-label="Диапазон цены за метр лота"/);
-  assert.match(source, />\s*Цена за метр от\s*</);
-  assert.match(source, />\s*Цена за метр до\s*</);
-  assert.match(source, />\s*Сколько комнат\s*</);
+  assert.match(source, /<CatalogFilterPill\s+ariaLabel="Фильтр каталога по цене"[\s\S]*?menuClassName="catalog-filter-popover"/);
+  assert.match(source, /className="catalog-filter-range" aria-label="Диапазон цены лота" role="group"/);
+  assert.match(source, /className="catalog-filter-range" aria-label="Диапазон цены за метр лота" role="group"/);
+  assert.match(source, /className="catalog-filter-range" aria-label="Диапазон этажа лота" role="group"/);
+  assert.match(source, /<span className="catalog-filter-range-title">Цена лота<\/span>/);
+  assert.match(source, /<span className="catalog-filter-range-title">Цена за м²<\/span>/);
+  assert.match(source, /<span className="catalog-filter-range-title">Этаж<\/span>/);
   assert.doesNotMatch(source, /aria-label="Диапазон площади лота"/);
   assert.doesNotMatch(source, />\s*М2 от\s*</);
-  assert.doesNotMatch(source, />\s*М2 до\s*</);
-  assert.match(source, /className="catalog-filter-range" aria-label="Диапазон этажа лота"/);
-  assert.match(source, />\s*Этаж от\s*</);
-  assert.match(source, />\s*Этаж до\s*</);
+  assert.match(source, /onClear=\{\(\) => onChange\(\{ lotPriceMin: '', lotPriceMax: '', lotPricePerMeterMin: '', lotPricePerMeterMax: '' \}\)\}/);
+  assert.match(source, /onClear=\{\(\) => onChange\(\{ lotFloorMin: '', lotFloorMax: '' \}\)\}/);
   assert.match(source, /filters\.lotPriceMin,/);
   assert.match(source, /filters\.lotPriceMax,/);
   assert.match(source, /filters\.lotPricePerMeterMin,/);
@@ -105,30 +103,32 @@ test('catalog global lot filters render controls and count as active advanced fi
   assert.match(source, /filters\.lotFloorMax,/);
 });
 
-test('catalog reset action is grouped with the filter visibility toggle', () => {
-  assert.match(source, /className="catalog-filter-header-actions"/);
+test('catalog filter panel is a sticky search row with one bar of filter pills', () => {
+  assert.doesNotMatch(source, /className="catalog-filter-toggle"/);
+  assert.doesNotMatch(source, /className="catalog-filter-fields"/);
+  assert.match(source, /className=\{isStuck \? 'catalog-filters is-stuck' : 'catalog-filters'\}/);
+  assert.match(source, /function useCatalogStickyPanel\(panelRef: RefObject<HTMLElement \| null>\)/);
   assert.match(
     source,
-    /className="catalog-filter-header-actions"[\s\S]*className="catalog-filter-reset"[\s\S]*Сбросить[\s\S]*className="catalog-filter-toggle"/,
+    /className="catalog-filter-header-actions"[\s\S]*?className="catalog-filter-reset"[\s\S]*?disabled=\{!filters\.search && countActiveAdvancedFilters\(filters\) === 0\}[\s\S]*?<span>Сбросить<\/span>/,
   );
-  assert.match(
-    stylesSource,
-    /\.catalog-filter-search-row \{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*auto\);[\s\S]*min-width:\s*0;/,
-  );
-  assert.match(
-    stylesSource,
-    /\.catalog-filter-header-actions \{[\s\S]*display:\s*flex;[\s\S]*max-width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*gap:\s*10px;/,
-  );
-  assert.match(
-    stylesSource,
-    /\.catalog-filter-toggle,\n\.catalog-filter-reset \{[\s\S]*width:\s*clamp\(140px,\s*13vw,\s*190px\);[\s\S]*flex:\s*0 1 190px;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*190px;[\s\S]*min-height:\s*44px;/,
-  );
-  assert.match(
-    stylesSource,
-    /@media \(max-width:\s*700px\) \{[\s\S]*\.catalog-filter-search-row \{[\s\S]*grid-template-columns:\s*1fr;[\s\S]*\.catalog-filter-header-actions \{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/,
-  );
-  assert.doesNotMatch(source, /className="catalog-filter-actions"/);
-  assert.doesNotMatch(source, /className="secondary-button secondary-button--fit" type="button" onClick=\{onReset\}/);
+  assert.match(source, /<div className="catalog-filter-bar" role="group" aria-label="Параметры подбора">/);
+  const pillLabels = [...source.matchAll(/<CatalogFilter(?:Pill|SearchSelect)\s+ariaLabel="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(pillLabels, [
+    'Фильтр каталога по разделу',
+    'Фильтр каталога по застройщику',
+    'Фильтр каталога по району',
+    'Фильтр каталога по окружению',
+    'Фильтр каталога по метро',
+    'Фильтр каталога по сроку сдачи',
+    'Фильтр каталога по цене',
+    'Фильтр каталога по комнатам',
+    'Фильтр каталога по этажу',
+  ]);
+  assert.match(stylesSource, /\.catalog-filters \{\s*position: sticky;\s*z-index: 30;\s*top: 12px;/);
+  assert.match(stylesSource, /\.catalog-filter-pill \{[\s\S]*?height: 36px;[\s\S]*?border-radius: 12px;/);
+  assert.match(stylesSource, /@media \(max-width: 700px\) \{[\s\S]*?\.catalog-filter-bar \{[\s\S]*?flex-wrap: nowrap;[\s\S]*?overflow-x: auto;/);
+  assert.doesNotMatch(stylesSource, /\.catalog-filter-toggle/);
 });
 
 test('catalog CSS normalizes Safari typography for mixed Cyrillic and Latin labels', () => {
