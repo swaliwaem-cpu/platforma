@@ -155,7 +155,7 @@ try {
   await page.getByRole('option', { name: /Анна Брокер.*anna@example\.test/ }).waitFor();
   await page.getByLabel('Сотрудник').press('ArrowDown');
   await page.getByLabel('Сотрудник').press('Enter');
-  await page.getByLabel('Статус').selectOption('REQUIRES_REVIEW');
+  await chooseDropdownOption(page, page.getByLabel('Статус', { exact: true }), 'Требует проверки');
   const filteredResultsRequest = page.waitForRequest((request) => {
     const url = new URL(request.url());
     return url.pathname === '/training/admin/results'
@@ -218,6 +218,11 @@ try {
 } finally {
   releaseInitialResults();
   await browser.close();
+}
+
+async function chooseDropdownOption(page, trigger, optionName) {
+  await trigger.click();
+  await page.getByRole('option', { name: optionName, exact: true }).click();
 }
 
 function resultFixture() {

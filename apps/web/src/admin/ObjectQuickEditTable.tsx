@@ -1,4 +1,4 @@
-import { useMemo, useState, type FocusEvent, type KeyboardEvent } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, PencilIcon } from 'lucide-react';
 import {
   ObjectDeveloper,
@@ -16,6 +16,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { AdminButton, AdminEmptyState, AdminStatusBadge } from './AdminUi';
 import {
   matchesQuickEditSearch,
@@ -395,45 +397,21 @@ function StatusSelectEditor({
   onCancel: () => void;
   onCommit: (value: ObjectStatus) => void;
 }) {
-  const [draftValue, setDraftValue] = useState<ObjectStatus | ''>(value === 'DRAFT' ? '' : value);
-
-  function handleEditorKeyDown(event: KeyboardEvent<HTMLSelectElement>) {
-    if (event.key === 'Enter' && draftValue) {
-      onCommit(draftValue);
-    }
-
-    if (event.key === 'Escape') {
-      onCancel();
-    }
-  }
-
-  function handleEditorBlur() {
-    if (draftValue) {
-      onCommit(draftValue);
-      return;
-    }
-
-    onCancel();
-  }
-
   return (
-    <select
-      autoFocus
+    <SelectDropdown<ObjectStatus>
+      ariaLabel="Статус объекта"
       className="quick-edit-select"
-      value={draftValue}
-      onBlur={handleEditorBlur}
-      onChange={(event) => setDraftValue(event.currentTarget.value as ObjectStatus)}
-      onKeyDown={handleEditorKeyDown}
-    >
-      <option disabled value="">
-        Выберите статус
-      </option>
-      {statusQuickEditOptions.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+      defaultOpen
+      options={statusQuickEditOptions}
+      placeholder="Выберите статус"
+      value={value === 'DRAFT' ? '' : value}
+      onChange={onCommit}
+      onClose={(reason) => {
+        if (reason !== 'select') {
+          onCancel();
+        }
+      }}
+    />
   );
 }
 
@@ -446,38 +424,23 @@ function PropertyClassSelectEditor({
   onCancel: () => void;
   onCommit: (value: string) => void;
 }) {
-  const [draftValue, setDraftValue] = useState(value);
-
-  function handleEditorKeyDown(event: KeyboardEvent<HTMLSelectElement>) {
-    if (event.key === 'Enter') {
-      onCommit(draftValue);
-    }
-
-    if (event.key === 'Escape') {
-      onCancel();
-    }
-  }
-
-  function handleEditorBlur() {
-    onCommit(draftValue);
-  }
-
   return (
-    <select
-      autoFocus
+    <SelectDropdown
+      ariaLabel="Класс объекта"
       className="quick-edit-select"
-      value={draftValue}
-      onBlur={handleEditorBlur}
-      onChange={(event) => setDraftValue(event.currentTarget.value)}
-      onKeyDown={handleEditorKeyDown}
-    >
-      <option value="">Не указан</option>
-      {propertyClassOptions.map((option) => (
-        <option key={option} value={option}>
-          {option}
-        </option>
-      ))}
-    </select>
+      defaultOpen
+      options={[
+        { value: '', label: 'Не указан' },
+        ...propertyClassOptions.map((option) => ({ value: option, label: option })),
+      ]}
+      value={value}
+      onChange={onCommit}
+      onClose={(reason) => {
+        if (reason !== 'select') {
+          onCancel();
+        }
+      }}
+    />
   );
 }
 
@@ -492,46 +455,39 @@ function DeveloperSearchEditor({
   onCancel: () => void;
   onCommit: (value: string) => void;
 }) {
-  const [draftValue, setDraftValue] = useState(value);
-  const datalistId = 'quick-edit-developer-options';
-  const filteredDevelopers = useMemo(
-    () => developers.filter((developer) => matchesQuickEditSearch(draftValue, [developer.name, developer.slug])),
-    [developers, draftValue],
+  const developerByName = useMemo(() => new Map(developers.map((developer) => [developer.name, developer])), [developers]);
+  const developerOptions = useMemo(
+    () => [
+      { value: '', label: 'Не указан' },
+      ...developers.map((developer) => ({ value: developer.name, label: developer.name, description: developer.slug ?? undefined })),
+    ],
+    [developers],
   );
 
-  function handleEditorKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === 'Enter') {
-      onCommit(draftValue);
-    }
+  function matchesDeveloperOption(optionValue: string, draftValue: string) {
+    const developer = developerByName.get(optionValue);
 
-    if (event.key === 'Escape') {
-      onCancel();
-    }
-  }
-
-  function handleEditorBlur() {
-    onCommit(draftValue);
+    return !developer || matchesQuickEditSearch(draftValue, [developer.name, developer.slug]);
   }
 
   return (
-    <>
-      <input
-        autoFocus
-        className="quick-edit-input"
-        list={datalistId}
-        placeholder="Поиск застройщика"
-        type="search"
-        value={draftValue}
-        onBlur={handleEditorBlur}
-        onChange={(event) => setDraftValue(event.currentTarget.value)}
-        onKeyDown={handleEditorKeyDown}
-      />
-      <datalist id={datalistId}>
-        {filteredDevelopers.map((developer) => (
-          <option key={developer.id} label={developer.slug ?? ''} value={developer.name} />
-        ))}
-      </datalist>
-    </>
+    <SelectDropdown
+      ariaLabel="Застройщик объекта"
+      className="quick-edit-select"
+      defaultOpen
+      emptyLabel="Застройщик не найден"
+      filterOption={(option, draftValue) => matchesDeveloperOption(option.value, draftValue)}
+      options={developerOptions}
+      searchable
+      searchPlaceholder="Поиск застройщика"
+      value={value}
+      onChange={onCommit}
+      onClose={(reason) => {
+        if (reason !== 'select') {
+          onCancel();
+        }
+      }}
+    />
   );
 }
 
@@ -547,66 +503,37 @@ function MetroMultiSelectEditor({
   onCommit: (value: string[]) => void;
 }) {
   const [draftIds, setDraftIds] = useState(selectedStationIds);
-  const [query, setQuery] = useState('');
   const metroStationById = useMemo(() => new Map(metroStations.map((station) => [station.id, station])), [metroStations]);
-  const filteredStations = useMemo(() => {
-    return metroStations.filter((station) => matchesQuickEditSearch(query, [station.name, station.slug, station.lineName]));
-  }, [metroStations, query]);
+  const metroOptions = useMemo(
+    () =>
+      metroStations.map((station) => ({
+        value: station.id,
+        label: station.lineName ? `${station.name}, ${station.lineName}` : station.name,
+      })),
+    [metroStations],
+  );
 
-  function handleEditorKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>) {
-    if (event.key === 'Enter') {
-      onCommit(draftIds);
-    }
+  function matchesStationOption(stationId: string, query: string) {
+    const station = metroStationById.get(stationId);
 
-    if (event.key === 'Escape') {
-      onCancel();
-    }
-  }
-
-  function handleEditorBlur(event: FocusEvent<HTMLDivElement>) {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      return;
-    }
-
-    onCommit(draftIds);
+    return Boolean(station && matchesQuickEditSearch(query, [station.name, station.slug, station.lineName]));
   }
 
   return (
-    <div className="quick-edit-metro-editor" onBlur={handleEditorBlur}>
-      <input
-        autoFocus
-        className="quick-edit-input"
-        placeholder="Поиск метро"
-        type="search"
-        value={query}
-        onChange={(event) => setQuery(event.currentTarget.value)}
-        onKeyDown={handleEditorKeyDown}
-      />
-      {draftIds.length > 0 ? (
-        <div className="quick-edit-metro-selected">
-          {draftIds.map((stationId) => {
-            const station = metroStationById.get(stationId);
-
-            return station ? <span key={stationId}>{station.name}</span> : null;
-          })}
-        </div>
-      ) : null}
-      <select
-        multiple
-        className="quick-edit-select quick-edit-select--multiple"
-        value={draftIds}
-        onChange={(event) =>
-          setDraftIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value))
-        }
-        onKeyDown={handleEditorKeyDown}
-      >
-        {filteredStations.map((station) => (
-          <option key={station.id} value={station.id}>
-            {station.lineName ? `${station.name}, ${station.lineName}` : station.name}
-          </option>
-        ))}
-      </select>
-    </div>
+    <MultiSelectDropdown
+      ariaLabel="Метро объекта"
+      className="quick-edit-metro-editor"
+      defaultOpen
+      emptyLabel="Метро не найдено"
+      filterOption={(option, query) => matchesStationOption(option.value, query)}
+      options={metroOptions}
+      placeholder="Без метро"
+      searchable
+      searchPlaceholder="Поиск метро"
+      values={draftIds}
+      onChange={setDraftIds}
+      onClose={(reason) => (reason === 'escape' ? onCancel() : onCommit(draftIds))}
+    />
   );
 }
 

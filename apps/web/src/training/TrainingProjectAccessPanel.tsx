@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SelectDropdown } from '@/components/SelectDropdown';
 import {
   Table,
   TableBody,
@@ -240,18 +241,20 @@ export function TrainingProjectAccessPanel({
           </label>
           <label>
             <span>Назначение</span>
-            <select
+            <SelectDropdown<TrainingProjectAssignmentFilter>
               className="training-select"
+              emptyValue="all"
+              options={[
+                { value: 'all', label: 'Все' },
+                { value: 'yes', label: 'Назначены' },
+                { value: 'no', label: 'Не назначены' },
+              ]}
               value={assigned}
-              onChange={(event) => {
-                setAssigned(event.target.value as TrainingProjectAssignmentFilter);
+              onChange={(value) => {
+                setAssigned(value);
                 setPage(1);
               }}
-            >
-              <option value="all">Все</option>
-              <option value="yes">Назначены</option>
-              <option value="no">Не назначены</option>
-            </select>
+            />
           </label>
         </div>
 

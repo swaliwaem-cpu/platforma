@@ -15,6 +15,7 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
+  CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ExternalLinkIcon,
@@ -49,6 +50,7 @@ import { Input } from '@/components/ui/input';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 
 import { useAuth } from '../auth/AuthProvider';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { SecureImage, buildMediaFileContentUrl } from '../files/SecureImage';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import {
@@ -1242,37 +1244,35 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
 
           <label className="toolbar-field toolbar-field--status">
             <span>Статус</span>
-            <select
-              aria-label="Фильтр по статусу"
+            <SelectDropdown
+              ariaLabel="Фильтр по статусу"
+              options={[
+                { value: '', label: 'Все статусы' },
+                ...Object.entries(objectStatusLabels).map(([value, label]) => ({ value, label })),
+              ]}
               value={statusFilter}
-              onChange={(event) => {
-                setStatusFilter(event.target.value);
+              onChange={(value) => {
+                setStatusFilter(value);
                 setPage(1);
               }}
-            >
-              <option value="">Все статусы</option>
-              {Object.entries(objectStatusLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
 
           <label className="toolbar-field toolbar-field--status">
             <span>Раздел</span>
-            <select
-              aria-label="Фильтр по разделу"
+            <SelectDropdown
+              ariaLabel="Фильтр по разделу"
+              options={[
+                { value: '', label: 'Все разделы' },
+                { value: 'RESIDENTIAL', label: 'Жилая' },
+                { value: 'COMMERCIAL', label: 'Коммерция' },
+              ]}
               value={typeFilter}
-              onChange={(event) => {
-                setTypeFilter(event.target.value);
+              onChange={(value) => {
+                setTypeFilter(value);
                 setPage(1);
               }}
-            >
-              <option value="">Все разделы</option>
-              <option value="RESIDENTIAL">Жилая</option>
-              <option value="COMMERCIAL">Коммерция</option>
-            </select>
+            />
           </label>
         </div>
 
@@ -1536,16 +1536,15 @@ function ObjectEditor(props: ObjectEditorProps) {
 
                   <Field>
                     <FieldLabel htmlFor="object-type">Тип</FieldLabel>
-                    <select
+                    <SelectDropdown<RealEstateObjectType>
                       id="object-type"
+                      options={[
+                        { value: 'RESIDENTIAL', label: 'Жилая' },
+                        { value: 'COMMERCIAL', label: 'Коммерция' },
+                      ]}
                       value={props.form.type}
-                      onChange={(event) =>
-                        props.onFormChange({ ...props.form, type: event.target.value as RealEstateObjectType })
-                      }
-                    >
-                      <option value="RESIDENTIAL">Жилая</option>
-                      <option value="COMMERCIAL">Коммерция</option>
-                    </select>
+                      onChange={(type) => props.onFormChange({ ...props.form, type })}
+                    />
                   </Field>
 
                   <Field className="field-wide">
@@ -1672,17 +1671,18 @@ function ObjectEditor(props: ObjectEditorProps) {
 
                   <Field>
                     <FieldLabel htmlFor="object-completion-quarter">Квартал</FieldLabel>
-                    <select
+                    <SelectDropdown
                       id="object-completion-quarter"
+                      options={[
+                        { value: '', label: 'Не указан' },
+                        { value: '1', label: '1 квартал' },
+                        { value: '2', label: '2 квартал' },
+                        { value: '3', label: '3 квартал' },
+                        { value: '4', label: '4 квартал' },
+                      ]}
                       value={props.form.completionQuarter}
-                      onChange={(event) => props.onFormChange({ ...props.form, completionQuarter: event.target.value })}
-                    >
-                      <option value="">Не указан</option>
-                      <option value="1">1 квартал</option>
-                      <option value="2">2 квартал</option>
-                      <option value="3">3 квартал</option>
-                      <option value="4">4 квартал</option>
-                    </select>
+                      onChange={(completionQuarter) => props.onFormChange({ ...props.form, completionQuarter })}
+                    />
                   </Field>
                 </FieldGroup>
               </ObjectFormSection>
@@ -1801,18 +1801,22 @@ function ObjectEditor(props: ObjectEditorProps) {
 
                   <Field>
                     <FieldLabel htmlFor="object-developer">Застройщик</FieldLabel>
-                    <select
+                    <SelectDropdown
                       id="object-developer"
+                      emptyLabel="Застройщик не найден"
+                      options={[
+                        { value: '', label: 'Не выбран' },
+                        ...props.developers.map((developer) => ({
+                          value: developer.id,
+                          label: developer.name,
+                          searchValues: [developer.name, developer.slug],
+                        })),
+                      ]}
+                      searchable
+                      searchPlaceholder="Поиск застройщика"
                       value={props.form.developerId}
-                      onChange={(event) => props.onFormChange({ ...props.form, developerId: event.target.value })}
-                    >
-                      <option value="">Не выбран</option>
-                      {props.developers.map((developer) => (
-                        <option key={developer.id} value={developer.id}>
-                          {developer.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(developerId) => props.onFormChange({ ...props.form, developerId })}
+                    />
                   </Field>
 
                   <Field>
@@ -2036,17 +2040,12 @@ function ObjectEditor(props: ObjectEditorProps) {
             <FieldGroup className="file-upload-fields">
               <Field>
                 <FieldLabel htmlFor="object-file-type">Тип</FieldLabel>
-                <select
+                <SelectDropdown
                   id="object-file-type"
+                  options={Object.entries(fileTypeLabels).map(([value, label]) => ({ value: value as ObjectFileType, label }))}
                   value={props.objectFileType}
-                  onChange={(event) => props.onObjectFileTypeChange(event.target.value as ObjectFileType)}
-                >
-                  {Object.entries(fileTypeLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={props.onObjectFileTypeChange}
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="object-file-title">Название</FieldLabel>
@@ -2625,24 +2624,13 @@ const GalleryDraftTile = memo(function GalleryDraftTile({
       </button>
       <label className="gallery-tile-section-field">
         <span>Раздел</span>
-        <select
+        <SelectDropdown<ObjectImageSection | ''>
           className="gallery-tile-section-select"
           disabled={isSaving}
+          options={[{ value: '', label: 'Без раздела' }, ...gallerySectionOptions]}
           value={item.section ?? ''}
-          onChange={(event) =>
-            onSectionChange(
-              item.draftId,
-              event.currentTarget.value ? (event.currentTarget.value as ObjectImageSection) : null,
-            )
-          }
-        >
-          <option value="">Без раздела</option>
-          {gallerySectionOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          onChange={(section) => onSectionChange(item.draftId, section || null)}
+        />
       </label>
       <div className="gallery-tile-order-actions" aria-label={`Порядок ${item.name}`}>
         <AdminButton
@@ -2911,7 +2899,7 @@ function SearchableSelect<T extends SearchableSelectOption>({
                   onClick={() => toggleOption(option.id)}
                 >
                   <span>{getOptionLabel(option)}</span>
-                  {isSelected ? <span className="searchable-multi-select-check">Выбрано</span> : null}
+                  {isSelected ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
                 </button>
               );
             })

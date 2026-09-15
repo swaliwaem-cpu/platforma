@@ -1451,7 +1451,7 @@ dd {
   min-width: min(360px, 100%);
 }
 
-.toolbar select {
+.toolbar :is(select, .select-dropdown) {
   max-width: 190px;
 }
 
@@ -1861,32 +1861,14 @@ tr.user-row--deactivated .text-button {
   line-height: 1.25;
 }
 
-.quick-edit-select--multiple {
-  min-height: 84px;
-}
-
 .quick-edit-metro-editor {
-  display: grid;
-  gap: 6px;
   min-width: 0;
 }
 
-.quick-edit-metro-selected {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.quick-edit-metro-selected span {
-  max-width: 100%;
-  border: 1px solid #e0e6ed;
-  border-radius: 999px;
-  background: #f8fafc;
-  color: #536172;
-  padding: 2px 6px;
-  font-size: 10px;
-  font-weight: 750;
-  overflow-wrap: anywhere;
+.autocomplete-input {
+  position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .quick-edit-error {
@@ -2495,10 +2477,13 @@ tr.user-row--deactivated .text-button {
   max-height: 260px;
   overflow: auto;
   border: 1px solid var(--app-theme-border-soft, #d7e0ea);
-  border-radius: 8px;
+  border-radius: var(--catalog-radius-sm, 8px);
   background: var(--app-theme-surface, #ffffff);
   box-shadow: 0 18px 42px rgb(24 32 42 / 14%);
   padding: 6px;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.5;
 }
 
 .searchable-multi-select-option {
@@ -2519,7 +2504,8 @@ tr.user-row--deactivated .text-button {
 }
 
 .searchable-multi-select-option:hover,
-.searchable-multi-select-option:focus-visible {
+.searchable-multi-select-option:focus-visible,
+.searchable-multi-select-option--highlighted {
   background: var(--app-theme-primary-soft, #eef3f8);
   outline: none;
 }
@@ -2527,13 +2513,6 @@ tr.user-row--deactivated .text-button {
 .searchable-multi-select-option--selected {
   background: var(--app-theme-primary-soft, #e8f1ff);
   color: var(--app-theme-primary-deep, #1d4ed8);
-}
-
-.searchable-multi-select-check {
-  color: var(--app-theme-primary, #2563eb);
-  font-size: 11px;
-  font-weight: 850;
-  white-space: nowrap;
 }
 
 .searchable-multi-select-empty {
@@ -2601,24 +2580,54 @@ tr.user-row--deactivated .text-button {
   color: var(--catalog-ink-700, #536172);
 }
 
+.multi-select-dropdown-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Floating menu of every dropdown (rendered in a portal by components/Dropdown.tsx). */
 .multi-select-dropdown-menu {
-  position: absolute;
-  z-index: 70;
-  top: calc(100% + 6px);
-  right: 0;
-  left: 0;
-  display: grid;
-  max-height: 260px;
-  overflow: auto;
+  z-index: 1300;
+  display: flex;
+  width: max-content;
+  min-width: var(--radix-popover-trigger-width, 180px);
+  max-width: max(var(--radix-popover-trigger-width, 0px), min(420px, calc(100vw - 24px)));
+  max-height: min(260px, var(--radix-popover-content-available-height, 260px));
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid var(--catalog-border, #d7e0ea);
   border-radius: var(--catalog-radius-sm, 8px);
   background: var(--catalog-panel, #ffffff);
   box-shadow: 0 18px 42px rgb(24 32 42 / 18%);
+  color: var(--catalog-ink-700, #536172);
   padding: 6px;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.5;
+  outline: none;
+}
+
+.multi-select-dropdown-list {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: inherit;
+  margin: -2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+}
+
+.multi-select-dropdown-search {
+  flex: 0 0 auto;
+  width: 100%;
 }
 
 .multi-select-dropdown-option {
   display: grid;
+  width: 100%;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
@@ -2628,11 +2637,36 @@ tr.user-row--deactivated .text-button {
   color: var(--catalog-ink-900, #18202a);
   padding: 9px 10px;
   text-align: left;
+  cursor: pointer;
+}
+
+.multi-select-dropdown-option:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .multi-select-dropdown-option span:first-child {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.multi-select-dropdown-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.multi-select-dropdown-option-copy small {
+  color: var(--catalog-ink-700, #536172);
+  font-size: 0.92em;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.multi-select-dropdown-empty {
+  margin: 0;
+  color: var(--catalog-ink-700, #536172);
+  padding: 10px 12px;
 }
 
 .multi-select-dropdown-option:hover,
@@ -3863,6 +3897,8 @@ tr.user-row--deactivated .text-button {
   display: flex;
   min-height: 42px;
   align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   border: 1px solid transparent;
   border-radius: var(--catalog-radius-sm);
   background: transparent;
@@ -4804,7 +4840,7 @@ tr.user-row--deactivated .text-button {
   border-color: var(--catalog-border);
   background: var(--catalog-panel-soft);
   color: var(--catalog-ink-900);
-  padding: 0 34px 0 12px;
+  padding: 0 12px;
   font-size: 14px;
   font-weight: 850;
 }
@@ -8690,7 +8726,7 @@ tr.user-row--deactivated .text-button {
     width: 100%;
   }
 
-  .toolbar select,
+  .toolbar :is(select, .select-dropdown),
   .primary-button--fit,
   .secondary-button--fit {
     width: 100%;
@@ -11102,7 +11138,7 @@ tr.user-row--deactivated .text-button {
   gap: 6px;
 }
 
-.assistant-audit-toolbar select,
+.assistant-audit-toolbar :is(select, .select-dropdown),
 .assistant-audit-alias-form input,
 .assistant-audit-review textarea {
   min-height: 44px;
@@ -11114,7 +11150,7 @@ tr.user-row--deactivated .text-button {
   font: inherit;
 }
 
-.assistant-audit-toolbar select:focus-visible,
+.assistant-audit-toolbar :is(select, .select-dropdown):focus-visible,
 .assistant-audit-alias-form input:focus-visible,
 .assistant-audit-review textarea:focus-visible {
   outline: 2px solid #e85a18;

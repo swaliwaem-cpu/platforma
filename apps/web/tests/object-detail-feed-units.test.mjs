@@ -20,8 +20,8 @@ test('object detail page loads active feed units with public filters', () => {
   assert.match(source, /const publicFeedUnitStatuses: FeedUnitStatus\[\] = \[\s*'AVAILABLE',\s*'BOOKED',\s*'RESERVED',\s*\];/);
   assert.match(source, /params\.set\('status', publicFeedUnitStatuses\.join\(','\)\);/);
   assert.match(source, /apiRequest<FeedUnitGroupsResponse>\(`\/objects\/\$\{object\.id\}\/feed-units\/groups\?\$\{params\.toString\(\)\}`/);
-  assert.match(source, /aria-label="Фильтр лотов по статусу"/);
-  assert.match(source, /aria-label="Фильтр лотов по типу"/);
+  assert.match(source, /ariaLabel="Фильтр лотов по статусу"/);
+  assert.match(source, /ariaLabel="Фильтр лотов по типу"/);
   assert.match(source, /feedUnitStatusFilterOptions/);
   assert.match(source, /AVAILABLE: 'Доступен'/);
   assert.match(source, /RESERVED: 'Резерв'/);

@@ -70,9 +70,9 @@ test('objects admin form persists object type in editor payload', () => {
   assert.match(source, /type:\s*object\.type \?\? 'RESIDENTIAL'/);
   assert.match(source, /type:\s*form\.type/);
   assert.match(source, /value=\{props\.form\.type\}/);
-  assert.match(source, /props\.onFormChange\(\{ \.\.\.props\.form, type: event\.target\.value as RealEstateObjectType \}\)/);
-  assert.match(source, /<option value="RESIDENTIAL">Жилая<\/option>/);
-  assert.match(source, /<option value="COMMERCIAL">Коммерция<\/option>/);
+  assert.match(source, /onChange=\{\(type\) => props\.onFormChange\(\{ \.\.\.props\.form, type \}\)\}/);
+  assert.match(source, /\{ value: 'RESIDENTIAL', label: 'Жилая' \}/);
+  assert.match(source, /\{ value: 'COMMERCIAL', label: 'Коммерция' \}/);
 });
 
 test('objects admin form persists and validates aerotour url', () => {

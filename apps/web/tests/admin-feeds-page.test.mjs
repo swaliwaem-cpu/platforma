@@ -51,11 +51,11 @@ test('feeds admin page exposes required source form fields and unit filters', ()
   assert.match(source, /name="xmlFile"/);
   assert.doesNotMatch(source, /name="format"/);
   assert.match(source, /name="filterJson"/);
-  assert.match(source, /name="developerId"/);
-  assert.match(source, /name="objectId"/);
+  assert.match(source, /<SelectDropdown[\s\S]*?label: 'Выберите застройщика'[\s\S]*?value=\{form\.developerId\}/);
+  assert.match(source, /<SelectDropdown[\s\S]*?disabled=\{!form\.developerId\}[\s\S]*?label: 'Выберите ЖК'[\s\S]*?value=\{form\.objectId\}/);
   assert.match(source, /name="isActive"/);
-  assert.match(source, /aria-label="Фильтр лотов по статусу"/);
-  assert.match(source, /aria-label="Фильтр лотов по типу"/);
+  assert.match(source, /ariaLabel="Фильтр лотов по статусу"/);
+  assert.match(source, /ariaLabel="Фильтр лотов по типу"/);
 });
 
 test('feeds admin source list uses developer as row title', () => {

@@ -145,10 +145,10 @@ test('catalog filters include residential and commercial object type in URL and 
   assert.match(source, /if \(!options\.omitObjectType\) \{/);
   assert.match(source, />\s*Раздел\s*</);
   assert.match(source, /value=\{filters\.objectType\}/);
-  assert.match(source, /onChange\(\{ objectType: event\.target\.value as CatalogObjectTypeFilter \}\)/);
-  assert.match(source, /<option value="ALL">Все<\/option>/);
-  assert.match(source, /<option value="RESIDENTIAL">Жилая<\/option>/);
-  assert.match(source, /<option value="COMMERCIAL">Коммерция<\/option>/);
+  assert.match(source, /<SelectDropdown<CatalogObjectTypeFilter>[\s\S]*?options=\{catalogObjectTypeOptions\}[\s\S]*?onChange=\{\(objectType\) => onChange\(\{ objectType \}\)\}/);
+  assert.match(source, /\{ value: 'ALL', label: 'Все' \}/);
+  assert.match(source, /\{ value: 'RESIDENTIAL', label: 'Жилая' \}/);
+  assert.match(source, /\{ value: 'COMMERCIAL', label: 'Коммерция' \}/);
 });
 
 test('catalog search keeps typed spaces while syncing URL and API params', () => {

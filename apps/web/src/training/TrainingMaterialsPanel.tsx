@@ -13,6 +13,7 @@ import type {
 import {
   ArchiveIcon,
   Building2Icon,
+  CheckIcon,
   DownloadIcon,
   FileTextIcon,
   Globe2Icon,
@@ -47,6 +48,7 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SelectDropdown } from '@/components/SelectDropdown';
 import {
   Table,
   TableBody,
@@ -663,20 +665,17 @@ export function TrainingMaterialsPanel({
                     <FieldGroup>
                       <Field data-disabled={disabled}>
                         <FieldLabel htmlFor="training-material-type">Тип источника</FieldLabel>
-                        <select
+                        <SelectDropdown<CreatableTrainingMaterialType>
                           id="training-material-type"
                           className="training-material-select"
-                          value={createType}
                           disabled={disabled}
-                          onChange={(event) => {
-                            setCreateType(event.target.value as CreatableTrainingMaterialType);
+                          options={creatableMaterialTypes.map((value) => ({ value, label: typeLabels[value] }))}
+                          value={createType}
+                          onChange={(value) => {
+                            setCreateType(value);
                             setCreateError(null);
                           }}
-                        >
-                          {creatableMaterialTypes.map((value) => (
-                            <option key={value} value={value}>{typeLabels[value]}</option>
-                          ))}
-                        </select>
+                        />
                       </Field>
                       <Field data-disabled={disabled} data-invalid={createError?.field === 'title'}>
                         <FieldLabel htmlFor="training-material-title">Название</FieldLabel>
@@ -772,17 +771,17 @@ export function TrainingMaterialsPanel({
                   onChange={(event) => setMaterialSearch(event.target.value)}
                 />
               </label>
-              <select
+              <SelectDropdown<'ALL' | TrainingMaterialType>
+                ariaLabel="Фильтр по типу материала"
                 className="training-material-select training-material-type-filter"
-                aria-label="Фильтр по типу материала"
+                emptyValue="ALL"
+                options={[
+                  { value: 'ALL', label: 'Все типы' },
+                  ...Object.entries(typeLabels).map(([value, label]) => ({ value: value as TrainingMaterialType, label })),
+                ]}
                 value={materialTypeFilter}
-                onChange={(event) => setMaterialTypeFilter(event.target.value as 'ALL' | TrainingMaterialType)}
-              >
-                <option value="ALL">Все типы</option>
-                {Object.entries(typeLabels).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+                onChange={setMaterialTypeFilter}
+              />
             </div>
 
             {isLoading ? <Skeleton className="training-materials-skeleton" /> : null}
@@ -1247,7 +1246,7 @@ function ObjectSearchCombobox({
                 <strong>{option.title}</strong>
                 <small>{formatObjectOptionMeta(option)}</small>
               </span>
-              {option.id === selectedId ? <span className="searchable-multi-select-check">Выбрано</span> : null}
+              {option.id === selectedId ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
             </button>
           )) : (
             <p className="searchable-multi-select-empty">

@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/table';
 
 import { useAuth } from '../auth/AuthProvider';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
 import {
@@ -1067,12 +1068,21 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
                   <label>
                     Застройщик
-                    <select
-                      name="developerId"
+                    <SelectDropdown
+                      emptyLabel="Застройщик не найден"
+                      options={[
+                        { value: '', label: 'Выберите застройщика' },
+                        ...developers.map((developer) => ({
+                          value: developer.id,
+                          label: developer.name,
+                          searchValues: [developer.name, developer.slug],
+                        })),
+                      ]}
+                      searchable
+                      searchPlaceholder="Поиск застройщика"
                       value={form.developerId}
-                      onChange={(event) =>
+                      onChange={(developerId) =>
                         setForm((currentForm) => {
-                          const developerId = event.target.value;
                           const selectedObjectMatchesDeveloper = objects.some(
                             (object) => object.id === currentForm.objectId && object.developer?.id === developerId,
                           );
@@ -1091,33 +1101,23 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                           };
                         })
                       }
-                    >
-                      <option value="">Выберите застройщика</option>
-                      {developers.map((developer) => (
-                        <option key={developer.id} value={developer.id}>
-                          {developer.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </label>
 
                   <label>
                     Связанный ЖК
-                    <select
+                    <SelectDropdown
                       disabled={!form.developerId}
-                      name="objectId"
+                      emptyLabel="ЖК не найден"
+                      options={[
+                        { value: '', label: 'Выберите ЖК' },
+                        ...filteredObjects.map((object) => ({ value: object.id, label: object.title })),
+                      ]}
+                      searchable
+                      searchPlaceholder="Поиск ЖК"
                       value={form.objectId}
-                      onChange={(event) =>
-                        setForm((currentForm) => ({ ...currentForm, objectId: event.target.value }))
-                      }
-                    >
-                      <option value="">Выберите ЖК</option>
-                      {filteredObjects.map((object) => (
-                        <option key={object.id} value={object.id}>
-                          {object.title}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(objectId) => setForm((currentForm) => ({ ...currentForm, objectId }))}
+                    />
                   </label>
                 </div>
               </section>
@@ -1406,40 +1406,34 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
           <div className="feed-units-toolbar-main">
             <label className="toolbar-field">
               <span>Статус</span>
-              <select
-                aria-label="Фильтр лотов по статусу"
+              <SelectDropdown
+                ariaLabel="Фильтр лотов по статусу"
+                options={[
+                  { value: '', label: 'Все статусы' },
+                  ...Object.entries(feedUnitStatusLabels).map(([value, label]) => ({ value, label })),
+                ]}
                 value={unitStatusFilter}
-                onChange={(event) => {
-                  setUnitStatusFilter(event.target.value);
+                onChange={(value) => {
+                  setUnitStatusFilter(value);
                   setUnitsPage(1);
                 }}
-              >
-                <option value="">Все статусы</option>
-                {Object.entries(feedUnitStatusLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
 
             <label className="toolbar-field">
               <span>Тип</span>
-              <select
-                aria-label="Фильтр лотов по типу"
+              <SelectDropdown
+                ariaLabel="Фильтр лотов по типу"
+                options={[
+                  { value: '', label: 'Все типы' },
+                  ...Object.entries(feedUnitTypeLabels).map(([value, label]) => ({ value, label })),
+                ]}
                 value={unitTypeFilter}
-                onChange={(event) => {
-                  setUnitTypeFilter(event.target.value);
+                onChange={(value) => {
+                  setUnitTypeFilter(value);
                   setUnitsPage(1);
                 }}
-              >
-                <option value="">Все типы</option>
-                {Object.entries(feedUnitTypeLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
           </div>
 
@@ -1736,19 +1730,19 @@ const FeedSourceAnalysisPanel = forwardRef<HTMLElement, FeedSourceAnalysisPanelP
                   </div>
                   <label className="feed-source-analysis-mapping">
                     Связанный ЖК
-                    <select
-                      aria-label={`Связанный ЖК для ${feedObject.title}`}
+                    <SelectDropdown
+                      ariaLabel={`Связанный ЖК для ${feedObject.title}`}
                       disabled={isObjectSelectDisabled || !feedObject.filterJson}
+                      emptyLabel="ЖК не найден"
+                      options={[
+                        { value: '', label: 'Исключить из загрузки' },
+                        ...objectOptions.map((object) => ({ value: object.id, label: object.title })),
+                      ]}
+                      searchable
+                      searchPlaceholder="Поиск ЖК"
                       value={mapping?.objectId ?? ''}
-                      onChange={(event) => onMappingChange(sourceKey, event.target.value)}
-                    >
-                      <option value="">Исключить из загрузки</option>
-                      {objectOptions.map((object) => (
-                        <option key={object.id} value={object.id}>
-                          {object.title}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(objectId) => onMappingChange(sourceKey, objectId)}
+                    />
                   </label>
                 </article>
               );

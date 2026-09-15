@@ -42,6 +42,7 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { SelectDropdown } from '@/components/SelectDropdown';
 
 import {
   createAssistantConversation,
@@ -1259,19 +1260,15 @@ function AssistantFeedbackForm({
         <div className="assistant-feedback-details">
           <label>
             Причина <span>необязательно</span>
-            <select
+            <SelectDropdown<AssistantFeedbackReason | ''>
               disabled={isSaving}
+              options={[{ value: '', label: 'Не выбрана' }, ...feedbackReasonOptions]}
               value={reason}
-              onChange={(event) => {
-                setReason(event.target.value as AssistantFeedbackReason | '');
+              onChange={(value) => {
+                setReason(value);
                 setSaved(false);
               }}
-            >
-              <option value="">Не выбрана</option>
-              {feedbackReasonOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+            />
           </label>
           <label>
             Комментарий <span>до 500 символов</span>

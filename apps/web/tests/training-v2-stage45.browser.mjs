@@ -194,8 +194,8 @@ try {
   await page.getByRole('button', { name: 'Повторить' }).click();
   await page.getByText('Анна Брокер').waitFor();
 
-  const assignmentFilter = page.locator('select.training-select');
-  await assignmentFilter.selectOption('no');
+  const assignmentFilter = page.locator('button.training-select');
+  await chooseDropdownOption(page, assignmentFilter, 'Не назначены');
   await page.getByText('Анна Брокер').waitFor();
   assert.equal(pickerQueries.at(-1).assigned, 'no');
   await page.getByRole('checkbox', { name: 'Выбрать всех сотрудников на текущей странице' }).check();
@@ -209,7 +209,7 @@ try {
   bulkDelayMs = 0;
   assert.deepEqual(new Set(bulkPayloads.at(-1).userIds), new Set([employeeId, secondEmployeeId]));
 
-  await assignmentFilter.selectOption('yes');
+  await chooseDropdownOption(page, assignmentFilter, 'Назначены');
   await page.getByText('Выбрано на странице: 0').waitFor();
   assert.equal(pickerQueries.at(-1).assigned, 'yes');
   await page.getByRole('checkbox', { name: 'Выбрать Анна Брокер' }).check();
@@ -222,7 +222,7 @@ try {
   assert.equal(pickerQueries.at(-1).search, 'нет');
 
   await page.getByPlaceholder('Имя или электронная почта').fill('Анна');
-  await assignmentFilter.selectOption('all');
+  await chooseDropdownOption(page, assignmentFilter, 'Все');
   await page.getByText('Анна Брокер').waitFor();
   await page.getByRole('checkbox', { name: 'Выбрать Анна Брокер' }).check();
   await page.getByRole('button', { name: 'Далее' }).click();
@@ -302,4 +302,9 @@ async function contrastRatio(locator) {
     const background = luminance(parseRgb(styles.backgroundColor));
     return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
   });
+}
+
+async function chooseDropdownOption(page, trigger, optionName) {
+  await trigger.click();
+  await page.getByRole('option', { name: optionName, exact: true }).click();
 }

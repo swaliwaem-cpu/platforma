@@ -39,6 +39,7 @@ import {
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
 import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
@@ -1160,40 +1161,28 @@ function ObjectFeedUnitsSection({
       <div className="object-feed-units-toolbar" aria-label="Фильтры лотов">
         <label className="object-feed-units-filter object-feed-units-filter--status">
           <span>Статус</span>
-          <select
-            aria-label="Фильтр лотов по статусу"
+          <SelectDropdown
+            ariaLabel="Фильтр лотов по статусу"
+            options={[{ value: '', label: 'Доступные и резерв' }, ...feedUnitStatusFilterOptions]}
             value={statusFilter}
-            onChange={(event) => {
-              setStatusFilter(event.target.value);
+            onChange={(value) => {
+              setStatusFilter(value);
               setVisibleRoomLotCounts({});
             }}
-          >
-            <option value="">Доступные и резерв</option>
-            {feedUnitStatusFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
         </label>
 
         <label className="object-feed-units-filter object-feed-units-filter--type">
           <span>Тип</span>
-          <select
-            aria-label="Фильтр лотов по типу"
+          <SelectDropdown
+            ariaLabel="Фильтр лотов по типу"
+            options={[{ value: '', label: 'Все типы' }, ...feedUnitTypeFilterOptions]}
             value={typeFilter}
-            onChange={(event) => {
-              setTypeFilter(event.target.value);
+            onChange={(value) => {
+              setTypeFilter(value);
               setVisibleRoomLotCounts({});
             }}
-          >
-            <option value="">Все типы</option>
-            {feedUnitTypeFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
         </label>
 
         <div
@@ -1285,22 +1274,16 @@ function ObjectFeedUnitsSection({
 
         <label className="object-feed-units-filter object-feed-units-filter--completion-quarter">
           <span>Квартал</span>
-          <select
-            aria-label="Фильтр лотов по кварталу сдачи"
+          <SelectDropdown
+            ariaLabel="Фильтр лотов по кварталу сдачи"
             disabled={!completionYearFilter}
+            options={[{ value: '', label: 'Любой' }, ...feedUnitQuarterFilterOptions]}
             value={completionQuarterFilter}
-            onChange={(event) => {
-              setCompletionQuarterFilter(event.target.value);
+            onChange={(value) => {
+              setCompletionQuarterFilter(value);
               setVisibleRoomLotCounts({});
             }}
-          >
-            <option value="">Любой</option>
-            {feedUnitQuarterFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
         </label>
 
         <label className="object-feed-units-filter object-feed-units-filter--rooms">

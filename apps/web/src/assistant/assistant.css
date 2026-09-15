@@ -402,7 +402,7 @@
 }
 
 .assistant-feedback-rating:focus-visible,
-.assistant-feedback-details select:focus-visible,
+.assistant-feedback-details :is(select, .select-dropdown):focus-visible,
 .assistant-feedback-details textarea:focus-visible,
 .assistant-feedback-actions button:focus-visible {
   outline: 2px solid #e85a18;
@@ -431,7 +431,7 @@
   font-weight: 400;
 }
 
-.assistant-feedback-details select,
+.assistant-feedback-details :is(select, .select-dropdown),
 .assistant-feedback-details textarea {
   width: 100%;
   padding: 8px 9px;

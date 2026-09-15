@@ -27,6 +27,8 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AutocompleteInput } from '@/components/AutocompleteInput';
+import { SelectDropdown } from '@/components/SelectDropdown';
 import {
   Table,
   TableBody,
@@ -227,37 +229,31 @@ export function TrainingAudioStoragePage({
           <FieldGroup className="training-audio-storage-filters">
             <Field>
               <FieldLabel htmlFor="audio-storage-project">Проект</FieldLabel>
-              <Input
+              <AutocompleteInput
                 id="audio-storage-project"
-                list="audio-storage-projects"
-                value={draft.project}
                 placeholder="Название, включая удалённые"
-                autoComplete="off"
-                onChange={(event) => setDraft((current) => ({ ...current, project: event.target.value }))}
+                suggestions={(report?.facets.projects ?? []).map((project) => ({
+                  key: `${project.id}-${project.title}`,
+                  value: project.title,
+                }))}
+                value={draft.project}
+                onChange={(project) => setDraft((current) => ({ ...current, project }))}
               />
-              <datalist id="audio-storage-projects">
-                {report?.facets.projects.map((project) => <option key={`${project.id}-${project.title}`} value={project.title} />)}
-              </datalist>
             </Field>
             <Field>
               <FieldLabel htmlFor="audio-storage-user">Пользователь</FieldLabel>
-              <Input
+              <AutocompleteInput
                 id="audio-storage-user"
-                list="audio-storage-users"
-                value={draft.user}
                 placeholder="Имя или email"
-                autoComplete="off"
-                onChange={(event) => setDraft((current) => ({ ...current, user: event.target.value }))}
+                suggestions={(report?.facets.users ?? []).map((user) => ({
+                  key: `${user.id}-${user.name}-${user.email}`,
+                  value: user.name ?? user.email ?? '',
+                  description: user.name && user.email ? user.email : undefined,
+                  searchValues: [user.name, user.email],
+                }))}
+                value={draft.user}
+                onChange={(user) => setDraft((current) => ({ ...current, user }))}
               />
-              <datalist id="audio-storage-users">
-                {report?.facets.users.map((user) => (
-                  <option
-                    key={`${user.id}-${user.name}-${user.email}`}
-                    value={user.name ?? user.email ?? ''}
-                    label={user.email ?? undefined}
-                  />
-                ))}
-              </datalist>
             </Field>
             <Field>
               <FieldLabel htmlFor="audio-storage-from">Дата от</FieldLabel>
@@ -279,20 +275,19 @@ export function TrainingAudioStoragePage({
             </Field>
             <Field>
               <FieldLabel htmlFor="audio-storage-state">Состояние</FieldLabel>
-              <select
+              <SelectDropdown<TrainingAudioStorageState | ''>
                 id="audio-storage-state"
                 className="training-audio-storage-select"
+                options={[
+                  { value: '', label: 'Все актуальные' },
+                  ...Object.entries(storageStateLabels).map(([value, label]) => ({
+                    value: value as TrainingAudioStorageState,
+                    label,
+                  })),
+                ]}
                 value={draft.state}
-                onChange={(event) => setDraft((current) => ({
-                  ...current,
-                  state: event.target.value as TrainingAudioStorageState | '',
-                }))}
-              >
-                <option value="">Все актуальные</option>
-                {Object.entries(storageStateLabels).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+                onChange={(state) => setDraft((current) => ({ ...current, state }))}
+              />
             </Field>
           </FieldGroup>
           <div className="training-audio-storage-filter-actions">

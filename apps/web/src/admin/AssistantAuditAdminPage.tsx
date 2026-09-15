@@ -19,6 +19,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { useAuth } from '../auth/AuthProvider';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
 
@@ -507,11 +508,7 @@ function RunsPanel({
       <div className="assistant-audit-toolbar">
         <label>
           Сигнал качества
-          <select value={issue} onChange={(event) => onIssueChange(event.target.value as AuditIssue)}>
-            {issueOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+          <SelectDropdown<AuditIssue> options={issueOptions} value={issue} onChange={onIssueChange} />
         </label>
         <span>{total.toLocaleString('ru-RU')} запусков</span>
       </div>

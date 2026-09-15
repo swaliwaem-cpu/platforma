@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SelectDropdown } from '@/components/SelectDropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { downloadTrainingAdminRankingCsv, getTrainingAdminRanking } from './trainingApi';
 import { formatTrainingDate, formatTrainingDuration } from './trainingView';
@@ -84,5 +85,5 @@ function assignmentLabel(status: TrainingAdminRankingRow['bestResults'][number][
 }
 
 function SelectField({ id, label, value, options, onChange }: { id: string; label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {
-  return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><select id={id} className="training-select" value={value} onChange={(event) => onChange(event.target.value)}>{options.map(([optionValue, optionLabel]) => <option key={optionValue || 'all'} value={optionValue}>{optionLabel}</option>)}</select></Field>;
+  return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><SelectDropdown id={id} className="training-select" options={options.map(([optionValue, optionLabel]) => ({ value: optionValue, label: optionLabel }))} value={value} onChange={onChange} /></Field>;
 }

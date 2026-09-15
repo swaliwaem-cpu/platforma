@@ -1,5 +1,5 @@
 import { FocusEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeftIcon, ChevronDownIcon, PlusIcon, SaveIcon, Trash2Icon, XIcon } from 'lucide-react';
+import { ArrowLeftIcon, CheckIcon, ChevronDownIcon, PlusIcon, SaveIcon, Trash2Icon, XIcon } from 'lucide-react';
 import type {
   AdminCatalogLinksResponse,
   AdminCatalogQuickLink,
@@ -667,7 +667,7 @@ function CatalogLinkSearchSelect<T extends CatalogLinkSearchSelectOption>({
                   onClick={() => selectOption(option.id)}
                 >
                   <span>{getOptionLabel(option)}</span>
-                  {isSelected ? <span className="searchable-multi-select-check">Выбрано</span> : null}
+                  {isSelected ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
                 </button>
               );
             })

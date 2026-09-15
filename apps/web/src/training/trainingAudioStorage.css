@@ -45,7 +45,7 @@
 .training-audio-storage-select {
   width: 100%;
   min-height: 44px;
-  padding: 0 36px 0 12px;
+  padding: 0 12px;
   border: 1px solid var(--catalog-border-strong);
   border-radius: var(--catalog-radius-sm);
   color: var(--catalog-ink-900);

@@ -96,8 +96,8 @@ test('gallery management modal supports thematic section assignment', () => {
   assert.doesNotMatch(source, /handleSectionSlot/);
   assert.doesNotMatch(source, /onSectionChange\(nextDraggedDraftId,\s*section\)/);
   assert.match(source, /className="gallery-tile-section-select"/);
-  assert.match(source, /<option value="">Без раздела<\/option>/);
-  assert.match(source, /gallerySectionOptions\.map\(\(option\) => \(/);
+  assert.match(source, /options=\{\[\{ value: '', label: 'Без раздела' \}, \.\.\.gallerySectionOptions\]\}/);
+  assert.match(source, /onChange=\{\(section\) => onSectionChange\(item\.draftId, section \|\| null\)\}/);
   assert.match(source, /gallery-tile-status gallery-tile-status--section/);
 });
 

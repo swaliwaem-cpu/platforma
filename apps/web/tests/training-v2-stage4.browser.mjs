@@ -366,7 +366,7 @@ function objectImportOperation(status) {
 
 async function createManual() {
   await page.getByRole('button', { name: 'Добавить источник' }).click();
-  await page.getByLabel('Тип источника').selectOption('MANUAL_TEXT');
+  await chooseDropdownOption(page, page.getByLabel('Тип источника'), 'Ручной текст');
   await page.locator('#training-material-title').fill('Manual source');
   await page.getByLabel('Текст').fill('Ручной текст для новой версии.');
   await page.getByRole('button', { name: 'Создать материал' }).click();
@@ -375,11 +375,9 @@ async function createManual() {
 
 async function createOfficialUrl() {
   await page.getByRole('button', { name: 'Добавить источник' }).click();
-  assert.equal(
-    await page.getByLabel('Тип источника').locator('option[value="OBJECT_SNAPSHOT"]').count(),
-    0,
-  );
-  await page.getByLabel('Тип источника').selectOption('OFFICIAL_URL');
+  await page.getByLabel('Тип источника').click();
+  assert.equal(await page.getByRole('option', { name: 'Карточка Platforma', exact: true }).count(), 0);
+  await page.getByRole('option', { name: 'Официальная ссылка', exact: true }).click();
   await page.locator('#training-material-title').fill('Broken URL');
   await page.getByLabel('Одна официальная защищённая страница').fill('https://official.test/source');
   const confirmation = page.getByLabel('Подтверждаю, что это официальный источник проекта');
@@ -399,7 +397,7 @@ async function createOfficialUrl() {
 
 async function createPdf() {
   await page.getByRole('button', { name: 'Добавить источник' }).click();
-  await page.getByLabel('Тип источника').selectOption('PDF');
+  await chooseDropdownOption(page, page.getByLabel('Тип источника'), 'Документ PDF');
   await page.locator('#training-material-title').fill('PDF source');
   await page.getByLabel('Документ PDF с текстовым слоем').setInputFiles({
     name: 'fixture.pdf',
@@ -408,6 +406,11 @@ async function createPdf() {
   });
   await page.getByRole('button', { name: 'Создать материал' }).click();
   await page.getByText('PDF source', { exact: true }).first().waitFor();
+}
+
+async function chooseDropdownOption(page, trigger, optionName) {
+  await trigger.click();
+  await page.getByRole('option', { name: optionName, exact: true }).click();
 }
 
 async function contrastRatio(locator) {

@@ -36,7 +36,7 @@ async function verifyAuditFlow() {
     await page.goto(`${baseUrl}/admin/assistant-audit`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: 'Аудит ответов' }).waitFor();
     assert.equal(await page.title(), 'Platforma');
-    await page.getByLabel('Сигнал качества').selectOption('NEGATIVE_FEEDBACK');
+    await chooseDropdownOption(page, page.getByLabel('Сигнал качества'), 'Негативный feedback');
     await page.getByRole('button', { name: 'Следующая страница' }).click();
     await page.getByText('Страница 2 из 2').waitFor();
     await page.getByRole('button', { name: 'Предыдущая страница' }).click();
@@ -125,7 +125,7 @@ async function verifyFeedbackFlow() {
     await page.getByRole('button', { name: 'История разговоров' }).click();
     await page.getByRole('button', { name: /Проверка feedback/u }).click();
     await page.getByRole('button', { name: 'Ответ не помог' }).click();
-    await page.getByLabel(/Причина/u).selectOption('STALE_DATA');
+    await chooseDropdownOption(page, page.getByLabel(/Причина/u), 'Устаревшие данные');
     await page.getByLabel(/Комментарий/u).fill('Проверьте дату обновления');
     await page.getByRole('button', { name: 'Сохранить оценку' }).click();
     await page.getByText('Спасибо, оценка попадёт на проверку.').waitFor();
@@ -310,4 +310,9 @@ function metricFixture() {
 
 async function json(route, body, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+}
+
+async function chooseDropdownOption(page, trigger, optionName) {
+  await trigger.click();
+  await page.getByRole('option', { name: optionName, exact: true }).click();
 }

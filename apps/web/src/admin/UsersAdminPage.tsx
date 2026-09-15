@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/table';
 
 import { useAuth } from '../auth/AuthProvider';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
 
@@ -375,40 +376,31 @@ export function UsersAdminPage({ onBack }: UsersAdminPageProps) {
 
           <label className="toolbar-field">
             <span>Статус</span>
-            <select
-              aria-label="Фильтр по статусу"
+            <SelectDropdown
+              ariaLabel="Фильтр по статусу"
+              options={[
+                { value: '', label: 'Все статусы' },
+                ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
+              ]}
               value={statusFilter}
-              onChange={(event) => {
-                setStatusFilter(event.target.value);
+              onChange={(value) => {
+                setStatusFilter(value);
                 setPage(1);
               }}
-            >
-              <option value="">Все статусы</option>
-              {Object.entries(statusLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
 
           <label className="toolbar-field">
             <span>Роль</span>
-            <select
-              aria-label="Фильтр по роли"
+            <SelectDropdown
+              ariaLabel="Фильтр по роли"
+              options={[{ value: '', label: 'Все роли' }, ...roles.map((role) => ({ value: role.id, label: role.name }))]}
               value={roleFilter}
-              onChange={(event) => {
-                setRoleFilter(event.target.value);
+              onChange={(value) => {
+                setRoleFilter(value);
                 setPage(1);
               }}
-            >
-              <option value="">Все роли</option>
-              {roles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name}
-                </option>
-              ))}
-            </select>
+            />
           </label>
         </div>
 
@@ -590,37 +582,23 @@ export function UsersAdminPage({ onBack }: UsersAdminPageProps) {
                   <FieldGroup>
                     <Field>
                       <FieldLabel htmlFor="admin-user-role">Роль</FieldLabel>
-                      <select
+                      <SelectDropdown
                         id="admin-user-role"
-                        required
+                        options={roles.map((role) => ({ value: role.id, label: role.name }))}
+                        placeholder="Выберите роль"
                         value={form.roleId}
-                        onChange={(event) => setForm({ ...form, roleId: event.target.value })}
-                      >
-                        <option value="" disabled>
-                          Выберите роль
-                        </option>
-                        {roles.map((role) => (
-                          <option key={role.id} value={role.id}>
-                            {role.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(roleId) => setForm({ ...form, roleId })}
+                      />
                     </Field>
 
                     <Field>
                       <FieldLabel htmlFor="admin-user-status">Статус</FieldLabel>
-                      <select
+                      <SelectDropdown<UserStatus>
                         id="admin-user-status"
-                        required
+                        options={Object.entries(statusLabels).map(([value, label]) => ({ value: value as UserStatus, label }))}
                         value={form.status}
-                        onChange={(event) => setForm({ ...form, status: event.target.value as UserStatus })}
-                      >
-                        {Object.entries(statusLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(status) => setForm({ ...form, status })}
+                      />
                     </Field>
                   </FieldGroup>
                 </UserFormSection>

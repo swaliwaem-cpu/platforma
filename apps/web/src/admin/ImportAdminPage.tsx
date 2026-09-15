@@ -26,6 +26,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 
 import { useAuth } from '../auth/AuthProvider';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
 
@@ -218,39 +219,33 @@ export function ImportAdminPage({ onBack }: ImportAdminPageProps) {
         <div className="import-toolbar-main">
           <label className="toolbar-field">
             <span>Режим</span>
-            <select
-              aria-label="Фильтр по режиму"
+            <SelectDropdown
+              ariaLabel="Фильтр по режиму"
+              options={[
+                { value: '', label: 'Все режимы' },
+                ...Object.entries(modeLabels).map(([value, label]) => ({ value, label })),
+              ]}
               value={modeFilter}
-              onChange={(event) => {
-                setModeFilter(event.target.value);
+              onChange={(value) => {
+                setModeFilter(value);
                 setPage(1);
               }}
-            >
-              <option value="">Все режимы</option>
-              {Object.entries(modeLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
           <label className="toolbar-field">
             <span>Статус</span>
-            <select
-              aria-label="Фильтр по статусу"
+            <SelectDropdown
+              ariaLabel="Фильтр по статусу"
+              options={[
+                { value: '', label: 'Все статусы' },
+                ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
+              ]}
               value={statusFilter}
-              onChange={(event) => {
-                setStatusFilter(event.target.value);
+              onChange={(value) => {
+                setStatusFilter(value);
                 setPage(1);
               }}
-            >
-              <option value="">Все статусы</option>
-              {Object.entries(statusLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
         </div>
         <div className="import-toolbar-actions">

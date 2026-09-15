@@ -1655,12 +1655,63 @@
   color: var(--fw-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option):is(:hover, :focus-visible) {
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option):is(:hover, :focus-visible, .searchable-multi-select-option--highlighted) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   color: var(--fw-text);
   outline: none;
   transform: translateY(var(--fw-lift));
+}
+
+/*
+ * Reference dropdown = catalog «Сколько комнат»: every menu (portal, inline
+ * combobox and sort) uses its 11px/400 text, 42px rows and trailing check icon.
+ */
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-menu, .searchable-multi-select-menu, .catalog-sort-menu) {
+  color: var(--fw-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option) {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option):has(.multi-select-dropdown-option-copy, strong, small) {
+  padding-block: 6px;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option) :is(strong, b) {
+  font-weight: 500;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option-copy, .searchable-multi-select-option) small {
+  color: var(--fw-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-menu, .searchable-multi-select-menu) :is(.multi-select-dropdown-empty, .searchable-multi-select-empty) {
+  color: var(--fw-muted);
+  font-size: 11px;
+  font-weight: 400;
+  padding: 12px;
+}
+
+/* The search input of an inline combobox belongs to its control, not a field of its own. */
+:root[data-app-theme="minimal-luxury"] body .searchable-multi-select-value input,
+:root[data-app-theme="minimal-luxury"] body .searchable-multi-select-value input:is(:hover, :focus, :focus-visible) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+:root[data-app-theme="minimal-luxury"] body .multi-select-dropdown-button:disabled {
+  opacity: 0.55;
+  transform: none;
 }
 
 /* ---------------------------------------------------------------------------

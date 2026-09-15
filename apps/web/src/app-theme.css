@@ -273,7 +273,7 @@ html[data-app-theme] :is(
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(input, select, textarea, [data-slot="input"], .catalog-filter-search input, .catalog-filter-fields input, .catalog-filter-fields select, .catalog-filter-fields .multi-select-dropdown-button, .catalog-link-field input, .catalog-link-field select, .object-feed-units-filter .multi-select-dropdown-button) {
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"], .catalog-filter-search input, .catalog-filter-fields input, .catalog-filter-fields select, .catalog-filter-fields .multi-select-dropdown-button, .catalog-link-field input, .catalog-link-field select, .object-feed-units-filter .multi-select-dropdown-button, .multi-select-dropdown-button) {
   border-color: var(--app-theme-border-strong);
   background: var(--app-theme-control);
   color: var(--app-theme-ink-900);
@@ -772,6 +772,13 @@ html[data-app-theme="dark-premium"] .catalog-filter-search-field:focus-within {
 
 html[data-app-theme="dark-premium"] .catalog-filter-search .catalog-filter-search-field input {
   border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-app-theme="dark-premium"] .searchable-multi-select-value input,
+html[data-app-theme="dark-premium"] .searchable-multi-select-value input:is(:hover, :focus, :focus-visible) {
+  border-color: transparent;
   background: transparent;
   box-shadow: none;
 }

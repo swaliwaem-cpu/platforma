@@ -47,7 +47,18 @@ import { matchesSearchVariants } from '@platforma/shared/search-normalization';
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import {
+  DropdownContent,
+  DropdownEmpty,
+  DropdownListbox,
+  DropdownOption,
+  DropdownRoot,
+  DropdownSearchInput,
+  DropdownTrigger,
+  useDropdownState,
+} from '../components/Dropdown';
 import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
@@ -155,6 +166,11 @@ const defaultFilters: CatalogFilters = {
 };
 
 const catalogPageSizeOptions = [25, 50, 75] as const;
+const catalogObjectTypeOptions: Array<{ value: CatalogObjectTypeFilter; label: string }> = [
+  { value: 'ALL', label: 'Все' },
+  { value: 'RESIDENTIAL', label: 'Жилая' },
+  { value: 'COMMERCIAL', label: 'Коммерция' },
+];
 const catalogFilterSearchResultLimit = 24;
 const catalogMapInitialViewport: MapViewport = {
   center: [55.751244, 37.618423],
@@ -794,14 +810,13 @@ function CatalogFilters({
         <div className="catalog-filter-fields">
           <label>
             Раздел
-            <select
+            <SelectDropdown<CatalogObjectTypeFilter>
+              ariaLabel="Фильтр каталога по разделу"
+              emptyValue="ALL"
+              options={catalogObjectTypeOptions}
               value={filters.objectType}
-              onChange={(event) => onChange({ objectType: event.target.value as CatalogObjectTypeFilter })}
-            >
-              <option value="ALL">Все</option>
-              <option value="RESIDENTIAL">Жилая</option>
-              <option value="COMMERCIAL">Коммерция</option>
-            </select>
+              onChange={(objectType) => onChange({ objectType })}
+            />
           </label>
 
           <label>
@@ -1004,10 +1019,9 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listboxId = useId();
+  const { isOpen, open, close, onOpenChange } = useDropdownState({ onClose: () => setQuery('') });
   const selectedValueSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedOptions = useMemo(
     () => options.filter((option) => selectedValueSet.has(option.id)),
@@ -1021,34 +1035,9 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
     return matchedOptions.slice(0, catalogFilterSearchResultLimit);
   }, [getSearchValues, options, query]);
 
-  function openDropdown() {
-    if (disabled) {
-      return;
-    }
-
-    setIsOpen(true);
-    window.setTimeout(() => searchInputRef.current?.focus(), 0);
-  }
-
-  function toggleDropdown() {
-    if (disabled) {
-      return;
-    }
-
-    if (isOpen) {
-      setIsOpen(false);
-      setQuery('');
-      return;
-    }
-
-    openDropdown();
-  }
-
   function clearSelection() {
     onSelectedIdsChange([]);
     setQuery('');
-    setIsOpen(true);
-    window.setTimeout(() => searchInputRef.current?.focus(), 0);
   }
 
   function toggleOption(optionId: string) {
@@ -1057,104 +1046,58 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
       : [...selectedIds, optionId];
 
     onSelectedIdsChange(nextIds);
-    setIsOpen(true);
-  }
-
-  function handleBlur(event: FocusEvent<HTMLDivElement>) {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      return;
-    }
-
-    setIsOpen(false);
-    setQuery('');
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Escape') {
-      setIsOpen(false);
-      setQuery('');
-      return;
-    }
-
-    if (event.key === 'Enter' && isOpen && document.activeElement === searchInputRef.current && filteredOptions[0]) {
-      event.preventDefault();
-      toggleOption(filteredOptions[0].id);
-    }
   }
 
   return (
-    <div className="multi-select-dropdown" onBlur={handleBlur} onKeyDown={handleKeyDown}>
-      <button
-        aria-controls={isOpen ? listboxId : undefined}
-        aria-expanded={isOpen}
-        aria-haspopup="listbox"
-        aria-label={ariaLabel}
-        className={isOpen ? 'multi-select-dropdown-button is-open' : 'multi-select-dropdown-button'}
-        disabled={disabled}
-        type="button"
-        onClick={toggleDropdown}
-      >
-        <span className={hasSelectedOptions ? 'multi-select-dropdown-value' : 'multi-select-dropdown-value is-empty'}>
-          {hasSelectedOptions ? selectedLabel : placeholder}
-        </span>
-        <ChevronDownIcon aria-hidden="true" className="multi-select-dropdown-chevron" />
-      </button>
+    <div className="multi-select-dropdown">
+      <DropdownRoot open={isOpen && !disabled} onOpenChange={onOpenChange}>
+        <DropdownTrigger aria-controls={isOpen ? listboxId : undefined} onOpen={open}>
+          <button
+            aria-expanded={isOpen}
+            aria-label={ariaLabel}
+            className={isOpen ? 'multi-select-dropdown-button is-open' : 'multi-select-dropdown-button'}
+            disabled={disabled}
+            type="button"
+          >
+            <span className={hasSelectedOptions ? 'multi-select-dropdown-value' : 'multi-select-dropdown-value is-empty'}>
+              {hasSelectedOptions ? selectedLabel : placeholder}
+            </span>
+            <ChevronDownIcon aria-hidden="true" className="multi-select-dropdown-chevron" />
+          </button>
+        </DropdownTrigger>
 
-      {isOpen ? (
-        <div className="multi-select-dropdown-menu">
-          <input
-            ref={searchInputRef}
+        <DropdownContent onRequestClose={close}>
+          <DropdownSearchInput
+            aria-controls={listboxId}
             aria-label={`${ariaLabel}: поиск`}
             placeholder={searchPlaceholder}
-            type="search"
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            onFocus={openDropdown}
-          />
-          <div id={listboxId} role="listbox" aria-multiselectable={true}>
-            <button
-              className={
-                hasSelectedOptions
-                  ? 'multi-select-dropdown-option'
-                  : 'multi-select-dropdown-option multi-select-dropdown-option--selected'
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && filteredOptions[0]) {
+                event.preventDefault();
+                toggleOption(filteredOptions[0].id);
               }
-              type="button"
-              role="option"
-              aria-selected={!hasSelectedOptions}
-              onClick={clearSelection}
-            >
-              <span>{placeholder}</span>
-              {!hasSelectedOptions ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
-            </button>
+            }}
+          />
+          <DropdownListbox id={listboxId} aria-label={ariaLabel} aria-multiselectable={true}>
+            <DropdownOption label={placeholder} selected={!hasSelectedOptions} onSelect={clearSelection} />
 
             {filteredOptions.length > 0 ? (
-              filteredOptions.map((option) => {
-                const isSelected = selectedValueSet.has(option.id);
-
-                return (
-                  <button
-                    key={option.id}
-                    className={
-                      isSelected
-                        ? 'multi-select-dropdown-option multi-select-dropdown-option--selected'
-                        : 'multi-select-dropdown-option'
-                    }
-                    type="button"
-                    role="option"
-                    aria-selected={isSelected}
-                    onClick={() => toggleOption(option.id)}
-                  >
-                    <span>{getOptionLabel(option)}</span>
-                    {isSelected ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
-                  </button>
-                );
-              })
+              filteredOptions.map((option) => (
+                <DropdownOption
+                  key={option.id}
+                  label={getOptionLabel(option)}
+                  selected={selectedValueSet.has(option.id)}
+                  onSelect={() => toggleOption(option.id)}
+                />
+              ))
             ) : (
-              <p className="searchable-multi-select-empty">{emptyLabel}</p>
+              <DropdownEmpty>{emptyLabel}</DropdownEmpty>
             )}
-          </div>
-        </div>
-      ) : null}
+          </DropdownListbox>
+        </DropdownContent>
+      </DropdownRoot>
     </div>
   );
 }
@@ -1369,7 +1312,8 @@ function CatalogSortSelect({
                 type="button"
                 onClick={() => selectOption(option)}
               >
-                {option.label}
+                <span>{option.label}</span>
+                {isSelected ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
               </button>
             );
           })}
@@ -1480,18 +1424,13 @@ function CatalogListView({
 
             <label className="catalog-pagination-field">
               Страница
-              <select
-                aria-label="Выбор страницы каталога"
+              <SelectDropdown
+                ariaLabel="Выбор страницы каталога"
                 className="catalog-pagination-select"
-                value={filters.page}
-                onChange={(event) => onPageChange(parsePositiveInteger(event.target.value, 1))}
-              >
-                {pageOptions.map((page) => (
-                  <option key={page} value={page}>
-                    {page}
-                  </option>
-                ))}
-              </select>
+                options={pageOptions.map((page) => ({ value: String(page), label: String(page) }))}
+                value={String(filters.page)}
+                onChange={(page) => onPageChange(parsePositiveInteger(page, 1))}
+              />
             </label>
 
             <span className="catalog-pagination-total">из {totalPages}</span>
@@ -1509,18 +1448,13 @@ function CatalogListView({
 
           <label className="catalog-pagination-field catalog-pagination-field--limit">
             На странице
-            <select
-              aria-label="Количество объектов на странице"
+            <SelectDropdown
+              ariaLabel="Количество объектов на странице"
               className="catalog-pagination-select"
-              value={filters.limit}
-              onChange={(event) => onLimitChange(parseCatalogPageSize(event.target.value))}
-            >
-              {catalogPageSizeOptions.map((limit) => (
-                <option key={limit} value={limit}>
-                  {limit}
-                </option>
-              ))}
-            </select>
+              options={catalogPageSizeOptions.map((limit) => ({ value: String(limit), label: String(limit) }))}
+              value={String(filters.limit)}
+              onChange={(limit) => onLimitChange(parseCatalogPageSize(limit))}
+            />
           </label>
 
           <span className="catalog-pagination-count">Показано: {objects.length} из {total}</span>

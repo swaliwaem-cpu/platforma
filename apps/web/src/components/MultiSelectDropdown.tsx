@@ -1,31 +1,80 @@
-import { CheckIcon, ChevronDownIcon } from 'lucide-react';
-import { useId, useMemo, useState, type FocusEvent, type KeyboardEvent } from 'react';
+import { ChevronDownIcon } from 'lucide-react';
+import { useId, useMemo, useState } from 'react';
+import {
+  DropdownContent,
+  DropdownEmpty,
+  DropdownListbox,
+  DropdownOption,
+  DropdownRoot,
+  DropdownSearchInput,
+  DropdownTrigger,
+  joinDropdownClassNames,
+  matchesDropdownQuery,
+  useDropdownState,
+  type DropdownCloseReason,
+} from './Dropdown';
 
 export type MultiSelectDropdownOption = {
   value: string;
   label: string;
+  description?: string;
+  searchValues?: Array<string | null | undefined>;
 };
 
 type MultiSelectDropdownProps = {
   ariaLabel: string;
+  className?: string;
+  defaultOpen?: boolean;
+  disabled?: boolean;
+  emptyLabel?: string;
+  filterOption?: (option: MultiSelectDropdownOption, query: string) => boolean;
   options: MultiSelectDropdownOption[];
   placeholder: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
   values: string[];
   onChange: (values: string[]) => void;
+  onClose?: (reason: DropdownCloseReason) => void;
 };
 
 export function MultiSelectDropdown({
   ariaLabel,
+  className,
+  defaultOpen = false,
+  disabled = false,
+  emptyLabel = 'Ничего не найдено',
+  filterOption,
   options,
   placeholder,
+  searchable = false,
+  searchPlaceholder = 'Поиск',
   values,
   onChange,
+  onClose,
 }: MultiSelectDropdownProps) {
-  const [isOpen, setIsOpen] = useState(false);
   const listboxId = useId();
+  const [query, setQuery] = useState('');
+  const { isOpen, open, close, onOpenChange } = useDropdownState({
+    defaultOpen,
+    onClose: (reason) => {
+      setQuery('');
+      onClose?.(reason);
+    },
+  });
   const selectedValueSet = useMemo(() => new Set(values), [values]);
   const selectedOptions = options.filter((option) => selectedValueSet.has(option.value));
   const buttonLabel = selectedOptions.length > 0 ? selectedOptions.map((option) => option.label).join(', ') : placeholder;
+  const filteredOptions = useMemo(() => {
+    if (!searchable) {
+      return options;
+    }
+
+    return options.filter((option) =>
+      filterOption
+        ? filterOption(option, query)
+        : matchesDropdownQuery(query, option.searchValues ?? [option.label, option.description]),
+    );
+  }, [filterOption, options, query, searchable]);
 
   function changeValues(nextValues: string[]) {
     const nextValueSet = new Set(nextValues);
@@ -48,77 +97,59 @@ export function MultiSelectDropdown({
     changeValues([]);
   }
 
-  function handleBlur(event: FocusEvent<HTMLDivElement>) {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      return;
-    }
-
-    setIsOpen(false);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Escape') {
-      setIsOpen(false);
-    }
-  }
-
   return (
-    <div className="multi-select-dropdown" onBlur={handleBlur} onKeyDown={handleKeyDown}>
-      <button
-        aria-controls={isOpen ? listboxId : undefined}
-        aria-expanded={isOpen}
-        aria-haspopup="listbox"
-        aria-label={ariaLabel}
-        className={isOpen ? 'multi-select-dropdown-button is-open' : 'multi-select-dropdown-button'}
-        type="button"
-        onClick={() => setIsOpen((currentValue) => !currentValue)}
-      >
-        <span className={selectedOptions.length > 0 ? 'multi-select-dropdown-value' : 'multi-select-dropdown-value is-empty'}>
-          {buttonLabel}
-        </span>
-        <ChevronDownIcon aria-hidden="true" className="multi-select-dropdown-chevron" />
-      </button>
-
-      {isOpen ? (
-        <div id={listboxId} className="multi-select-dropdown-menu" role="listbox" aria-multiselectable={true}>
+    <div className={joinDropdownClassNames('multi-select-dropdown', className)}>
+      <DropdownRoot open={isOpen && !disabled} onOpenChange={onOpenChange}>
+        <DropdownTrigger aria-controls={isOpen ? listboxId : undefined} onOpen={open}>
           <button
-            className={
-              selectedOptions.length === 0
-                ? 'multi-select-dropdown-option multi-select-dropdown-option--selected'
-                : 'multi-select-dropdown-option'
-            }
+            aria-expanded={isOpen}
+            aria-label={ariaLabel}
+            className={isOpen ? 'multi-select-dropdown-button is-open' : 'multi-select-dropdown-button'}
+            disabled={disabled}
             type="button"
-            role="option"
-            aria-selected={selectedOptions.length === 0}
-            onClick={clearValues}
           >
-            <span>{placeholder}</span>
-            {selectedOptions.length === 0 ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
+            <span className={selectedOptions.length > 0 ? 'multi-select-dropdown-value' : 'multi-select-dropdown-value is-empty'}>
+              {buttonLabel}
+            </span>
+            <ChevronDownIcon aria-hidden="true" className="multi-select-dropdown-chevron" />
           </button>
+        </DropdownTrigger>
 
-          {options.map((option) => {
-            const isSelected = selectedValueSet.has(option.value);
-
-            return (
-              <button
-                key={option.value}
-                className={
-                  isSelected
-                    ? 'multi-select-dropdown-option multi-select-dropdown-option--selected'
-                    : 'multi-select-dropdown-option'
+        <DropdownContent onRequestClose={close}>
+          {searchable ? (
+            <DropdownSearchInput
+              aria-controls={listboxId}
+              aria-label={`${ariaLabel}: поиск`}
+              placeholder={searchPlaceholder}
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && filteredOptions[0]) {
+                  event.preventDefault();
+                  toggleValue(filteredOptions[0].value);
                 }
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                onClick={() => toggleValue(option.value)}
-              >
-                <span>{option.label}</span>
-                {isSelected ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+              }}
+            />
+          ) : null}
+          <DropdownListbox id={listboxId} aria-label={ariaLabel} aria-multiselectable={true}>
+            <DropdownOption label={placeholder} selected={selectedOptions.length === 0} onSelect={clearValues} />
+
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option) => (
+                <DropdownOption
+                  key={option.value}
+                  description={option.description}
+                  label={option.label}
+                  selected={selectedValueSet.has(option.value)}
+                  onSelect={() => toggleValue(option.value)}
+                />
+              ))
+            ) : (
+              <DropdownEmpty>{emptyLabel}</DropdownEmpty>
+            )}
+          </DropdownListbox>
+        </DropdownContent>
+      </DropdownRoot>
     </div>
   );
 }

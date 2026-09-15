@@ -52,7 +52,7 @@ try {
   await page.getByText('Страница 2 из 2').waitFor();
   assert.equal(queries.at(-1).page, '2');
   await page.getByLabel('Сотрудник').fill('empty');
-  await page.getByLabel('Сейчас доступно').selectOption('true');
+  await chooseDropdownOption(page, page.getByLabel('Сейчас доступно'), 'Да');
   await page.getByRole('button', { name: 'Применить' }).click();
   await page.getByText('Рейтинг пуст').waitFor();
   assert.equal(queries.at(-1).currentlyEligible, 'true');
@@ -76,6 +76,11 @@ try {
   } finally {
     await browser.close();
   }
+}
+
+async function chooseDropdownOption(page, trigger, optionName) {
+  await trigger.click();
+  await page.getByRole('option', { name: optionName, exact: true }).click();
 }
 
 function fixture(id = 'u1', name = 'Анна Брокер', coverage = '87.50') {

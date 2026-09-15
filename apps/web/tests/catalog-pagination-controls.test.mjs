@@ -78,8 +78,8 @@ test('catalog pagination renders show more, arrow buttons, page select, and page
   assert.match(listViewSource, /aria-label="Следующая страница"/);
   assert.match(listViewSource, /<ChevronLeftIcon aria-hidden="true" \/>/);
   assert.match(listViewSource, /<ChevronRightIcon aria-hidden="true" \/>/);
-  assert.match(listViewSource, /aria-label="Выбор страницы каталога"/);
-  assert.match(listViewSource, /aria-label="Количество объектов на странице"/);
+  assert.match(listViewSource, /ariaLabel="Выбор страницы каталога"/);
+  assert.match(listViewSource, /ariaLabel="Количество объектов на странице"/);
   assert.match(listViewSource, /catalogPageSizeOptions\.map/);
   assert.match(listViewSource, /Показано: \{objects\.length\} из \{total\}/);
   assert.doesNotMatch(listViewSource, />\s*Назад\s*</);

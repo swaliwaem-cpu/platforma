@@ -178,9 +178,9 @@ test('objects admin list exposes expandable location filters and sends API param
   assert.match(pageSource, /setMetroSearch\(''\)/);
   assert.match(listToolbarSource, />\s*Раздел\s*</);
   assert.match(listToolbarSource, /value=\{typeFilter\}/);
-  assert.match(listToolbarSource, /setTypeFilter\(event\.target\.value\)/);
-  assert.match(listToolbarSource, /<option value="RESIDENTIAL">Жилая<\/option>/);
-  assert.match(listToolbarSource, /<option value="COMMERCIAL">Коммерция<\/option>/);
+  assert.match(listToolbarSource, /setTypeFilter\(value\)/);
+  assert.match(listToolbarSource, /\{ value: 'RESIDENTIAL', label: 'Жилая' \}/);
+  assert.match(listToolbarSource, /\{ value: 'COMMERCIAL', label: 'Коммерция' \}/);
   assert.match(listToolbarSource, />\s*\+ Фильтры\s*</);
   assert.match(listToolbarSource, />\s*Районы\s*</);
   assert.match(listToolbarSource, />\s*Окружение\s*</);

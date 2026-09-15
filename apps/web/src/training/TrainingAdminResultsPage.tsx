@@ -11,6 +11,7 @@ import type { TrainingAdminResultSummary, TrainingAdminResultsQuery } from '@pla
 
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SelectDropdown } from '@/components/SelectDropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 
@@ -445,7 +446,7 @@ function EmployeeFilterCombobox({
                     <strong>{employee.name ?? employee.email}</strong>
                     <small>{employee.email}</small>
                   </span>
-                  {isSelected ? <CheckIcon aria-hidden="true" /> : null}
+                  {isSelected ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
                 </button>
               );
             })
@@ -535,16 +536,13 @@ function SelectField({
   return (
     <Field>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <select
+      <SelectDropdown
         id={id}
         className="training-select"
+        options={options.map(([optionValue, optionLabel]) => ({ value: optionValue, label: optionLabel }))}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map(([optionValue, optionLabel]) => (
-          <option key={optionValue || 'all'} value={optionValue}>{optionLabel}</option>
-        ))}
-      </select>
+        onChange={onChange}
+      />
     </Field>
   );
 }
