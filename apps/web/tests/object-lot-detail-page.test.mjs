@@ -40,37 +40,60 @@ test('lot detail page loads object and one feed unit', () => {
   assert.match(objectDetailSource, /setUnit\(unitData\.unit\);/);
 });
 
-test('lot detail page renders media carousel and required fact cards', () => {
+test('lot detail page follows the object page layout: floor plans beside the price summary', () => {
   assert.match(objectDetailSource, /className="object-detail-page object-lot-page"/);
-  assert.match(objectDetailSource, /className="object-lot-split-card"/);
-  assert.match(objectDetailSource, /className="object-lot-media-panel"/);
-  assert.match(objectDetailSource, /className="object-lot-info-panel"/);
-  assert.match(objectDetailSource, /className="object-lot-price-summary"/);
-  assert.match(objectDetailSource, /function ObjectLotMediaCarousel/);
-  assert.match(objectDetailSource, /className="media-gallery-frame object-lot-media-carousel"/);
-  assert.match(objectDetailSource, /className="media-gallery-stage object-lot-media-stage"/);
-  assert.match(objectDetailSource, /className="media-gallery-image object-lot-media-image"/);
-  assert.match(objectDetailSource, /function getObjectLotFactRows\(unit: FeedUnit\)/);
-  assert.match(objectDetailSource, /className="object-lot-fact-row"/);
-  assert.match(objectDetailSource, /className="object-lot-fact-line"/);
+  assert.match(objectDetailSource, /className="text-button object-detail-back"[\s\S]*?Вернуться к объекту/);
+  assert.match(objectDetailSource, /const headerLine = getObjectLotHeaderLine\(object, unit\);/);
+  assert.match(
+    objectDetailSource,
+    /<section className="object-detail-hero object-lot-hero"[\s\S]*?<ObjectLotMediaCarousel[\s\S]*?<aside className="detail-section object-parameters-section object-lot-summary">/,
+  );
+  assert.match(objectDetailSource, /<strong className="object-detail-summary-price">\{priceSummary\.primaryPrice\}<\/strong>/);
   assert.match(objectDetailSource, /formatComputedFeedUnitPricePerMeter\(unit\)/);
-  assert.match(objectDetailSource, /label: 'Цена за м²'/);
-  assert.match(objectDetailSource, /label: 'Площадь'/);
-  assert.match(objectDetailSource, /label: 'Тип лота'/);
-  assert.match(objectDetailSource, /label: 'Этаж'/);
-  assert.match(objectDetailSource, /label: 'Корпус\/секция'/);
-  assert.match(objectDetailSource, /label: 'Срок сдачи'[\s\S]*?formatFeedUnitCompletion\(unit\)/);
-  assert.match(objectDetailSource, /label: 'Адрес'/);
-  assert.match(objectDetailSource, /label: 'Статус'/);
-  assert.match(styles, /\.object-lot-page\s*\{/);
-  assert.match(styles, /\.object-lot-split-card\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\);[\s\S]*?\}/);
-  assert.match(styles, /\.object-lot-info-panel\s*\{/);
-  assert.match(styles, /\.object-lot-price-summary\s*\{/);
-  assert.match(styles, /\.object-lot-fact-row\s*\{/);
-  assert.match(styles, /\.object-lot-fact-line\s*\{/);
-  assert.match(styles, /@media \(max-width:\s*1100px\)\s*\{[\s\S]*?\.object-lot-split-card\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/);
-  assert.match(styles, /\.object-lot-media-carousel\s*\{/);
-  assert.match(styles, /\.object-lot-facts\s*\{/);
+  assert.match(objectDetailSource, /className="object-parameters-grid object-lot-facts"/);
+  assert.match(objectDetailSource, /className="object-lot-summary-action"[\s\S]*?<LotCollectionAction loadStateOnMount navigate=\{navigate\} unitId=\{unit\.id\} \/>/);
+  assert.doesNotMatch(objectDetailSource, /object-lot-split-card|object-lot-fact-line|Параметры лота/);
+  assert.match(styles, /\.object-lot-hero \.object-lot-media-carousel\s*\{[\s\S]*?grid-template-rows:\s*minmax\(470px,\s*1fr\) auto;[\s\S]*?place-items:\s*stretch;[\s\S]*?\}/);
+  assert.match(styles, /\.object-detail-hero \.object-lot-facts \.object-lot-fact--wide\s*\{[\s\S]*?grid-column:\s*1 \/ -1;[\s\S]*?\}/);
+});
+
+test('lot summary plaques show filled values including living and kitchen areas', () => {
+  const factsSource = objectDetailSource.match(/function getObjectLotSummaryFacts[\s\S]*?\n}\n/)?.[0] ?? '';
+
+  for (const label of ['Тип', 'Площадь', 'Жилая', 'Кухня', 'Потолки', 'Мощность', 'Вход', 'Этаж', 'Срок']) {
+    assert.match(factsSource, new RegExp(`label: '${label}'`));
+  }
+  assert.match(factsSource, /unit\.residentialDetails\?\.livingArea/);
+  assert.match(factsSource, /unit\.residentialDetails\?\.kitchenArea/);
+  assert.match(factsSource, /fact\.value \? \[/);
+  assert.match(objectDetailSource, /function formatObjectLotArea\(value: string \| null\)[\s\S]*?maximumFractionDigits: 1/);
+  assert.match(objectDetailSource, /return `\$\{unit\.completionQuarter\} кв\. \$\{unit\.completionYear\}`;/);
+});
+
+test('lot page shows the house and the closest lots of the same rooms in it', () => {
+  assert.match(
+    objectDetailSource,
+    /className="object-description-location-grid object-lot-context-grid"[\s\S]*?<ObjectLotHouseSection[\s\S]*?<ObjectLotSimilarSection/,
+  );
+  assert.match(objectDetailSource, /function ObjectLotHouseSection[\s\S]*?<MetroStationItem[\s\S]*?Открыть объект/);
+  const similarSource = objectDetailSource.match(/function ObjectLotSimilarSection[\s\S]*?\n}\n/)?.[0] ?? '';
+  assert.match(similarSource, /apiRequest<FeedUnitGroupsResponse>\(`\/objects\/\$\{object\.id\}\/feed-units\/groups\?\$\{params\.toString\(\)\}`/);
+  assert.match(similarSource, /params\.set\('type', unit\.type\);/);
+  assert.match(similarSource, /params\.set\('rooms', String\(unit\.rooms\)\);/);
+  assert.match(similarSource, /pickSimilarObjectLots\(units, unit, objectLotSimilarLimit\)/);
+  assert.match(similarSource, /Ещё в этом доме/);
+  assert.match(objectDetailSource, /function pickSimilarObjectLots[\s\S]*?candidate\.id !== currentUnit\.id[\s\S]*?\.slice\(0, limit\)/);
+  assert.match(objectDetailSource, /function buildObjectLotsPath[\s\S]*?\?lotRooms=\$\{unit\.rooms\}[\s\S]*?#object-lots/);
+  assert.match(objectDetailSource, /window\.location\.hash !== '#object-lots'/);
+  assert.match(styles, /\.object-lot-context-grid > :only-child\s*\{[\s\S]*?grid-column:\s*1 \/ -1;[\s\S]*?\}/);
+});
+
+test('lot header downloads the floor plan when the lot has media', () => {
+  assert.match(objectDetailSource, /function getObjectLotLayoutMedia\(unit: FeedUnit\)[\s\S]*?media\.label === 'layout-photo'/);
+  assert.match(
+    objectDetailSource,
+    /className="object-detail-edit-link object-lot-download-link"[\s\S]*?download=\{getFeedMediaDownloadFileName\(layoutMedia\)\}[\s\S]*?href=\{buildMediaFileContentUrl\(layoutMedia\.file\.id, \{ download: true \}\)\}[\s\S]*?Скачать планировку/,
+  );
 });
 
 test('lot detail page shows aerotour icon link only when object aerotour url is valid', () => {
@@ -99,7 +122,7 @@ test('lot detail price summary shows discount only when discount price is lower'
   );
   assert.match(objectDetailSource, /function getObjectLotPriceSummary\(unit: FeedUnit\)/);
   assert.match(objectDetailSource, /const hasRealDiscount = hasFeedUnitRealDiscount\(unit\);/);
-  assert.match(objectDetailSource, /label: hasRealDiscount \? 'Цена со скидкой' : 'Цена'/);
+  assert.match(objectDetailSource, /label: hasRealDiscount \? 'Цена со скидкой' : 'Стоимость'/);
   assert.match(objectDetailSource, /secondaryPrice: hasRealDiscount \? formatFeedUnitPrice\(unit\.price, unit\.currency\) : null/);
   assert.match(objectDetailSource, /secondaryPricePerMeter: hasRealDiscount \? formatFeedUnitBasePricePerMeter\(unit\) : null/);
   assert.match(objectDetailSource, /priceSummary\.secondaryPricePerMeter \? ` · \$\{priceSummary\.secondaryPricePerMeter\}\/м²` : ''/);
@@ -119,19 +142,11 @@ test('lot detail media carousel fits media without cropping', () => {
 
   assert.match(
     styles,
-    /\.media-gallery-frame\s*\{[\s\S]*?aspect-ratio:\s*16 \/ 9;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+    /\.object-lot-page \.object-lot-hero \.object-lot-media-stage\s*\{[\s\S]*?border-radius:\s*18px;[\s\S]*?background:\s*#ffffff;[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.media-gallery-button\s*\{[\s\S]*?position:\s*relative;[\s\S]*?display:\s*grid;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
-  );
-  assert.match(
-    styles,
-    /\.media-gallery-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
-  );
-  assert.match(
-    styles,
-    /\.object-lot-media-carousel\s+\.object-lot-media-image\s*\{[^}]*inset:\s*15px;[^}]*width:\s*calc\(100% - 30px\);[^}]*height:\s*calc\(100% - 30px\);[^}]*object-fit:\s*contain;[^}]*\}/,
+    /\.object-lot-media-carousel \.object-lot-media-image\s*\{[^}]*inset:\s*26px 40px;[^}]*width:\s*calc\(100% - 80px\);[^}]*height:\s*calc\(100% - 52px\);[^}]*object-fit:\s*contain;[^}]*\}/,
   );
 });
 
@@ -141,21 +156,14 @@ test('lot detail media thumbnails sit below the active media stage', () => {
 
   assert.match(
     styles,
-    /\.object-lot-media-carousel\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
-  );
-  assert.match(
-    styles,
-    /\.object-lot-media-stage\s*\{[\s\S]*?position:\s*relative;[\s\S]*?inset:\s*auto;[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;[\s\S]*?\}/,
-  );
-  assert.match(
-    styles,
-    /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone\s*\{[\s\S]*?position:\s*relative;[\s\S]*?inset:\s*auto;[\s\S]*?height:\s*auto;[\s\S]*?padding:\s*12px 16px 16px;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
+    /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone\s*\{[\s\S]*?position:\s*static;[\s\S]*?height:\s*auto;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
   );
   assert.match(styles, /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone::before\s*\{[\s\S]*?display:\s*none;[\s\S]*?\}/);
   assert.match(
     styles,
-    /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone \.carousel-thumbnails,\s*\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone:hover \.carousel-thumbnails,\s*\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone:focus-within \.carousel-thumbnails\s*\{[\s\S]*?position:\s*relative;[\s\S]*?bottom:\s*auto;[\s\S]*?left:\s*auto;[\s\S]*?width:\s*min\(100%,\s*680px\);[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*none;[\s\S]*?\}/,
+    /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone \.carousel-thumbnails,\s*\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone:hover \.carousel-thumbnails,\s*\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone:focus-within \.carousel-thumbnails\s*\{[\s\S]*?position:\s*static;[\s\S]*?justify-content:\s*flex-start;[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*none;[\s\S]*?\}/,
   );
+  assert.match(styles, /\.object-lot-page \.object-lot-media-carousel \.carousel-thumbnail\s*\{[\s\S]*?width:\s*112px;[\s\S]*?height:\s*74px;[\s\S]*?\}/);
 });
 
 test('lot detail fullscreen media supports arrow buttons and keyboard navigation', () => {

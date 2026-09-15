@@ -129,7 +129,7 @@ test('object detail feed units initialize from catalog lot filters in URL', () =
 });
 
 test('object detail feed units block renders expected columns and media thumbnails', () => {
-  assert.match(source, /<section className="detail-section object-feed-units-section"/);
+  assert.match(source, /<section className="detail-section object-feed-units-section" id="object-lots"/);
   assert.match(source, /id="object-feed-units-title">Лоты<\/h3>/);
   assert.match(source, /const \[hasDiscountPrices,\s*setHasDiscountPrices\] = useState\(false\);/);
   assert.match(source, /setHasDiscountPrices\(data\.hasDiscountPrices\);/);
@@ -154,7 +154,7 @@ test('object detail feed units block renders expected columns and media thumbnai
   );
   assert.doesNotMatch(objectFeedUnitRowSource, /formatFeedUnitPrice\(unit\.effectivePrice \?\? unit\.discountPrice \?\? unit\.price, unit\.currency\)/);
   assert.match(source, /function formatFeedUnitCompletion\(unit: FeedUnit\)/);
-  assert.match(source, /return `\$\{unit\.completionQuarter\}кв \$\{unit\.completionYear\}`;/);
+  assert.match(source, /return `\$\{unit\.completionQuarter\} кв\. \$\{unit\.completionYear\}`;/);
   assert.doesNotMatch(source, /<span>ID \{unit\.externalId\}<\/span>/);
   assert.doesNotMatch(source, /<strong>\{unit\.title \|\| unit\.externalId\}<\/strong>/);
   assert.match(source, /function getFeedUnitTitle\(unit: FeedUnit\)/);

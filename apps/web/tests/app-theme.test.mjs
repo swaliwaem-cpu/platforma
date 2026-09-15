@@ -104,7 +104,7 @@ test('app theme stylesheet gives galleries theme-aware backgrounds', () => {
   );
   assert.match(
     styles,
-    /html\[data-app-theme\] :is\(\.object-lot-media-panel,\s*\.object-lot-media-carousel,\s*\.object-feed-media-carousel\)\s*\{[\s\S]*?background:\s*var\(--app-theme-gallery-surface\);[\s\S]*?\}/,
+    /html\[data-app-theme\] \.object-feed-media-carousel\s*\{[\s\S]*?background:\s*var\(--app-theme-gallery-surface\);[\s\S]*?\}/,
   );
   assert.match(
     styles,

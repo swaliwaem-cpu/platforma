@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import {
   ArrowDownIcon,
   ArrowUpDownIcon,
@@ -303,7 +311,8 @@ export function ObjectLotDetailPage({ navigate, slug, unitId, onBack }: ObjectLo
   if (isLoading) {
     return (
       <div className="object-detail-page object-lot-page">
-        <button className="text-button" type="button" onClick={onBack}>
+        <button className="text-button object-detail-back" type="button" onClick={onBack}>
+          <ChevronLeftIcon aria-hidden="true" />
           Вернуться к объекту
         </button>
         <div className="content-panel">
@@ -318,7 +327,8 @@ export function ObjectLotDetailPage({ navigate, slug, unitId, onBack }: ObjectLo
   if (error || !object || !unit) {
     return (
       <div className="object-detail-page object-lot-page">
-        <button className="text-button" type="button" onClick={onBack}>
+        <button className="text-button object-detail-back" type="button" onClick={onBack}>
+          <ChevronLeftIcon aria-hidden="true" />
           Вернуться к объекту
         </button>
         <div className="content-panel">
@@ -331,80 +341,296 @@ export function ObjectLotDetailPage({ navigate, slug, unitId, onBack }: ObjectLo
   }
 
   const title = getFeedUnitTitle(unit);
-  const subtitle = [object.title, unit.address].filter(Boolean).join(' · ');
-  const factRows = getObjectLotFactRows(unit);
+  const headerLine = getObjectLotHeaderLine(object, unit);
+  const summaryFacts = getObjectLotSummaryFacts(unit);
   const priceSummary = getObjectLotPriceSummary(unit);
+  const pricePerMeter = formatComputedFeedUnitPricePerMeter(unit);
   const aerotourUrl = getExternalObjectUrl(object.aerotourUrl);
+  const layoutMedia = getObjectLotLayoutMedia(unit);
 
   return (
     <div className="object-detail-page object-lot-page">
+      <button className="text-button object-detail-back" type="button" onClick={onBack}>
+        <ChevronLeftIcon aria-hidden="true" />
+        Вернуться к объекту
+      </button>
+
       <header className="page-header object-detail-header object-lot-header">
         <div>
-          <button className="text-button" type="button" onClick={onBack}>
-            Вернуться к объекту
-          </button>
-          <p className="eyebrow">Карточка лота</p>
           <h2>{title}</h2>
-          <p className="object-detail-location-line">{subtitle}</p>
+          <p className="object-detail-location-line">{headerLine}</p>
         </div>
-        <div className="object-lot-header-actions">
-          <LotCollectionAction loadStateOnMount navigate={navigate} unitId={unit.id} />
-          {aerotourUrl ? (
-            <a
-              className="object-lot-aerotour-link"
-              href={aerotourUrl}
-              aria-label="Открыть аэротур"
-              title="Открыть аэротур"
-              referrerPolicy="no-referrer"
-              rel="noopener noreferrer nofollow"
-              target="_blank"
-            >
-              <img alt="" aria-hidden="true" className="object-lot-aerotour-icon" src={aerotourIconUrl} />
-            </a>
-          ) : null}
-        </div>
+        {layoutMedia || aerotourUrl ? (
+          <div className="object-lot-header-actions">
+            {layoutMedia ? (
+              <a
+                className="object-detail-edit-link object-lot-download-link"
+                download={getFeedMediaDownloadFileName(layoutMedia)}
+                href={buildMediaFileContentUrl(layoutMedia.file.id, { download: true })}
+              >
+                <DownloadIcon aria-hidden="true" />
+                Скачать планировку
+              </a>
+            ) : null}
+            {aerotourUrl ? (
+              <a
+                className="object-lot-aerotour-link"
+                href={aerotourUrl}
+                aria-label="Открыть аэротур"
+                title="Открыть аэротур"
+                referrerPolicy="no-referrer"
+                rel="noopener noreferrer nofollow"
+                target="_blank"
+              >
+                <img alt="" aria-hidden="true" className="object-lot-aerotour-icon" src={aerotourIconUrl} />
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
-      <section className="object-lot-split-card" aria-labelledby="object-lot-facts-title">
-        <div className="object-lot-media-panel">
-          <ObjectLotMediaCarousel accessToken={accessToken ?? ''} unit={unit} />
-        </div>
+      {/* Same layout as the object page hero: floor plans next to the price summary. */}
+      <section className="object-detail-hero object-lot-hero" aria-labelledby="object-lot-summary-title">
+        <ObjectLotMediaCarousel accessToken={accessToken ?? ''} unit={unit} />
 
-        <aside className="object-lot-info-panel">
+        <aside className="detail-section object-parameters-section object-lot-summary">
           <div className="object-lot-status-row">
-            <span className="object-lot-code">{getUnitRoomsOrType(unit)}</span>
+            <p className="eyebrow" id="object-lot-summary-title">
+              {priceSummary.label}
+            </p>
             <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
               {feedUnitStatusLabels[unit.status]}
             </span>
           </div>
+          <strong className="object-detail-summary-price">{priceSummary.primaryPrice}</strong>
+          {pricePerMeter === 'По запросу' ? null : (
+            <small className="object-detail-summary-price-meter">{pricePerMeter}/м²</small>
+          )}
+          {priceSummary.secondaryPrice ? (
+            <small className="object-lot-regular-price">
+              Обычная цена {priceSummary.secondaryPrice}
+              {priceSummary.secondaryPricePerMeter ? ` · ${priceSummary.secondaryPricePerMeter}/м²` : ''}
+            </small>
+          ) : null}
 
-          <div className="object-lot-price-summary">
-            <span>{priceSummary.label}</span>
-            <strong>{priceSummary.primaryPrice}</strong>
-            {priceSummary.secondaryPrice ? (
-              <small>
-                Обычная цена {priceSummary.secondaryPrice}
-                {priceSummary.secondaryPricePerMeter ? ` · ${priceSummary.secondaryPricePerMeter}/м²` : ''}
-              </small>
-            ) : null}
+          {summaryFacts.length > 0 ? (
+            <dl className="object-parameters-grid object-lot-facts">
+              {summaryFacts.map((fact) => (
+                <div className={fact.isWide ? 'object-lot-fact object-lot-fact--wide' : 'object-lot-fact'} key={fact.label}>
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+
+          <div className="object-lot-summary-action">
+            <LotCollectionAction loadStateOnMount navigate={navigate} unitId={unit.id} />
           </div>
-
-          <div className="object-lot-facts-heading">
-            <h3 id="object-lot-facts-title">Параметры лота</h3>
-          </div>
-
-          <dl className="object-lot-facts">
-            {factRows.map((row) => (
-              <div className="object-lot-fact-row" key={row.label}>
-                <dt>{row.label}</dt>
-                <span className="object-lot-fact-line" aria-hidden="true" />
-                <dd>{row.value}</dd>
-              </div>
-            ))}
-          </dl>
         </aside>
       </section>
+
+      <div className="object-description-location-grid object-lot-context-grid">
+        <ObjectLotHouseSection accessToken={accessToken ?? ''} navigate={navigate} object={object} unit={unit} />
+        <ObjectLotSimilarSection accessToken={accessToken ?? ''} navigate={navigate} object={object} unit={unit} />
+      </div>
     </div>
+  );
+}
+
+function ObjectLotHouseSection({
+  accessToken,
+  navigate,
+  object,
+  unit,
+}: {
+  accessToken: string;
+  navigate: (nextPathname: string) => void;
+  object: RealEstateObjectDetail;
+  unit: FeedUnit;
+}) {
+  const coverImage = useMemo(() => getCarouselImages(object)[0] ?? null, [object]);
+  const objectPath = `/objects/${encodeURIComponent(object.slug)}`;
+  const address = unit.address?.trim() || object.address?.trim() || null;
+
+  return (
+    <section className="detail-section object-lot-house-section" aria-labelledby="object-lot-house-title">
+      <div>
+        <p className="eyebrow">Дом</p>
+        <h3 id="object-lot-house-title">{object.title}</h3>
+      </div>
+
+      <div className={coverImage ? 'object-lot-house-overview' : 'object-lot-house-overview object-lot-house-overview--no-cover'}>
+        {coverImage ? (
+          <SecureImage
+            accessToken={accessToken}
+            alt={object.title}
+            className="object-lot-house-cover"
+            fileId={coverImage.file.id}
+            placeholderClassName="object-lot-house-cover object-lot-house-cover--placeholder"
+            variant="card"
+          />
+        ) : null}
+        {object.metroStations.length > 0 ? (
+          <ul className="metro-list object-lot-house-metro">
+            {object.metroStations.map((station) => (
+              <MetroStationItem key={station.id} station={station} />
+            ))}
+          </ul>
+        ) : (
+          <p className="muted-text">Метро не указано</p>
+        )}
+      </div>
+
+      {address ? <p className="object-lot-house-address">{address}</p> : null}
+
+      <div className="object-developer-row">
+        <span className="object-developer-icon" aria-hidden="true">
+          <Building2Icon />
+        </span>
+        <span className="object-developer-name">
+          <small>Застройщик</small>
+          <b>{object.developer?.name ?? 'Не указан'}</b>
+        </span>
+        <a
+          className="object-detail-edit-link object-developer-link"
+          href={objectPath}
+          onClick={(event) => {
+            event.preventDefault();
+            navigate(objectPath);
+          }}
+        >
+          Открыть объект
+        </a>
+      </div>
+    </section>
+  );
+}
+
+const objectLotSimilarLimit = 4;
+
+/** «Ещё в этом доме»: lots of the same rooms (or type) in the object, closest to this lot by price. */
+function ObjectLotSimilarSection({
+  accessToken,
+  navigate,
+  object,
+  unit,
+}: {
+  accessToken: string;
+  navigate: (nextPathname: string) => void;
+  object: RealEstateObjectDetail;
+  unit: FeedUnit;
+}) {
+  const [units, setUnits] = useState<FeedUnit[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const similarUnits = useMemo(() => pickSimilarObjectLots(units, unit, objectLotSimilarLimit), [unit, units]);
+  const allLotsPath = buildObjectLotsPath(object.slug, unit);
+
+  useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+
+    const token = accessToken;
+    let isCancelled = false;
+
+    async function loadSimilarUnits() {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const params = new URLSearchParams();
+        params.set('sortBy', 'price');
+        params.set('sortDirection', 'asc');
+        params.set('status', publicFeedUnitStatuses.join(','));
+        params.set('type', unit.type);
+
+        if (unit.rooms !== null) {
+          params.set('rooms', String(unit.rooms));
+        }
+
+        const data = await apiRequest<FeedUnitGroupsResponse>(`/objects/${object.id}/feed-units/groups?${params.toString()}`, token);
+
+        if (!isCancelled) {
+          setUnits(data.groups.flatMap((group) => group.roomGroups.flatMap((roomGroup) => roomGroup.items)));
+        }
+      } catch (caughtError) {
+        if (!isCancelled) {
+          setUnits([]);
+          setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить лоты дома');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadSimilarUnits();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [accessToken, object.id, unit.id, unit.rooms, unit.type]);
+
+  if (!isLoading && !error && similarUnits.length === 0) {
+    return null;
+  }
+
+  const total = Math.max(units.length, similarUnits.length + 1);
+
+  function openPath(event: ReactMouseEvent<HTMLAnchorElement>, path: string) {
+    event.preventDefault();
+    navigate(path);
+    window.scrollTo({ top: 0 });
+  }
+
+  return (
+    <section className="detail-section object-lot-similar-section" aria-labelledby="object-lot-similar-title">
+      <div className="object-lot-similar-heading">
+        <div>
+          <p className="eyebrow">Ещё в этом доме</p>
+          <h3 id="object-lot-similar-title">
+            {isLoading ? getUnitRoomsOrType(unit) : `${getUnitRoomsOrType(unit)} · ${formatNumber(total)} ${formatPlural(total, ['лот', 'лота', 'лотов'])}`}
+          </h3>
+        </div>
+        {isLoading || error ? null : (
+          <a className="object-detail-edit-link" href={allLotsPath} onClick={(event) => openPath(event, allLotsPath)}>
+            Все {formatNumber(total)}
+          </a>
+        )}
+      </div>
+
+      {error ? <p className="muted-text">{error}</p> : null}
+
+      {isLoading ? (
+        <div className="object-lot-similar-list" aria-hidden="true">
+          {Array.from({ length: 3 }, (_, index) => (
+            <Skeleton className="object-lot-similar-skeleton" key={index} />
+          ))}
+        </div>
+      ) : (
+        <ul className="object-lot-similar-list">
+          {similarUnits.map((similarUnit) => {
+            const lotPath = buildObjectLotPath(object.slug, similarUnit.id);
+
+            return (
+              <li key={similarUnit.id}>
+                <a className="object-lot-similar-row" href={lotPath} onClick={(event) => openPath(event, lotPath)}>
+                  <span className="object-lot-similar-name">
+                    <strong>{getFeedUnitTitle(similarUnit)}</strong>
+                    <small>{formatObjectLotSimilarMeta(similarUnit)}</small>
+                  </span>
+                  <span className="object-lot-similar-price">{formatFeedUnitDiscountPrice(similarUnit)}</span>
+                  <span className="object-lot-similar-open">Открыть</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -448,6 +674,17 @@ function ObjectDetail({
   function scrollToSection(sectionId: string) {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  // Links like «Все 12» on a lot page open the object straight at its lots.
+  useEffect(() => {
+    if (window.location.hash !== '#object-lots') {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => scrollToSection('object-lots'));
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [object.id]);
 
   return (
     <div className="object-detail-page">
@@ -1247,7 +1484,7 @@ function ObjectFeedUnitsSection({
   }
 
   return (
-    <section className="detail-section object-feed-units-section" aria-labelledby="object-feed-units-title">
+    <section className="detail-section object-feed-units-section" id="object-lots" aria-labelledby="object-feed-units-title">
       <div className="object-feed-units-heading">
         <div className="object-feed-units-heading-title">
           <p className="eyebrow">Планировки и цены</p>
@@ -2913,7 +3150,7 @@ function getObjectLotPriceSummary(unit: FeedUnit) {
   const hasRealDiscount = hasFeedUnitRealDiscount(unit);
 
   return {
-    label: hasRealDiscount ? 'Цена со скидкой' : 'Цена',
+    label: hasRealDiscount ? 'Цена со скидкой' : 'Стоимость',
     primaryPrice: formatFeedUnitPrice(hasRealDiscount ? unit.discountPrice : unit.price, unit.currency),
     secondaryPrice: hasRealDiscount ? formatFeedUnitPrice(unit.price, unit.currency) : null,
     secondaryPricePerMeter: hasRealDiscount ? formatFeedUnitBasePricePerMeter(unit) : null,
@@ -2922,14 +3159,114 @@ function getObjectLotPriceSummary(unit: FeedUnit) {
 
 function formatFeedUnitCompletion(unit: FeedUnit) {
   if (!unit.completionYear) {
-    return 'Не указан';
+    return null;
   }
 
   if (!unit.completionQuarter) {
     return String(unit.completionYear);
   }
 
-  return `${unit.completionQuarter}кв ${unit.completionYear}`;
+  return `${unit.completionQuarter} кв. ${unit.completionYear}`;
+}
+
+/** Lot area with tenths kept at any size: «140,7 м²», not the table's rounded «141 м²». */
+function formatObjectLotArea(value: string | null) {
+  const parsedValue = parseNullableNumber(value);
+
+  if (parsedValue === null) {
+    return null;
+  }
+
+  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(parsedValue)} м²`;
+}
+
+function formatObjectLotBuilding(unit: FeedUnit) {
+  const building = unit.building?.trim();
+  const section = unit.section?.trim();
+
+  if (building && section) {
+    return { label: 'Корпус', value: `${building}, секция ${section}` };
+  }
+
+  if (building) {
+    return { label: 'Корпус', value: building };
+  }
+
+  return section ? { label: 'Секция', value: section } : null;
+}
+
+function getObjectLotHeaderLine(object: RealEstateObjectDetail, unit: FeedUnit) {
+  const building = formatObjectLotBuilding(unit);
+
+  return [
+    object.title,
+    building ? `${building.label.toLocaleLowerCase('ru-RU')} ${building.value}` : null,
+    unit.floor === null ? null : `${unit.floor} этаж`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Summary plaques «Площадь · 140,7 м²»: filled values only; the price and status sit above them. */
+function getObjectLotSummaryFacts(unit: FeedUnit) {
+  const building = formatObjectLotBuilding(unit);
+  const commercialDetails = unit.commercialDetails;
+  const facts: Array<{ label: string; value: string | null; isWide?: boolean }> = [
+    { label: 'Тип', value: getUnitRoomsOrType(unit) },
+    { label: 'Площадь', value: formatObjectLotArea(unit.area) },
+    { label: 'Жилая', value: formatObjectLotArea(unit.residentialDetails?.livingArea ?? null) },
+    { label: 'Кухня', value: formatObjectLotArea(unit.residentialDetails?.kitchenArea ?? null) },
+    { label: 'Потолки', value: commercialDetails?.ceilingHeight ? `${commercialDetails.ceilingHeight.replace('.', ',')} м` : null },
+    { label: 'Мощность', value: commercialDetails?.powerKw ? `${commercialDetails.powerKw.replace('.', ',')} кВт` : null },
+    {
+      label: 'Вход',
+      value: commercialDetails?.separateEntrance ? 'Отдельный' : commercialDetails?.entrance?.trim() || null,
+    },
+    { label: 'Этаж', value: unit.floor === null ? null : String(unit.floor) },
+    { label: 'Срок', value: formatFeedUnitCompletion(unit) },
+    { label: building?.label ?? 'Корпус', value: building?.value ?? null, isWide: true },
+  ];
+
+  return facts.flatMap((fact) => (fact.value ? [{ label: fact.label, value: fact.value, isWide: fact.isWide ?? false }] : []));
+}
+
+function getObjectLotLayoutMedia(unit: FeedUnit) {
+  const mediaItems = unit.media.filter(hasFeedMediaFile);
+
+  return mediaItems.find((media) => media.label === 'layout-photo') ?? mediaItems[0] ?? null;
+}
+
+function pickSimilarObjectLots(units: FeedUnit[], currentUnit: FeedUnit, limit: number) {
+  const currentPrice = getEffectiveFeedUnitPrice(currentUnit);
+
+  return units
+    .filter((candidate) => candidate.id !== currentUnit.id)
+    .map((candidate) => ({
+      unit: candidate,
+      distance:
+        currentPrice === null ? 0 : Math.abs((getEffectiveFeedUnitPrice(candidate) ?? Number.MAX_SAFE_INTEGER) - currentPrice),
+    }))
+    .sort((left, right) => left.distance - right.distance)
+    .slice(0, limit)
+    .map((entry) => entry.unit)
+    .sort((left, right) => compareNullableNumber(getEffectiveFeedUnitPrice(left), getEffectiveFeedUnitPrice(right)));
+}
+
+function formatObjectLotSimilarMeta(unit: FeedUnit) {
+  return [
+    formatObjectLotArea(unit.area),
+    unit.floor === null ? null : `${unit.floor} этаж`,
+    unit.section?.trim() ? `секция ${unit.section.trim()}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Object page with the lots list narrowed to this lot's rooms and scrolled into view. */
+function buildObjectLotsPath(objectSlug: string, unit: FeedUnit) {
+  const query = unit.rooms !== null && getFeedUnitRoomFilterValues(String(unit.rooms)).length > 0 ? `?lotRooms=${unit.rooms}` : '';
+
+  return `/objects/${encodeURIComponent(objectSlug)}${query}#object-lots`;
 }
 
 function formatFeedUnitShortValue(value: string | null) {
@@ -2938,43 +3275,6 @@ function formatFeedUnitShortValue(value: string | null) {
 
 function formatFeedUnitBuildingValue(value: string | null) {
   return value?.trim() || 'Корпус не указан';
-}
-
-function getObjectLotFactRows(unit: FeedUnit) {
-  return [
-    {
-      label: 'Цена за м²',
-      value: formatComputedFeedUnitPricePerMeter(unit),
-    },
-    {
-      label: 'Площадь',
-      value: formatArea(unit.area),
-    },
-    {
-      label: 'Тип лота',
-      value: getUnitRoomsOrType(unit),
-    },
-    {
-      label: 'Этаж',
-      value: unit.floor === null ? 'Не указан' : String(unit.floor),
-    },
-    {
-      label: 'Корпус/секция',
-      value: formatBuildingSection(unit),
-    },
-    {
-      label: 'Срок сдачи',
-      value: formatFeedUnitCompletion(unit),
-    },
-    {
-      label: 'Адрес',
-      value: unit.address ?? 'Не указан',
-    },
-    {
-      label: 'Статус',
-      value: feedUnitStatusLabels[unit.status],
-    },
-  ];
 }
 
 function getUnitRoomsOrType(unit: FeedUnit) {

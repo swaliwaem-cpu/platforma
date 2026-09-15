@@ -5910,91 +5910,6 @@ tr.user-row--deactivated .text-button {
   object-fit: contain;
 }
 
-.object-lot-page {
-  color: #18202a;
-}
-
-.object-lot-split-card {
-  display: grid;
-  overflow: hidden;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  min-height: 520px;
-  border: 1px solid var(--app-theme-border, #d6dde5);
-  border-radius: var(--app-theme-radius-md, 8px);
-  background: var(--app-theme-surface, #ffffff);
-  box-shadow: var(--app-theme-shadow-panel, 0 16px 40px rgb(24 32 42 / 8%));
-}
-
-.object-lot-media-panel {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  border-right: 1px solid var(--app-theme-border-soft, #e6ebf0);
-  background: #0f1720;
-}
-
-.object-lot-info-panel {
-  display: grid;
-  min-width: 0;
-  align-content: start;
-  padding: 30px 34px 34px;
-}
-
-.object-lot-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 22px;
-}
-
-.object-lot-code {
-  min-width: 0;
-  color: var(--app-theme-ink-700, #6d7885);
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.object-lot-price-summary {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 24px;
-}
-
-.object-lot-price-summary span {
-  color: var(--app-theme-ink-700, #6d7885);
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 1.25;
-}
-
-.object-lot-price-summary strong {
-  color: var(--app-theme-ink-900, #18202a);
-  font-size: 34px;
-  font-weight: 900;
-  line-height: 1.08;
-}
-
-.object-lot-price-summary small {
-  color: var(--app-theme-accent, #9a6a43);
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 1.35;
-}
-
-.object-lot-facts-heading {
-  margin-bottom: 6px;
-}
-
-.object-lot-facts-heading h3 {
-  margin: 0;
-  color: var(--app-theme-ink-900, #18202a);
-  font-size: 16px;
-  font-weight: 900;
-  line-height: 1.25;
-}
-
 .object-detail-edit-link {
   display: inline-flex;
   min-height: 42px;
@@ -6113,130 +6028,6 @@ tr.user-row--deactivated .text-button {
   max-height: none;
   object-fit: cover;
   object-position: center center;
-}
-
-.object-lot-media-carousel {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  align-items: stretch;
-  background: #0f1720;
-  color: #aab6c4;
-}
-
-.object-lot-media-panel .object-lot-media-carousel {
-  height: 100%;
-  min-height: 520px;
-  aspect-ratio: auto;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.object-lot-media-carousel--empty {
-  place-items: center;
-}
-
-.object-lot-media-stage {
-  position: relative;
-  inset: auto;
-  flex: 1 1 auto;
-  width: 100%;
-  min-height: 0;
-  background: #0b1118;
-}
-
-.object-lot-media-button {
-  cursor: zoom-in;
-}
-
-.object-lot-media-button:focus-visible {
-  outline: 3px solid rgb(179 138 69 / 74%);
-  outline-offset: -6px;
-}
-
-.object-lot-media-carousel .object-lot-media-image {
-  inset: 15px;
-  width: calc(100% - 30px);
-  height: calc(100% - 30px);
-  max-width: none;
-  max-height: none;
-  object-fit: contain;
-}
-
-.object-lot-media-nav {
-  background: rgb(10 15 22 / 72%);
-}
-
-.object-lot-media-carousel > .object-lot-thumbnail-zone {
-  position: relative;
-  inset: auto;
-  z-index: 2;
-  display: flex;
-  height: auto;
-  flex: 0 0 auto;
-  justify-content: center;
-  padding: 12px 16px 16px;
-  background: inherit;
-  pointer-events: auto;
-}
-
-.object-lot-media-carousel > .object-lot-thumbnail-zone::before {
-  display: none;
-}
-
-.object-lot-media-carousel > .object-lot-thumbnail-zone .carousel-thumbnails,
-.object-lot-media-carousel > .object-lot-thumbnail-zone:hover .carousel-thumbnails,
-.object-lot-media-carousel > .object-lot-thumbnail-zone:focus-within .carousel-thumbnails {
-  position: relative;
-  right: auto;
-  bottom: auto;
-  left: auto;
-  width: min(100%, 680px);
-  max-width: 100%;
-  justify-content: flex-start;
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
-}
-
-.object-lot-facts {
-  display: grid;
-  gap: 0;
-  margin: 0;
-}
-
-.object-lot-fact-row {
-  display: grid;
-  grid-template-columns: minmax(118px, auto) minmax(24px, 1fr) minmax(120px, auto);
-  align-items: end;
-  gap: 10px;
-  padding: 13px 0;
-}
-
-.object-lot-fact-row dt {
-  min-width: 0;
-  color: var(--app-theme-ink-700, #6d7885);
-  font-size: 14px;
-  font-weight: 720;
-  line-height: 1.35;
-}
-
-.object-lot-fact-row dd {
-  min-width: 0;
-  margin: 0;
-  color: var(--app-theme-ink-900, #18202a);
-  font-size: 15px;
-  font-weight: 850;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-
-.object-lot-fact-line {
-  min-width: 24px;
-  border-bottom: 1px dotted var(--app-theme-border-strong, #bcc7d3);
-  transform: translateY(-5px);
 }
 
 .carousel-button {
@@ -7612,26 +7403,6 @@ tr.user-row--deactivated .text-button {
   cursor: default;
 }
 
-@media (max-width: 1100px) {
-  .object-lot-split-card {
-    grid-template-columns: 1fr;
-  }
-
-  .object-lot-media-panel {
-    border-right: 0;
-    border-bottom: 1px solid var(--app-theme-border-soft, #e6ebf0);
-  }
-
-  .object-lot-media-panel .object-lot-media-carousel {
-    min-height: 420px;
-    aspect-ratio: 16 / 9;
-  }
-
-  .object-lot-facts {
-    grid-template-columns: 1fr;
-  }
-}
-
 .object-description {
   display: grid;
   gap: 14px;
@@ -7940,6 +7711,289 @@ tr.user-row--deactivated .text-button {
   font-size: 13px;
 }
 
+/*
+ * Lot page (approved variant A): the object page hero with floor plans on a white stage,
+ * the summary with price and plaques, then «Дом» next to «Ещё в этом доме».
+ */
+.object-lot-hero .object-lot-media-carousel {
+  display: grid;
+  overflow: hidden;
+  min-width: 0;
+  height: 100%;
+  aspect-ratio: auto;
+  grid-template-rows: minmax(470px, 1fr) auto;
+  gap: 10px;
+  place-items: stretch;
+  padding: 14px;
+}
+
+.object-lot-hero .object-lot-media-carousel--empty {
+  grid-template-rows: minmax(470px, 1fr);
+  place-items: center;
+  color: var(--catalog-ink-700);
+}
+
+.object-lot-page .object-lot-hero .object-lot-media-stage {
+  position: relative;
+  inset: auto;
+  overflow: hidden;
+  min-height: 0;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgb(14 13 12 / 6%);
+}
+
+.object-lot-media-button {
+  width: 100%;
+  height: 100%;
+  cursor: zoom-in;
+}
+
+.object-lot-media-button:focus-visible {
+  outline: 2px solid var(--catalog-ink-900);
+  outline-offset: -4px;
+}
+
+.object-lot-media-carousel .object-lot-media-image {
+  inset: 26px 40px;
+  width: calc(100% - 80px);
+  height: calc(100% - 52px);
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+}
+
+.object-lot-media-carousel .carousel-counter {
+  top: 12px;
+  right: auto;
+  left: 12px;
+}
+
+.object-lot-media-carousel > .object-lot-thumbnail-zone {
+  position: static;
+  display: block;
+  height: auto;
+  pointer-events: auto;
+}
+
+.object-lot-media-carousel > .object-lot-thumbnail-zone::before {
+  display: none;
+}
+
+.object-lot-media-carousel > .object-lot-thumbnail-zone .carousel-thumbnails,
+.object-lot-media-carousel > .object-lot-thumbnail-zone:hover .carousel-thumbnails,
+.object-lot-media-carousel > .object-lot-thumbnail-zone:focus-within .carousel-thumbnails {
+  position: static;
+  width: auto;
+  max-width: 100%;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 2px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.object-lot-page .object-lot-media-carousel .carousel-thumbnail {
+  width: 112px;
+  height: 74px;
+  background: #ffffff;
+  opacity: 1;
+}
+
+.object-lot-media-carousel .carousel-thumbnail img {
+  padding: 6px;
+  object-fit: contain;
+}
+
+.object-lot-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.object-lot-status-row .eyebrow {
+  margin: 0;
+}
+
+.object-lot-regular-price {
+  margin-top: 4px;
+  color: var(--catalog-ink-700);
+  font-size: 11.67px;
+  line-height: 17.5px;
+}
+
+.object-detail-hero .object-lot-facts .object-lot-fact--wide {
+  grid-column: 1 / -1;
+}
+
+.object-lot-summary-action {
+  display: grid;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
+.object-lot-summary-action .lot-workspace-action {
+  display: grid;
+  gap: 6px;
+}
+
+.object-lot-summary-action :is(.primary-button, .secondary-button) {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 13px;
+}
+
+.object-lot-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.object-lot-download-link svg {
+  width: 18px;
+  height: 18px;
+}
+
+.object-lot-context-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+}
+
+.object-lot-context-grid > :only-child {
+  grid-column: 1 / -1;
+}
+
+.object-lot-house-section,
+.object-lot-similar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.object-lot-house-overview {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+}
+
+.object-lot-house-overview--no-cover {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.object-lot-house-cover {
+  display: block;
+  width: 148px;
+  height: 104px;
+  border-radius: 15px;
+  background: var(--catalog-panel-soft);
+  object-fit: cover;
+}
+
+.object-lot-house-metro {
+  gap: 8px;
+}
+
+.object-lot-house-address {
+  margin: 0;
+  color: var(--catalog-ink-700);
+  font-size: 13px;
+}
+
+.object-lot-similar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.object-lot-similar-heading a {
+  flex: none;
+  white-space: nowrap;
+}
+
+.object-lot-similar-list {
+  display: grid;
+  margin: 0;
+  border-top: 1px solid var(--catalog-border-soft);
+  padding: 0;
+  list-style: none;
+}
+
+.object-lot-similar-list li + li {
+  border-top: 1px solid var(--catalog-border-soft);
+}
+
+.object-lot-similar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 72px;
+  color: var(--catalog-ink-900);
+  text-decoration: none;
+}
+
+.object-lot-similar-name {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.object-lot-similar-name strong {
+  font-weight: 400;
+}
+
+.object-lot-similar-name small {
+  color: var(--catalog-ink-700);
+  font-size: 11px;
+}
+
+.object-lot-similar-price {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.object-lot-similar-open {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  border: 1px solid var(--catalog-border);
+  border-radius: 12px;
+  background: var(--catalog-panel-soft);
+  padding: 0 14px;
+  font-size: 13px;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.object-lot-similar-row:is(:hover, :focus-visible) .object-lot-similar-open {
+  border-color: var(--catalog-ink-900);
+  transform: translateY(-1px);
+}
+
+.object-lot-similar-row:focus-visible {
+  outline: 2px solid var(--catalog-ink-900);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+.object-lot-similar-skeleton {
+  height: 56px;
+  margin-top: 12px;
+  border-radius: 12px;
+}
+
+#object-lots {
+  scroll-margin-top: 16px;
+}
+
 @media (max-width: 1100px) {
   .object-detail-hero {
     grid-template-columns: 1fr;
@@ -7957,6 +8011,65 @@ tr.user-row--deactivated .text-button {
 @media (max-width: 760px) {
   .object-detail-page .object-image-carousel {
     padding: 10px;
+  }
+
+  .object-lot-hero .object-lot-media-carousel {
+    grid-template-rows: minmax(300px, auto) auto;
+    padding: 10px;
+  }
+
+  .object-lot-media-carousel .object-lot-media-image {
+    inset: 12px;
+    width: calc(100% - 24px);
+    height: calc(100% - 24px);
+  }
+
+  .object-lot-page .object-lot-media-carousel .carousel-thumbnail {
+    width: 72px;
+    height: 52px;
+  }
+
+  .object-lot-context-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .object-lot-house-overview {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .object-lot-house-cover {
+    width: 96px;
+    height: 80px;
+  }
+
+  .object-lot-similar-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 12px;
+    padding: 12px 0;
+  }
+
+  .object-lot-similar-open {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .object-lot-house-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .object-lot-house-cover {
+    width: 100%;
+    height: 140px;
+  }
+
+  .object-lot-house-section .object-developer-row {
+    flex-wrap: wrap;
+  }
+
+  .object-lot-house-section .object-developer-link {
+    width: 100%;
+    justify-content: center;
   }
 
   .object-detail-page .object-image-carousel .carousel-thumbnail {
@@ -9357,26 +9470,6 @@ tr.user-row--deactivated .text-button {
     justify-content: flex-start;
   }
 
-  .object-lot-info-panel {
-    padding: 22px;
-  }
-
-  .object-lot-status-row {
-    align-items: flex-start;
-  }
-
-  .object-lot-price-summary strong {
-    font-size: 28px;
-  }
-
-  .object-lot-fact-row {
-    grid-template-columns: minmax(92px, auto) minmax(18px, 1fr) minmax(96px, auto);
-  }
-
-  .object-lot-media-panel .object-lot-media-carousel {
-    min-height: 320px;
-  }
-
   .object-detail-hero {
     min-height: 0;
   }
@@ -9384,10 +9477,6 @@ tr.user-row--deactivated .text-button {
   .object-gallery-item--cover {
     height: 320px;
     min-height: 320px;
-  }
-
-  .object-lot-facts {
-    grid-template-columns: 1fr;
   }
 
   .object-detail-actions {
@@ -9527,12 +9616,6 @@ tr.user-row--deactivated .text-button {
 .icon-action-button--danger:focus-visible {
   border-color: var(--catalog-danger, #b42318);
   color: var(--catalog-danger, #b42318);
-}
-
-.object-lot-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .lot-collection-icon-button {

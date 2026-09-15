@@ -485,8 +485,7 @@
   .catalog-map-panel,
   .detail-section,
   .object-image-carousel,
-  .object-lot-media-panel,
-  .object-lot-info-panel,
+  .object-lot-media-carousel,
   .training-telegram-strip,
   .assistant-audit-panel,
   .lot-presentations-documents-panel,
@@ -847,7 +846,6 @@
   .training-material-row,
   .training-material-create-card,
   .training-object-import-card,
-  .object-lot-split-card,
   .lot-presentations-empty,
   .project-presentations-empty
 ) {
@@ -874,7 +872,6 @@
   .feed-source-discovery-platform,
   .detail-file-list li,
   .metro-list li,
-  .object-lot-fact-row,
   .training-fact-row,
   .training-metrics > div,
   .object-feed-media-carousel-thumb
@@ -1008,6 +1005,13 @@
   background: var(--fw-primary-pressed);
   color: #ffffff;
   transform: translateY(var(--fw-press));
+}
+
+/* Lot summary CTA matches the object page «Подобрать лот»: graphite at rest in the same summary slot. */
+:root[data-app-theme="minimal-luxury"] body .object-lot-summary-action .primary-button {
+  border-color: var(--fw-text);
+  background: var(--fw-text);
+  color: #ffffff;
 }
 
 /* .fw-btn-ghost / .fw-btn-outline / .fw-select-trigger. */

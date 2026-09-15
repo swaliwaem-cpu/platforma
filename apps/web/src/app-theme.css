@@ -201,6 +201,7 @@ html[data-app-theme] :is(
   .object-detail-hero,
   .detail-section,
   .object-image-carousel,
+  .object-lot-media-carousel,
   .gallery-modal,
   .gallery-close-confirm,
   .object-feed-media-carousel,
@@ -646,7 +647,7 @@ html[data-app-theme] :is(.carousel-modal-backdrop, .object-feed-media-carousel-b
   background: var(--app-theme-gallery-backdrop);
 }
 
-html[data-app-theme] :is(.object-lot-media-panel, .object-lot-media-carousel, .object-feed-media-carousel) {
+html[data-app-theme] .object-feed-media-carousel {
   background: var(--app-theme-gallery-surface);
 }
 
