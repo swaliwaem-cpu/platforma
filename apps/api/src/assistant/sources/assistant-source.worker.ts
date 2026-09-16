@@ -40,7 +40,6 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
     if (!isAssistantSourceWorkerRunnable()) return;
     await this.runOnce();
     this.timer = setInterval(() => this.schedule(), pollIntervalMs);
-    this.timer.unref();
   }
 
   async onModuleDestroy() {
