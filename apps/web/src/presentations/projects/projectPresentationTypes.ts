@@ -62,6 +62,7 @@ export type ProjectPresentationDraft = {
   coverSubtitle: string | null;
   clientName: string | null;
   issueLabel: string | null;
+  mapTitle: string | null;
   coverImageId: string | null;
   coverFileId: string | null;
   coverFile: ObjectStoredFile | null;
@@ -143,6 +144,7 @@ export type ProjectPresentationDraftForm = {
   coverSubtitle: string;
   clientName: string;
   issueLabel: string;
+  mapTitle: string;
   coverImageId: string | null;
   coverFile: ObjectStoredFile | null;
   objects: ProjectPresentationDraftObject[];

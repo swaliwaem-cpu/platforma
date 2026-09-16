@@ -17,6 +17,10 @@ import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { createSearchContainsFilters } from '../search/search-filters';
 import {
+  loadProjectPresentationTemplate,
+  type ProjectPresentationTemplateModule,
+} from './project-presentation-template';
+import {
   PROJECT_PRESENTATION_MAX_ADVANTAGES,
   PROJECT_PRESENTATION_MAX_IMAGES,
   PROJECT_PRESENTATION_MAX_OBJECTS,
@@ -25,7 +29,7 @@ import {
   PROJECT_PRESENTATION_SNAPSHOT_VERSION,
   PROJECT_PRESENTATION_TEMPLATE_VERSION,
   ProjectPresentationSnapshotImage,
-  ProjectPresentationSnapshotV1,
+  ProjectPresentationSnapshotV2,
 } from './project-presentations.types';
 
 const objectInclude = {
@@ -43,16 +47,7 @@ const objectInclude = {
 
 const draftInclude = {
   coverFile: true,
-  owner: {
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      brokerPhone: true,
-      brokerEmail: true,
-      profilePhotoFile: { select: { id: true, checksum: true } },
-    },
-  },
+  owner: { select: { id: true, name: true, email: true } },
   objects: {
     include: { object: { include: objectInclude } },
     orderBy: { sortOrder: 'asc' },
@@ -142,6 +137,7 @@ export class ProjectPresentationsService {
         coverSubtitle: this.parseNullableString(body.coverSubtitle, 'Cover subtitle', 500),
         clientName: this.parseNullableString(body.clientName, 'Client name', 180),
         issueLabel: this.parseNullableString(body.issueLabel, 'Issue label', 180),
+        mapTitle: this.parseNullableString(body.mapTitle, 'Map title', 180),
         coverImageId: this.parseNullableUuid(body.coverImageId, 'Cover image is invalid'),
         templateVersion: PROJECT_PRESENTATION_TEMPLATE_VERSION,
       },
@@ -161,6 +157,7 @@ export class ProjectPresentationsService {
     if ('coverSubtitle' in body) data.coverSubtitle = this.parseNullableString(body.coverSubtitle, 'Cover subtitle', 500);
     if ('clientName' in body) data.clientName = this.parseNullableString(body.clientName, 'Client name', 180);
     if ('issueLabel' in body) data.issueLabel = this.parseNullableString(body.issueLabel, 'Issue label', 180);
+    if ('mapTitle' in body) data.mapTitle = this.parseNullableString(body.mapTitle, 'Map title', 180);
     let previousCustomCoverFileId: string | null = null;
     if ('coverImageId' in body) {
       const coverImageId = this.parseNullableUuid(body.coverImageId, 'Cover image is invalid');
@@ -303,6 +300,7 @@ export class ProjectPresentationsService {
     const version = this.parseVersion(body.version);
     const idempotencyKey = this.parseNullableString(body.idempotencyKey, 'Idempotency key', 80);
     const requestedTitle = this.parseNullableString(body.title, 'Document title', 180);
+    const template = await loadProjectPresentationTemplate();
     if (idempotencyKey) {
       const existing = await this.prisma.projectPresentationDocument.findUnique({
         where: { ownerUserId_idempotencyKey: { ownerUserId: actor.id, idempotencyKey } },
@@ -326,8 +324,9 @@ export class ProjectPresentationsService {
       }
       if (!draft.coverFile && !draft.coverImageId) throw new BadRequestException('Select a cover image before generation');
       if (!draft.coverFile && draft.coverImageId) this.ensureImageBelongsToDraft(draft, draft.coverImageId);
+      this.ensureDraftIsComplete(draft, template);
       const title = requestedTitle ?? draft.title;
-      const snapshot = this.createSnapshot(draft, title);
+      const snapshot = this.createSnapshot(draft, title, actor, template);
       const assets = this.collectSnapshotAssets(snapshot, draft.coverFileId);
 
       return tx.projectPresentationDocument.create({
@@ -431,12 +430,52 @@ export class ProjectPresentationsService {
     return document;
   }
 
-  private createSnapshot(draft: DraftRecord, title: string): ProjectPresentationSnapshotV1 {
+  // The generator requires everything the page layout shows: client, map title, and for every project
+  // a description, exactly four advantages and exactly three photos picked from its gallery.
+  private ensureDraftIsComplete(draft: DraftRecord, template: ProjectPresentationTemplateModule) {
+    const limits = template.PROJECT_PRESENTATION_LIMITS;
+    const requireText = (value: string | null, label: string, max: number) => {
+      const text = value?.trim() ?? '';
+      if (!text) throw new BadRequestException(`${label} is required before generation`);
+      if (text.length > max) throw new BadRequestException(`${label} is longer than ${max} characters`);
+    };
+    requireText(draft.coverTitle ?? draft.title, 'Cover title', limits.coverTitle);
+    requireText(draft.clientName, 'Client name', limits.clientName);
+    requireText(draft.mapTitle, 'Map title', limits.mapTitle);
+    if ((draft.coverSubtitle?.trim().length ?? 0) > limits.coverSubtitle) {
+      throw new BadRequestException(`Cover subtitle is longer than ${limits.coverSubtitle} characters`);
+    }
+    for (const item of draft.objects) {
+      const name = item.manualTitle ?? item.object.title;
+      requireText(name, 'Project title', 180);
+      if (item.manualDescription !== null) requireText(item.manualDescription, `Description of ${name}`, limits.description);
+      else requireText(this.cleanDescription(item.object.shortDescription ?? item.object.description), `Description of ${name}`, 2000);
+      const advantages = this.readStringArray(item.advantages).map((value) => value.trim()).filter(Boolean);
+      if (advantages.length !== limits.advantages) {
+        throw new BadRequestException(`${name} needs ${limits.advantages} advantages`);
+      }
+      if (advantages.some((value) => value.length > limits.advantage)) {
+        throw new BadRequestException(`Advantages of ${name} are longer than ${limits.advantage} characters`);
+      }
+      const imageIds = this.readStringArray(item.imageIds);
+      const galleryIds = new Set(item.object.images.map((image) => image.id));
+      if (imageIds.length !== limits.images || imageIds.some((id) => !galleryIds.has(id))) {
+        throw new BadRequestException(`${name} needs ${limits.images} photos from its gallery`);
+      }
+    }
+  }
+
+  private createSnapshot(
+    draft: DraftRecord,
+    title: string,
+    broker: AuthenticatedUser,
+    template: ProjectPresentationTemplateModule,
+  ): ProjectPresentationSnapshotV2 {
     const objects = draft.objects.map((item) => {
-      const selectedIds = this.readStringArray(item.imageIds);
-      const selectedImages = selectedIds.length
-        ? selectedIds.map((id) => item.object.images.find((image) => image.id === id)).filter(Boolean)
-        : item.object.images.slice(0, PROJECT_PRESENTATION_MAX_IMAGES);
+      const selectedImages = this.readStringArray(item.imageIds)
+        .slice(0, PROJECT_PRESENTATION_MAX_IMAGES)
+        .map((id) => item.object.images.find((image) => image.id === id))
+        .filter(Boolean);
       const images: ProjectPresentationSnapshotImage[] = selectedImages.map((image, index) => ({
         fileId: image!.fileId,
         checksum: image!.file.checksum,
@@ -447,14 +486,16 @@ export class ProjectPresentationsService {
         sourceObjectId: item.objectId,
         sortOrder: item.sortOrder,
         title: item.manualTitle ?? item.object.title,
-        description: item.manualDescription ?? this.cleanDescription(item.object.shortDescription ?? item.object.description),
+        description: template.truncateProjectPresentationDescription(
+          item.manualDescription ?? this.cleanDescription(item.object.shortDescription ?? item.object.description),
+        ),
         advantages: this.readStringArray(item.advantages),
         propertyClass: item.manualPropertyClass ?? item.object.propertyClass ?? 'Не указан',
         completion: item.manualCompletion ?? this.formatCompletion(item.object.completionYear, item.object.completionQuarter),
         price: item.manualPrice ?? this.formatPrice(item.object.feedPriceFrom ?? item.object.priceFrom),
         district: item.manualDistrict ?? item.object.primaryLocation?.name ?? 'Не указан',
         developer: item.manualDeveloper ?? item.object.developer?.name ?? 'Не указан',
-        metro: item.manualMetro ?? (item.object.metroStations.map((link) => link.metroStation.name).join(', ') || 'Не указано'),
+        metro: item.manualMetro ?? item.object.metroStations[0]?.metroStation.name ?? 'Не указано',
         latitude: this.decimalToNumber(item.object.latitude),
         longitude: this.decimalToNumber(item.object.longitude),
         images,
@@ -468,7 +509,7 @@ export class ProjectPresentationsService {
         ? { fileId: coverImage.fileId, checksum: coverImage.file.checksum, role: 'COVER', sortOrder: 0 }
         : null;
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       templateVersion: PROJECT_PRESENTATION_TEMPLATE_VERSION,
       page: { width: PROJECT_PRESENTATION_PAGE_WIDTH, height: PROJECT_PRESENTATION_PAGE_HEIGHT },
       requestedAt: new Date().toISOString(),
@@ -480,20 +521,20 @@ export class ProjectPresentationsService {
         issueLabel: draft.issueLabel ?? '',
         image: coverSnapshotImage,
       },
+      map: { title: draft.mapTitle ?? '' },
       cta: { label: '@FluffyWhite', url: 'https://t.me/FluffyWhite' },
+      // Contacts belong to the account that starts the generation, not to the draft author.
       broker: {
-        name: draft.owner.name ?? draft.owner.email,
-        phone: draft.owner.brokerPhone ?? '',
-        email: draft.owner.brokerEmail ?? draft.owner.email,
-        profilePhoto: draft.owner.profilePhotoFile
-          ? { fileId: draft.owner.profilePhotoFile.id, checksum: draft.owner.profilePhotoFile.checksum, role: 'PROJECT', sortOrder: 0 }
-          : null,
+        name: broker.name ?? broker.email,
+        phone: broker.brokerPhone ?? '',
+        email: broker.brokerEmail ?? broker.email,
+        profilePhoto: null,
       },
       objects,
     };
   }
 
-  private collectSnapshotAssets(snapshot: ProjectPresentationSnapshotV1, customCoverFileId: string | null) {
+  private collectSnapshotAssets(snapshot: ProjectPresentationSnapshotV2, customCoverFileId: string | null) {
     const assets: Array<Omit<ProjectPresentationSnapshotImage, 'role'> & { sourceObjectId: string | null; role: string }> = [];
     if (snapshot.cover.image) {
       assets.push({
@@ -544,6 +585,7 @@ export class ProjectPresentationsService {
       coverSubtitle: draft.coverSubtitle,
       clientName: draft.clientName,
       issueLabel: draft.issueLabel,
+      mapTitle: draft.mapTitle,
       coverImageId: draft.coverImageId,
       coverFileId: draft.coverFileId,
       coverFile: draft.coverFile ? this.filesService.serializeFile(draft.coverFile) : null,

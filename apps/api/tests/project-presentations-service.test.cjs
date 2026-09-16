@@ -14,6 +14,15 @@ const {
 } = require('../dist/project-presentations/project-presentations.service.js');
 
 const uuid = (number) => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
+const loadTemplate = () => import('@platforma/shared/project-presentation-template');
+const actor = {
+  id: uuid(3),
+  email: 'generator@example.com',
+  name: 'Ирина Генерирующая',
+  brokerPhone: '+7 900 000-00-03',
+  brokerEmail: 'irina@example.com',
+};
+const image = (number) => ({ id: uuid(100 + number), fileId: uuid(200 + number), file: { checksum: `checksum-${number}` } });
 
 function createContext(roleName) {
   return {
@@ -65,6 +74,9 @@ function createSnapshotDraft() {
     fileId: uuid(203),
     file: { checksum: 'checksum-third' },
   };
+  const fourthImage = image(4);
+  const fifthImage = image(5);
+  const sixthImage = image(6);
 
   return {
     id: uuid(1),
@@ -74,6 +86,7 @@ function createSnapshotDraft() {
     coverSubtitle: 'Москва, 2026',
     clientName: 'Анна',
     issueLabel: 'Персональная подборка',
+    mapTitle: 'Москва рядом с парком',
     coverImageId: secondImage.id,
     coverFileId: null,
     coverFile: null,
@@ -102,8 +115,8 @@ function createSnapshotDraft() {
         manualDistrict: 'Хамовники',
         manualDeveloper: 'Девелопер А',
         manualMetro: 'Спортивная',
-        advantages: ['Рядом с парком', 'Закрытый двор'],
-        imageIds: [secondImage.id, firstImage.id],
+        advantages: ['Рядом с парком', 'Закрытый двор', 'Школа', 'Метро'],
+        imageIds: [secondImage.id, firstImage.id, fourthImage.id],
         object: {
           status: 'PUBLISHED',
           type: 'RESIDENTIAL',
@@ -121,7 +134,7 @@ function createSnapshotDraft() {
           primaryLocation: { name: 'ЦАО' },
           developer: { name: 'Каталожный девелопер' },
           metroStations: [{ metroStation: { name: 'Лужники' } }],
-          images: [firstImage, secondImage],
+          images: [firstImage, secondImage, fourthImage],
         },
       },
       {
@@ -136,8 +149,8 @@ function createSnapshotDraft() {
         manualDistrict: null,
         manualDeveloper: null,
         manualMetro: null,
-        advantages: [],
-        imageIds: [thirdImage.id],
+        advantages: ['Парк', 'Пруд', 'Набережная', 'Рассрочка'],
+        imageIds: [thirdImage.id, fifthImage.id, sixthImage.id],
         object: {
           status: 'PUBLISHED',
           type: 'RESIDENTIAL',
@@ -154,8 +167,8 @@ function createSnapshotDraft() {
           longitude: null,
           primaryLocation: { name: 'САО' },
           developer: { name: 'Девелопер Б' },
-          metroStations: [{ metroStation: { name: 'Динамо' } }],
-          images: [thirdImage],
+          metroStations: [{ metroStation: { name: 'Динамо' } }, { metroStation: { name: 'Петровский парк' } }],
+          images: [thirdImage, fifthImage, sixthImage, image(7)],
         },
       },
     ],
@@ -233,13 +246,16 @@ test('draft object parser rejects the thirteenth project, duplicates and oversiz
   );
 });
 
-test('snapshot freezes chosen order, manual content, image order, broker and Telegram CTA', () => {
+test('snapshot freezes chosen order, manual content, image order, generating broker and Telegram CTA', async () => {
   const service = new ProjectPresentationsService({}, {});
   const draft = createSnapshotDraft();
 
-  const snapshot = service.createSnapshot(draft, 'PDF для Анны');
+  const snapshot = service.createSnapshot(draft, 'PDF для Анны', actor, await loadTemplate());
 
-  assert.equal(snapshot.schemaVersion, 1);
+  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(snapshot.templateVersion, 'project-catalog-fw-html-3x4-v3');
+  assert.deepEqual(snapshot.map, { title: 'Москва рядом с парком' });
+  assert.equal(snapshot.cover.clientName, 'Анна');
   assert.equal(snapshot.page.width / snapshot.page.height, 3 / 4);
   assert.equal(snapshot.title, 'PDF для Анны');
   assert.equal(snapshot.cover.title, 'Три проекта для жизни');
@@ -250,13 +266,15 @@ test('snapshot freezes chosen order, manual content, image order, broker and Tel
   assert.equal(snapshot.objects[0].description, 'Ручное описание первого проекта');
   assert.equal(snapshot.objects[0].latitude, 55.735);
   assert.equal(snapshot.objects[0].longitude, 37.545);
-  assert.deepEqual(snapshot.objects[0].images.map((image) => image.fileId), [uuid(202), uuid(201)]);
+  assert.deepEqual(snapshot.objects[0].images.map((image) => image.fileId), [uuid(202), uuid(201), uuid(204)]);
   assert.equal(snapshot.objects[1].title, 'Второй ЖК');
   assert.equal(snapshot.objects[1].description, 'Каталожное описание');
+  assert.equal(snapshot.objects[1].metro, 'Динамо');
+  assert.deepEqual(snapshot.objects[1].images.map((image) => image.fileId), [uuid(203), uuid(205), uuid(206)]);
   assert.deepEqual(snapshot.broker, {
-    name: 'Мария Брокер',
-    phone: '+7 999 111-22-33',
-    email: 'broker@example.com',
+    name: 'Ирина Генерирующая',
+    phone: '+7 900 000-00-03',
+    email: 'irina@example.com',
     profilePhoto: null,
   });
   assert.deepEqual(snapshot.cta, {
@@ -270,18 +288,56 @@ test('snapshot freezes chosen order, manual content, image order, broker and Tel
   assert.equal(snapshot.objects[0].images[0].checksum, 'checksum-second');
 });
 
-test('custom cover file takes priority and is marked for safe lifecycle cleanup', () => {
+test('snapshot cuts long catalog descriptions to 430 characters', async () => {
   const service = new ProjectPresentationsService({}, {});
   const draft = createSnapshotDraft();
-  draft.coverFileId = uuid(204);
-  draft.coverFile = { id: uuid(204), checksum: 'checksum-custom-cover' };
+  draft.objects[1].object.shortDescription = `<p>${'Большой зелёный квартал у воды. '.repeat(30)}</p>`;
 
-  const snapshot = service.createSnapshot(draft, 'PDF со своей обложкой');
+  const snapshot = service.createSnapshot(draft, 'PDF', actor, await loadTemplate());
+
+  assert.ok(snapshot.objects[1].description.length <= 430);
+  assert.ok(snapshot.objects[1].description.endsWith('…'));
+});
+
+test('custom cover file takes priority and is marked for safe lifecycle cleanup', async () => {
+  const service = new ProjectPresentationsService({}, {});
+  const draft = createSnapshotDraft();
+  draft.coverFileId = uuid(299);
+  draft.coverFile = { id: uuid(299), checksum: 'checksum-custom-cover' };
+
+  const snapshot = service.createSnapshot(draft, 'PDF со своей обложкой', actor, await loadTemplate());
   const assets = service.collectSnapshotAssets(snapshot, draft.coverFileId);
 
-  assert.equal(snapshot.cover.image.fileId, uuid(204));
+  assert.equal(snapshot.cover.image.fileId, uuid(299));
   assert.equal(snapshot.cover.image.checksum, 'checksum-custom-cover');
-  assert.equal(assets.find((asset) => asset.fileId === uuid(204)).role, 'CUSTOM_COVER');
+  assert.equal(assets.find((asset) => asset.fileId === uuid(299)).role, 'CUSTOM_COVER');
+});
+
+test('generation requires client, map title, four advantages and three gallery photos per project', async () => {
+  const service = new ProjectPresentationsService({}, {});
+  const template = await loadTemplate();
+  const cases = [
+    [(draft) => { draft.clientName = '  '; }, /Client name is required/],
+    [(draft) => { draft.mapTitle = null; }, /Map title is required/],
+    [(draft) => { draft.mapTitle = 'М'.repeat(61); }, /Map title is longer than 60/],
+    [(draft) => { draft.coverSubtitle = 'П'.repeat(121); }, /Cover subtitle is longer than 120/],
+    [(draft) => { draft.objects[0].advantages = ['Один', 'Два', 'Три', ' ']; }, /Первый ЖК needs 4 advantages/],
+    [(draft) => { draft.objects[0].advantages[3] = 'Д'.repeat(41); }, /longer than 40/],
+    [(draft) => { draft.objects[1].imageIds = [uuid(103), uuid(105)]; }, /Второй ЖК needs 3 photos/],
+    [(draft) => { draft.objects[1].imageIds = [uuid(103), uuid(105), uuid(199)]; }, /Второй ЖК needs 3 photos/],
+    [(draft) => { draft.objects[0].manualDescription = 'О'.repeat(431); }, /Description of Первый ЖК is longer than 430/],
+    [(draft) => { draft.objects[1].object.shortDescription = '<p> </p>'; }, /Description of Второй ЖК is required/],
+  ];
+
+  assert.doesNotThrow(() => service.ensureDraftIsComplete(createSnapshotDraft(), template));
+  for (const [mutate, message] of cases) {
+    const draft = createSnapshotDraft();
+    mutate(draft);
+    assert.throws(
+      () => service.ensureDraftIsComplete(draft, template),
+      (error) => error instanceof BadRequestException && message.test(error.message),
+    );
+  }
 });
 
 test('custom cover upload is versioned, replaces the previous file and clears catalog selection', async () => {
@@ -373,8 +429,8 @@ test('draft deletion cleans the cover returned by the atomic delete', async () =
 test('document snapshot locks the draft until the custom cover asset is linked', async () => {
   const calls = [];
   const draft = createSnapshotDraft();
-  draft.coverFileId = uuid(204);
-  draft.coverFile = { id: uuid(204), checksum: 'checksum-custom-cover' };
+  draft.coverFileId = uuid(299);
+  draft.coverFile = { id: uuid(299), checksum: 'checksum-custom-cover' };
   const tx = {
     $queryRaw: async (strings) => calls.push(['lock', strings.join('')]),
     projectPresentationDraft: {
@@ -399,16 +455,19 @@ test('document snapshot locks the draft until the custom cover asset is linked',
   const response = await service.createDocument(
     draft.id,
     { version: draft.version, title: 'Зафиксированный снимок' },
-    { id: uuid(2) },
+    actor,
   );
 
   assert.equal(response.document.id, uuid(900));
   assert.match(calls[0][1], /FOR SHARE/u);
   assert.deepEqual(calls.slice(0, 3).map(([name]) => name), ['lock', 'read-draft', 'create-document']);
   assert.equal(
-    calls[2][1].data.assets.create.find((asset) => asset.fileId === uuid(204)).role,
+    calls[2][1].data.assets.create.find((asset) => asset.fileId === uuid(299)).role,
     'CUSTOM_COVER',
   );
+  assert.equal(calls[2][1].data.ownerUserId, actor.id);
+  assert.equal(calls[2][1].data.snapshotVersion, 2);
+  assert.equal(calls[2][1].data.snapshotJson.broker.phone, actor.brokerPhone);
 });
 
 test('document history query is global for authenticated users and serializes creator and status', async () => {

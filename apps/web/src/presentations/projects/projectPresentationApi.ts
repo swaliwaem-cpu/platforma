@@ -37,6 +37,7 @@ export function updateProjectPresentationDraft(
     coverSubtitle: string | null;
     clientName: string | null;
     issueLabel: string | null;
+    mapTitle: string | null;
     coverImageId: string | null;
   },
 ) {

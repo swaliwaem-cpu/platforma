@@ -4,45 +4,43 @@ const path = require('node:path');
 const test = require('node:test');
 const sharp = require('sharp');
 
+// Automated tests never reach the external map tiles.
+process.env.PROJECT_PRESENTATIONS_MAP_ENABLED = 'false';
+
 const {
   ProjectPresentationsPdfService,
+  resolveBrowserExecutablePath,
 } = require('../dist/project-presentations/project-presentations-pdf.service.js');
+const {
+  getProjectPresentationMapConfig,
+} = require('../dist/project-presentations/project-presentations-map.js');
 const {
   PROJECT_PRESENTATION_PAGE_HEIGHT,
   PROJECT_PRESENTATION_PAGE_WIDTH,
 } = require('../dist/project-presentations/project-presentations.types.js');
 
 const rootDir = path.resolve(__dirname, '../../..');
-const logoPath = path.join(
-  rootDir,
-  'apps/api/assets/project-presentations/fluffywhite-logo-gold.png',
-);
-const displayFontPath = path.join(
-  rootDir,
-  'apps/api/assets/fonts/NotoSerifDisplay-Regular.ttf',
-);
-const pdfSourcePath = path.join(
-  rootDir,
-  'apps/api/src/project-presentations/project-presentations-pdf.service.ts',
-);
+const fontsDir = path.join(rootDir, 'packages/shared/assets/project-presentation-fonts');
+const loadTemplate = () => import('@platforma/shared/project-presentation-template');
 
 function createSnapshot(objectsCount) {
   return {
-    schemaVersion: 1,
-    templateVersion: 'project-catalog-editorial-a-3x4-v2',
+    schemaVersion: 2,
+    templateVersion: 'project-catalog-fw-html-3x4-v3',
     page: {
       width: PROJECT_PRESENTATION_PAGE_WIDTH,
       height: PROJECT_PRESENTATION_PAGE_HEIGHT,
     },
-    requestedAt: '2026-07-20T10:00:00.000Z',
+    requestedAt: '2026-09-16T10:00:00.000Z',
     title: `Подборка из ${objectsCount} ЖК`,
     cover: {
-      title: 'Лучшие проекты Москвы',
-      subtitle: 'Персональная подборка',
-      clientName: 'Анна',
-      issueLabel: 'Июль 2026',
-      image: null,
+      title: 'ТОП 12 ЖК у парков',
+      subtitle: 'Архитектура и зелёные маршруты для жизни в Москве.',
+      clientName: 'Анны',
+      issueLabel: 'Каталог 2026',
+      image: { fileId: 'cover', checksum: null, role: 'COVER', sortOrder: 0 },
     },
+    map: { title: 'Москва рядом с парком' },
     cta: {
       label: '@FluffyWhite',
       url: 'https://t.me/FluffyWhite',
@@ -67,80 +65,169 @@ function createSnapshot(objectsCount) {
       metro: 'Спортивная',
       latitude: 55.73 + index * 0.01,
       longitude: 37.55 + index * 0.01,
-      images: [],
+      images: [0, 1, 2].map((slot) => ({ fileId: `photo-${slot}`, checksum: null, role: 'PROJECT', sortOrder: slot })),
     })),
   };
+}
+
+async function createFilesService() {
+  const buffer = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#8aa1b1' } }).jpeg().toBuffer();
+  return { getContent: async () => ({ buffer }) };
 }
 
 function inspectPdf(buffer) {
   const source = buffer.toString('latin1');
   return {
-    header: source.slice(0, 8),
+    header: source.slice(0, 5),
     mediaBoxes: source.match(/\/MediaBox\s*\[0 0 [\d.]+ [\d.]+\]/g) ?? [],
     pages: source.match(/\/Type\s*\/Page\b/g) ?? [],
     source,
   };
 }
 
-test('project PDF uses a 3:4 canvas and produces exactly N + 4 pages', async () => {
+test('project PDF is printed by Chromium on a 3:4 canvas with exactly N + 4 pages', async () => {
   assert.equal(PROJECT_PRESENTATION_PAGE_WIDTH / PROJECT_PRESENTATION_PAGE_HEIGHT, 3 / 4);
+  assert.ok(resolveBrowserExecutablePath(), 'a Chromium executable is required to print project presentations');
+  const filesService = await createFilesService();
 
   for (const objectsCount of [1, 12]) {
     const progress = [];
-    const service = new ProjectPresentationsPdfService({});
-    const buffer = await service.generate(
+    const buffer = await new ProjectPresentationsPdfService(filesService).generate(
       createSnapshot(objectsCount),
       async (value) => progress.push(value),
     );
     const inspected = inspectPdf(buffer);
     const expectedPages = objectsCount + 4;
 
-    assert.equal(inspected.header, '%PDF-1.3');
+    assert.equal(inspected.header, '%PDF-');
     assert.equal(inspected.pages.length, expectedPages);
     assert.equal(inspected.mediaBoxes.length, expectedPages);
-    assert.ok(
-      inspected.mediaBoxes.every(
-        (entry) => entry === `/MediaBox [0 0 ${PROJECT_PRESENTATION_PAGE_WIDTH} ${PROJECT_PRESENTATION_PAGE_HEIGHT}]`,
-      ),
-    );
+    assert.ok(inspected.mediaBoxes.every((entry) => entry === '/MediaBox [0 0 540 720]'));
     assert.equal(progress.at(-1), 99);
     assert.ok(progress.every((value, index) => index === 0 || value >= progress[index - 1]));
   }
 });
 
-test('project PDF embeds clickable FluffyWhite Telegram links', async () => {
-  const service = new ProjectPresentationsPdfService({});
-  const buffer = await service.generate(createSnapshot(1));
+test('project PDF links to FluffyWhite Telegram and dials the generating broker', async () => {
+  const buffer = await new ProjectPresentationsPdfService(await createFilesService()).generate(createSnapshot(1));
   const source = buffer.toString('latin1');
-  const telegramLinks = source.match(/https:\/\/t\.me\/FluffyWhite/g) ?? [];
 
-  assert.ok(telegramLinks.length >= 3, `expected at least 3 Telegram links, received ${telegramLinks.length}`);
-  assert.match(fs.readFileSync(pdfSourcePath, 'utf8'), /УЗНАТЬ ПОДРОБНОСТИ[\s\S]*snapshot\.cta\.url/);
+  assert.ok((source.match(/https:\/\/t\.me\/FluffyWhite/g) ?? []).length >= 3);
+  assert.match(source, /tel:\+79991112233/);
 });
 
-test('editorial map keeps legacy snapshots without coordinates renderable', async () => {
-  const snapshot = createSnapshot(2);
+test('template formats Russian broker phones and keeps other numbers as entered', async () => {
+  const template = await loadTemplate();
+  const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
+  const render = (phone) => template.renderProjectPresentationHtml(
+    { cover: { title: 'T', subtitle: '', clientName: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [], contacts: { phone, ctaUrl: 'https://t.me/FluffyWhite' } },
+    { fontUrls, pageKeys: ['final'] },
+  );
+
+  assert.match(render('89087040688'), /href="tel:\+79087040688"[^>]*>\+7 \(908\) 704-06-88</);
+  assert.match(render('+7 999 111-22-33'), />\+7 \(999\) 111-22-33</);
+  assert.match(render('+44 20 7946 0958'), />\+44 20 7946 0958</);
+  assert.match(render('   '), />\+7 \(495\) 492-48-58</);
+});
+
+test('legacy v1 snapshots without coordinates, map title or photos stay renderable', async () => {
+  const snapshot = { ...createSnapshot(2), schemaVersion: 1 };
+  delete snapshot.map;
+  snapshot.cover.image = null;
   for (const object of snapshot.objects) {
     delete object.latitude;
     delete object.longitude;
+    object.images = [];
+    object.advantages = ['Только одно'];
   }
+  const failingFiles = { getContent: async () => { throw new Error('missing'); } };
 
-  const buffer = await new ProjectPresentationsPdfService({}).generate(snapshot);
+  const buffer = await new ProjectPresentationsPdfService(failingFiles).generate(snapshot);
   assert.equal(inspectPdf(buffer).pages.length, 6);
 });
 
-test('editorial template embeds the FluffyWhite logo and local Noto Serif Display font', async () => {
-  const logoBuffer = fs.readFileSync(logoPath);
-  const metadata = await sharp(logoBuffer).metadata();
-  const source = fs.readFileSync(pdfSourcePath, 'utf8');
+test('template renders the approved page order, escapes user text and keeps placeholders for socials', async () => {
+  const template = await loadTemplate();
+  const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
+  const model = {
+    cover: { title: '<script>alert(1)</script>', subtitle: 'Подзаголовок', clientName: 'Анны', issueLabel: 'Каталог 2026', imageSrc: null },
+    map: { title: 'Москва рядом с парком', imageSrc: 'https://example.test/map.jpg', markers: [{ x: 10, y: 20 }] },
+    projects: [{
+      key: 'p1',
+      title: 'КОД Сокольники',
+      description: 'Описание',
+      price: 'от 421 200 300 ₽',
+      propertyClass: 'Бизнес',
+      metro: 'Сокольники',
+      advantages: ['Один', 'Два', 'Три', 'Четыре', 'Лишнее'],
+      imageSrcs: [null, null, null],
+    }],
+    contacts: { phone: '', ctaUrl: 'https://t.me/FluffyWhite' },
+  };
 
-  assert.deepEqual([...logoBuffer.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
-  assert.equal(metadata.format, 'png');
-  assert.ok((metadata.width ?? 0) >= 200);
-  assert.ok((metadata.height ?? 0) >= 200);
-  assert.ok(logoBuffer.length > 1_000);
-  assert.ok(fs.statSync(displayFontPath).size > 100_000);
-  assert.match(source, /resolveAsset\('fonts\/NotoSerifDisplay-Regular\.ttf'\)/);
-  assert.match(source, /resolveAsset\('project-presentations\/fluffywhite-logo-gold\.png'\)/);
-  assert.match(source, /registerFont\('NotoSerifDisplay'/);
+  const html = template.renderProjectPresentationHtml(model, { fontUrls });
+  const pages = [...html.matchAll(/data-page="([^"]+)"/g)].map((match) => match[1]);
+
+  assert.deepEqual(pages, template.getProjectPresentationPageKeys(['p1']));
+  assert.deepEqual(pages, ['cover', 'map', 'p1', 'company', 'final']);
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /Подготовлено для <b>Анны<\/b>/);
+  assert.match(html, /<span class="fw-facts__from">от<\/span><strong> 421 200 300 ₽<\/strong>/);
+  assert.equal((html.match(/class="fw-facts__number"/g) ?? []).length, 4);
+  assert.doesNotMatch(html, /OpenStreetMap/);
+  assert.match(html, /class="fw-map__marker" style="left:10px;top:20px"/);
+  assert.match(html, /<a href="https:\/\/t\.me\/FluffyWhite" class="fw-social">/);
+  assert.match(html, /<span class="fw-social"><span>Instagram<\/span>/);
+  assert.match(html, /<span class="fw-social"><span>YouTube<\/span>/);
+  assert.match(html, /href="tel:\+74954924858"/);
+  assert.match(html, /font-kerning:none!important/);
+  for (const file of template.PROJECT_PRESENTATION_FONT_FILES) assert.ok(html.includes(`/fonts/${file}`));
+
+  const coverOnly = template.renderProjectPresentationHtml(model, { fontUrls, pageKeys: ['cover'] });
+  assert.deepEqual([...coverOnly.matchAll(/data-page="([^"]+)"/g)].map((match) => match[1]), ['cover']);
+});
+
+test('description is cut to 430 characters on a word boundary and markers fit the map frame', async () => {
+  const template = await loadTemplate();
+  const long = `${'Квартал у парка с набережной '.repeat(20)}конец`;
+  const cut = template.truncateProjectPresentationDescription(long);
+
+  assert.equal(template.PROJECT_PRESENTATION_LIMITS.description, 430);
+  assert.ok(cut.length <= 430);
+  assert.ok(cut.endsWith('…'));
+  assert.ok(long.startsWith(cut.slice(0, -1)));
+  assert.match(cut, /\S…$/);
+  assert.equal(template.truncateProjectPresentationDescription('  Коротко   и ясно '), 'Коротко и ясно');
+
+  const markers = template.getProjectPresentationFallbackMarkers([
+    { latitude: 55.79, longitude: 37.68 },
+    { latitude: null, longitude: 37.6 },
+    { latitude: 55.7, longitude: 37.5 },
+  ]);
+  assert.equal(markers.length, 2);
+  for (const { x, y } of markers) {
+    assert.ok(x >= 0 && x <= template.PROJECT_PRESENTATION_MAP_SIZE.width);
+    assert.ok(y >= 0 && y <= template.PROJECT_PRESENTATION_MAP_SIZE.height);
+  }
+});
+
+test('reference fonts are bundled with their OFL licenses and runtime settings have safe defaults', async () => {
+  const template = await loadTemplate();
+  for (const file of template.PROJECT_PRESENTATION_FONT_FILES) {
+    const buffer = fs.readFileSync(path.join(fontsDir, file));
+    assert.equal(buffer.subarray(0, 4).toString('latin1'), 'wOF2', file);
+    assert.ok(buffer.length > 20_000, file);
+  }
+  for (const license of ['Involve-OFL.txt', 'Inter-OFL.txt', 'Lora-OFL.txt']) {
+    assert.match(fs.readFileSync(path.join(fontsDir, license), 'utf8'), /SIL OPEN FONT LICENSE/i);
+  }
+
+  assert.equal(resolveBrowserExecutablePath({ PROJECT_PRESENTATIONS_BROWSER_EXECUTABLE_PATH: '/opt/chromium' }), '/opt/chromium');
+  assert.deepEqual(getProjectPresentationMapConfig({}), {
+    enabled: true,
+    styleUrl: 'https://tiles.openfreemap.org/styles/liberty',
+    timeoutMs: 30_000,
+  });
+  assert.equal(getProjectPresentationMapConfig({ PROJECT_PRESENTATIONS_MAP_ENABLED: 'false' }).enabled, false);
 });

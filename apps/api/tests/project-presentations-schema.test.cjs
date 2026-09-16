@@ -16,6 +16,9 @@ const migration = readProjectFile(
 const customCoverMigration = readProjectFile(
   'apps/api/prisma/migrations/20260721120000_add_project_presentation_custom_cover/migration.sql',
 );
+const mapTitleMigration = readProjectFile(
+  'apps/api/prisma/migrations/20260916180000_add_project_presentation_map_title/migration.sql',
+);
 const appModule = readProjectFile('apps/api/src/app.module.ts');
 const moduleSource = readProjectFile(
   'apps/api/src/project-presentations/project-presentations.module.ts',
@@ -223,6 +226,17 @@ test('contracts fix the 12-object limit, 3:4 page, ordered snapshot and Telegram
     service,
     /cta: \{ label: '@FluffyWhite', url: 'https:\/\/t\.me\/FluffyWhite' \}/,
   );
+});
+
+test('drafts store the map page title through an additive migration', () => {
+  assert.match(schema, /mapTitle\s+String\?\s+@map\("map_title"\) @db\.VarChar\(180\)/);
+  assert.equal(
+    mapTitleMigration.trim(),
+    '-- AlterTable\nALTER TABLE "project_presentation_drafts" ADD COLUMN "map_title" VARCHAR(180);',
+  );
+  assert.match(service, /if \('mapTitle' in body\) data\.mapTitle = this\.parseNullableString\(body\.mapTitle, 'Map title', 180\)/);
+  assert.match(service, /mapTitle: draft\.mapTitle,/);
+  assert.match(types, /isProjectPresentationSnapshot[\s\S]*schemaVersion === 1 \|\| snapshot\.schemaVersion === 2/);
 });
 
 test('worker has recoverable status transitions and bounded retries', () => {

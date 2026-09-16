@@ -58,7 +58,11 @@ import {
   createDraftObject,
   createProjectPresentationForm,
   findProjectImage,
+  getProjectObjectValidationIssues,
+  projectPresentationCoverIssuePaths,
+  projectPresentationLimits,
   reorderDraftObjects,
+  resolveProjectDescription,
   toDraftObjectInputs,
   validateProjectPresentationForm,
 } from './projectPresentationState';
@@ -227,6 +231,7 @@ function ExistingProjectPresentationEditor({
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
+  const [blockedStepMessage, setBlockedStepMessage] = useState<string | null>(null);
   const draftRef = useRef<ProjectPresentationDraft | null>(null);
   const formRef = useRef<ProjectPresentationDraftForm | null>(null);
   const revisionRef = useRef(0);
@@ -362,6 +367,7 @@ function ExistingProjectPresentationEditor({
       setSaveError(null);
       return nextForm;
     });
+    setBlockedStepMessage(null);
   }
 
   async function persistDraft(): Promise<ProjectPresentationDraft | null> {
@@ -393,6 +399,7 @@ function ExistingProjectPresentationEditor({
           coverSubtitle: normalizeOptionalText(snapshot.coverSubtitle),
           clientName: normalizeOptionalText(snapshot.clientName),
           issueLabel: normalizeOptionalText(snapshot.issueLabel),
+          mapTitle: normalizeOptionalText(snapshot.mapTitle),
           coverImageId: snapshot.coverImageId,
         });
         draftRef.current = headerResponse.draft;
@@ -648,6 +655,7 @@ function ExistingProjectPresentationEditor({
 
   function activateStep(step: EditorStepId, focusContent = false) {
     setActiveStep(step);
+    setBlockedStepMessage(null);
 
     if (step === 'cards' && !expandedObjectId) {
       setExpandedObjectId(formRef.current?.objects[0]?.objectId ?? null);
@@ -703,9 +711,8 @@ function ExistingProjectPresentationEditor({
     : imagePickerItem?.object.images ?? [];
   const allValidationIssues = validateProjectPresentationForm(form);
   const cardValidationIssues = allValidationIssues.filter((issue) => issue.path.startsWith('objects.'));
-  const coverValidationIssues = allValidationIssues.filter((issue) => (
-    issue.path === 'title' || issue.path === 'coverTitle' || issue.path === 'coverImageId'
-  ));
+  const coverValidationIssues = allValidationIssues.filter((issue) => projectPresentationCoverIssuePaths.has(issue.path));
+  const objectsValidationIssues = allValidationIssues.filter((issue) => issue.path === 'objects');
   const activeStepIndex = editorSteps.findIndex((step) => step.id === activeStep);
   const completedSteps = new Set<EditorStepId>();
 
@@ -732,6 +739,27 @@ function ExistingProjectPresentationEditor({
       : 'cover';
   const previousStep = editorSteps[activeStepIndex - 1] ?? null;
   const nextStep = editorSteps[activeStepIndex + 1] ?? null;
+  const stepIssues: Record<EditorStepId, ProjectPresentationValidationIssue[]> = {
+    objects: objectsValidationIssues,
+    cards: cardValidationIssues,
+    cover: coverValidationIssues,
+    review: allValidationIssues,
+  };
+
+  // Moving forward is allowed only when every previous step is complete; otherwise the first gap is opened.
+  function requestStep(step: EditorStepId) {
+    const targetIndex = editorSteps.findIndex((item) => item.id === step);
+    const blockingStep = editorSteps.slice(0, targetIndex).find((item) => !completedSteps.has(item.id));
+
+    if (!blockingStep) {
+      activateStep(step, true);
+      return;
+    }
+
+    const issue = stepIssues[blockingStep.id][0];
+    openValidationIssue(issue);
+    setBlockedStepMessage(issue ? `Чтобы продолжить: ${issue.message.charAt(0).toLowerCase()}${issue.message.slice(1)}` : null);
+  }
 
   return (
     <div className="project-presentations-page project-presentation-editor">
@@ -772,7 +800,7 @@ function ExistingProjectPresentationEditor({
       <EditorStepper
         activeStep={activeStep}
         completedSteps={completedSteps}
-        onStepChange={(step) => activateStep(step, true)}
+        onStepChange={requestStep}
       />
 
       <div className="project-presentation-editor-layout" aria-busy={isCoverUploading}>
@@ -858,7 +886,7 @@ function ExistingProjectPresentationEditor({
             activeStep={activeStep}
             completedSteps={completedSteps}
             form={form}
-            onStepChange={(step) => activateStep(step, true)}
+            onStepChange={requestStep}
           />
         </aside>
       </div>
@@ -874,14 +902,15 @@ function ExistingProjectPresentationEditor({
           {previousStep ? 'Назад' : 'К списку'}
         </Button>
         <div>
-          <span className="project-presentation-footer-hint">
-            {nextStep ? `Далее: ${nextStep.label.toLowerCase()}` : `${formatIssueCount(allValidationIssues.length)} перед генерацией`}
+          <span className={`project-presentation-footer-hint${blockedStepMessage ? ' is-blocked' : ''}`} role="status">
+            {blockedStepMessage
+              ?? (nextStep ? `Далее: ${nextStep.label.toLowerCase()}` : `${formatIssueCount(allValidationIssues.length)} перед генерацией`)}
           </span>
           <Button className="project-presentation-footer-preview" type="button" variant="outline" onClick={() => setIsPreviewOpen(true)}>
             <EyeIcon data-icon="inline-start" aria-hidden="true" /> Preview
           </Button>
           {nextStep ? (
-            <Button disabled={isCoverUploading} type="button" onClick={() => activateStep(nextStep.id, true)}>
+            <Button disabled={isCoverUploading} type="button" onClick={() => requestStep(nextStep.id)}>
               Продолжить <span aria-hidden="true">→</span>
             </Button>
           ) : (
@@ -900,7 +929,7 @@ function ExistingProjectPresentationEditor({
             <DialogDescription>
               {imagePickerTarget?.kind === 'cover'
                 ? 'Выберите одно фото из добавленных в презентацию ЖК.'
-                : `Выберите до ${projectPresentationMaxImages} фото. Порядок выбора будет сохранён.`}
+                : `Выберите ${projectPresentationMaxImages} фото. Первое станет большим фото страницы, второе и третье — нижними.`}
             </DialogDescription>
           </DialogHeader>
           {imagePickerImages.length ? (
@@ -909,6 +938,9 @@ function ExistingProjectPresentationEditor({
                 const isSelected = imagePickerTarget?.kind === 'cover'
                   ? form.coverImageId === image.id
                   : Boolean(imagePickerItem?.imageIds.includes(image.id));
+                const selectionOrder = imagePickerTarget?.kind === 'project'
+                  ? (imagePickerItem?.imageIds.indexOf(image.id) ?? -1) + 1
+                  : 0;
 
                 return (
                   <button
@@ -926,7 +958,8 @@ function ExistingProjectPresentationEditor({
                     }}
                   >
                     <SecureImage accessToken={accessToken || ''} alt={image.alt || 'Фото ЖК'} fileId={image.file.id} lazy variant="detail" />
-                    {isSelected ? <CheckCircle2Icon aria-hidden="true" /> : null}
+                    {selectionOrder ? <span className="project-presentation-image-order">{selectionOrder}</span> : null}
+                    {isSelected && !selectionOrder ? <CheckCircle2Icon aria-hidden="true" /> : null}
                   </button>
                 );
               })}
@@ -1261,7 +1294,7 @@ function ProjectCoverStep({
     <section className="project-presentation-step-panel project-presentation-cover-step">
       <div className="project-presentation-step-heading">
         <div className="project-presentation-step-number">03</div>
-        <div><p className="eyebrow">Персонализация</p><h3>Соберите обложку</h3><p>Заголовок, клиент и фотография первого экрана презентации.</p></div>
+        <div><p className="eyebrow">Персонализация</p><h3>Соберите обложку</h3><p>Заголовок, клиент, фото обложки и заголовок страницы с картой.</p></div>
       </div>
 
       <Card className="project-presentation-section-card">
@@ -1275,22 +1308,51 @@ function ProjectCoverStep({
             onChange={(value) => onChange((current) => ({ ...current, title: value }))}
           />
           <ProjectTextField
+            description={`Крупно на обложке, до ${projectPresentationLimits.coverTitle} символов.`}
             error={issueFor('coverTitle')}
             id="project-cover-title"
             label="Заголовок обложки"
-            maxLength={180}
-            placeholder="Лучшие жилые комплексы Москвы"
+            maxLength={projectPresentationLimits.coverTitle}
+            placeholder="ТОП 12 ЖК у парков"
             value={form.coverTitle}
             onChange={(value) => onChange((current) => ({ ...current, coverTitle: value }))}
           />
-          <ProjectTextField id="project-client-name" label="Имя клиента" maxLength={180} placeholder="Александр" value={form.clientName} onChange={(value) => onChange((current) => ({ ...current, clientName: value }))} />
-          <ProjectTextField id="project-issue-label" label="Метка выпуска" maxLength={180} placeholder="Персональная подборка · июль 2026" value={form.issueLabel} onChange={(value) => onChange((current) => ({ ...current, issueLabel: value }))} />
-          <Field className="project-presentation-field-wide">
+          <ProjectTextField
+            description="На обложке: «Подготовлено для …» — укажите в родительном падеже."
+            error={issueFor('clientName')}
+            id="project-client-name"
+            label="Имя клиента"
+            maxLength={projectPresentationLimits.clientName}
+            placeholder="Александры"
+            value={form.clientName}
+            onChange={(value) => onChange((current) => ({ ...current, clientName: value }))}
+          />
+          <ProjectTextField
+            description="Плашка в правом верхнем углу обложки."
+            id="project-issue-label"
+            label="Метка выпуска"
+            maxLength={180}
+            placeholder="Каталог 2026"
+            value={form.issueLabel}
+            onChange={(value) => onChange((current) => ({ ...current, issueLabel: value }))}
+          />
+          <ProjectTextField
+            description={`Заголовок второй страницы, над картой с объектами. До ${projectPresentationLimits.mapTitle} символов.`}
+            error={issueFor('mapTitle')}
+            id="project-map-title"
+            label="Заголовок страницы с картой"
+            maxLength={projectPresentationLimits.mapTitle}
+            placeholder="Москва рядом с парком"
+            value={form.mapTitle}
+            onChange={(value) => onChange((current) => ({ ...current, mapTitle: value }))}
+          />
+          <Field className="project-presentation-field-wide" data-invalid={Boolean(issueFor('coverSubtitle'))}>
             <FieldLabel htmlFor="project-cover-subtitle">Подзаголовок</FieldLabel>
             <textarea
+              aria-invalid={Boolean(issueFor('coverSubtitle'))}
               id="project-cover-subtitle"
-              maxLength={500}
-              placeholder="Персональная подборка с ценами и преимуществами"
+              maxLength={projectPresentationLimits.coverSubtitle}
+              placeholder="Архитектура и зелёные маршруты для жизни в Москве."
               rows={3}
               value={form.coverSubtitle}
               onChange={(event) => {
@@ -1298,7 +1360,8 @@ function ProjectCoverStep({
                 onChange((current) => ({ ...current, coverSubtitle }));
               }}
             />
-            <FieldDescription>{form.coverSubtitle.length} / 500</FieldDescription>
+            <FieldDescription>Короткий текст справа от заголовка · {form.coverSubtitle.length} / {projectPresentationLimits.coverSubtitle}</FieldDescription>
+            {issueFor('coverSubtitle') ? <FieldError>{issueFor('coverSubtitle')}</FieldError> : null}
           </Field>
 
           <Field
@@ -1362,7 +1425,7 @@ function ProjectCoverStep({
                 <ImageIcon data-icon="inline-start" aria-hidden="true" /> Выбрать из фото ЖК
               </Button>
             </div>
-            <FieldDescription>Фото будет кадрировано под вертикальную обложку 3:4. Максимальный размер — 10 МБ.</FieldDescription>
+            <FieldDescription>Фото растянется на всю ширину обложки — лучше горизонтальный кадр (примерно 3:2). Максимальный размер — 10 МБ.</FieldDescription>
             {fileValidationError || uploadError ? <FieldError>{fileValidationError || uploadError}</FieldError> : null}
             {!fileValidationError && !uploadError && issueFor('coverImageId') ? <FieldError>{issueFor('coverImageId')}</FieldError> : null}
           </Field>
@@ -1408,7 +1471,7 @@ function ProjectReviewStep({
       <div className="project-presentation-review-grid">
         <article><span>ЖИЛЫЕ КОМПЛЕКСЫ</span><strong>{form.objects.length}</strong><small>до {projectPresentationMaxObjects} объектов</small></article>
         <article><span>СТРАНИЦЫ PDF</span><strong>{form.objects.length + 4}</strong><small>формат 3:4</small></article>
-        <article><span>ПЕРСОНАЛИЗАЦИЯ</span><strong>{form.clientName || 'Без имени'}</strong><small>{form.issueLabel || 'Стандартная метка'}</small></article>
+        <article><span>ПЕРСОНАЛИЗАЦИЯ</span><strong>{form.clientName || 'Имя не указано'}</strong><small>{form.issueLabel || 'Без метки выпуска'}</small></article>
       </div>
 
       <Card className="project-presentation-structure-card">
@@ -1416,7 +1479,7 @@ function ProjectReviewStep({
         <CardContent>
           <ol>
             <li><span>01</span><div><strong>Обложка</strong><small>{form.coverTitle || 'Заголовок не заполнен'}</small></div></li>
-            <li><span>02</span><div><strong>География подборки</strong><small>Редакционная карта выбранных ЖК</small></div></li>
+            <li><span>02</span><div><strong>География подборки</strong><small>{form.mapTitle || 'Заголовок карты не заполнен'}</small></div></li>
             {form.objects.map((item, index) => <li key={item.objectId}><span>{String(index + 3).padStart(2, '0')}</span><div><strong>{item.manualTitle || item.object.title}</strong><small>{item.object.address || 'Карточка жилого комплекса'}</small></div></li>)}
             <li><span>{String(form.objects.length + 3).padStart(2, '0')}</span><div><strong>О компании</strong><small>Принципы работы FluffyWhite</small></div></li>
             <li><span>{String(form.objects.length + 4).padStart(2, '0')}</span><div><strong>Финал</strong><small>Весь путь и контакты компании</small></div></li>
@@ -1458,9 +1521,12 @@ function ProjectObjectEditor({
 }: ProjectObjectEditorProps) {
   const coverImage = item.object.images.find((image) => image.id === item.imageIds[0]) ?? item.object.images[0] ?? null;
   const objectIssues = getProjectObjectValidationIssues(item);
-  const titleError = objectIssues.find((issue) => issue.path.endsWith('.manualTitle'))?.message;
-  const descriptionError = objectIssues.find((issue) => issue.path.endsWith('.manualDescription'))?.message;
-  const resolvedDescription = item.manualDescription ?? item.object.description ?? '';
+  const issueFor = (field: string) => objectIssues.find((issue) => issue.path.endsWith(`.${field}`))?.message;
+  const titleError = issueFor('manualTitle');
+  const descriptionError = issueFor('manualDescription');
+  const advantagesError = issueFor('advantages');
+  const imagesError = issueFor('imageIds');
+  const resolvedDescription = resolveProjectDescription(item);
 
   return (
     <Card className={`project-presentation-object-card${isExpanded ? ' is-expanded' : ''}`}>
@@ -1523,28 +1589,32 @@ function ProjectObjectEditor({
             <textarea
               aria-invalid={Boolean(descriptionError)}
               id={`project-${item.objectId}-description`}
-              maxLength={2000}
+              maxLength={projectPresentationLimits.description}
               placeholder="Коротко расскажите, кому подойдёт проект и чем он выделяется."
               rows={5}
               value={resolvedDescription}
               onChange={(event) => onUpdate({ manualDescription: event.currentTarget.value })}
             />
-            <FieldDescription>{resolvedDescription.length} / 2000</FieldDescription>
+            <FieldDescription>
+              Под названием ЖК. Текст из карточки обрезается до {projectPresentationLimits.description} символов · {resolvedDescription.length} / {projectPresentationLimits.description}
+            </FieldDescription>
             {descriptionError ? <FieldError>{descriptionError}</FieldError> : null}
           </Field>
         </div>
 
         <div className="project-presentation-subsection">
           <div>
-            <strong>Преимущества</strong>
-            <span>До трёх коротких тезисов.</span>
+            <strong>Основные преимущества</strong>
+            <span>Все четыре обязательны, до {projectPresentationLimits.advantage} символов каждое.</span>
           </div>
           <div className="project-presentation-advantages-grid">
             {[0, 1, 2, 3].map((advantageIndex) => (
               <Input
+                aria-invalid={Boolean(advantagesError) && !item.advantages[advantageIndex]?.trim()}
                 aria-label={`Преимущество ${advantageIndex + 1}`}
+                id={`project-${item.objectId}-advantage-${advantageIndex}`}
                 key={advantageIndex}
-                maxLength={240}
+                maxLength={projectPresentationLimits.advantage}
                 placeholder={`${advantageIndex + 1}. Например, парк у дома`}
                 value={item.advantages[advantageIndex] ?? ''}
                 onChange={(event) => {
@@ -1555,27 +1625,26 @@ function ProjectObjectEditor({
               />
             ))}
           </div>
+          {advantagesError ? <FieldError>{advantagesError}</FieldError> : null}
         </div>
 
         <div className="project-presentation-subsection">
           <div>
             <strong>Параметры</strong>
-            <span>Значения можно переопределить только для этой презентации.</span>
+            <span>Бордовая карточка на странице ЖК. Значения из каталога можно изменить только для этой презентации.</span>
           </div>
           <div className="project-presentation-overrides-grid">
             {([
-              ['propertyClass', 'Класс'],
-              ['completion', 'Срок сдачи'],
-              ['price', 'Цена'],
-              ['district', 'Район'],
-              ['developer', 'Девелопер'],
-              ['metro', 'Метро'],
-            ] as const).map(([field, label]) => (
+              ['price', 'Стоимость', 'от 25 000 000 ₽'],
+              ['propertyClass', 'Класс', 'Бизнес'],
+              ['metro', 'Метро', 'Сокольники'],
+            ] as const).map(([field, label, placeholder]) => (
               <ProjectTextField
                 id={`project-${item.objectId}-${field}`}
                 key={field}
                 label={label}
                 maxLength={field === 'metro' ? 300 : 180}
+                placeholder={placeholder}
                 value={item[field] ?? ''}
                 onChange={(value) => onUpdate({ [field]: value })}
               />
@@ -1586,17 +1655,26 @@ function ProjectObjectEditor({
         <div className="project-presentation-subsection project-presentation-images-row">
           <div>
             <strong>Фотографии</strong>
-            <span>{item.imageIds.length} из {projectPresentationMaxImages} выбрано.</span>
+            <span>
+              Выберите из галереи ЖК ровно {projectPresentationMaxImages}: первое — большое, второе и третье — нижние.
+              {' '}{item.imageIds.length} из {projectPresentationMaxImages} выбрано.
+            </span>
           </div>
           <div className="project-presentation-selected-images">
-            {item.imageIds.map((imageId) => {
+            {item.imageIds.map((imageId, imageIndex) => {
               const image = item.object.images.find((candidate) => candidate.id === imageId);
-              return image ? <SecureImage accessToken={accessToken} alt="" fileId={image.file.id} key={image.id} lazy variant="thumbnail" /> : null;
+              return image ? (
+                <span className="project-presentation-selected-image" key={image.id}>
+                  <SecureImage accessToken={accessToken} alt="" fileId={image.file.id} lazy variant="thumbnail" />
+                  <span className="project-presentation-image-order">{imageIndex + 1}</span>
+                </span>
+              ) : null;
             })}
-            <Button type="button" variant="outline" onClick={onImages}>
+            <Button aria-invalid={Boolean(imagesError)} id={`project-${item.objectId}-images`} type="button" variant="outline" onClick={onImages}>
               <ImageIcon data-icon="inline-start" aria-hidden="true" /> Выбрать фото
             </Button>
           </div>
+          {imagesError ? <FieldError>{imagesError}</FieldError> : null}
         </div>
       </CardContent> : null}
     </Card>
@@ -1604,6 +1682,7 @@ function ProjectObjectEditor({
 }
 
 function ProjectTextField({
+  description,
   error,
   id,
   label,
@@ -1612,6 +1691,7 @@ function ProjectTextField({
   value,
   onChange,
 }: {
+  description?: string;
   error?: string;
   id: string;
   label: string;
@@ -1624,33 +1704,10 @@ function ProjectTextField({
     <Field data-invalid={Boolean(error)}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Input aria-invalid={Boolean(error)} id={id} maxLength={maxLength} placeholder={placeholder} value={value} onChange={(event) => onChange(event.currentTarget.value)} />
+      {description ? <FieldDescription>{description}</FieldDescription> : null}
       {error ? <FieldError>{error}</FieldError> : null}
     </Field>
   );
-}
-
-function getProjectObjectValidationIssues(item: ProjectPresentationDraftForm['objects'][number]) {
-  const issues: ProjectPresentationValidationIssue[] = [];
-
-  if (!(item.manualTitle ?? item.object.title).trim()) {
-    issues.push({ path: `objects.${item.objectId}.manualTitle`, message: 'Укажите название ЖК' });
-  }
-
-  if (!(item.manualDescription ?? item.object.description ?? '').trim()) {
-    issues.push({
-      path: `objects.${item.objectId}.manualDescription`,
-      message: `Добавьте описание для ${item.object.title}`,
-    });
-  }
-
-  if (item.imageIds.length > projectPresentationMaxImages) {
-    issues.push({
-      path: `objects.${item.objectId}.imageIds`,
-      message: `Для ${item.object.title} можно выбрать не больше ${projectPresentationMaxImages} фото`,
-    });
-  }
-
-  return issues;
 }
 
 function SaveIndicator({ error, state, onReload }: { error: string | null; state: SaveState; onReload: () => void }) {
@@ -1734,15 +1791,22 @@ function focusValidationIssue(issue: ProjectPresentationValidationIssue | undefi
   }
 
   const objectMatch = issue.path.match(/^objects\.([^.]+)\.([^.]+)$/u);
-  const fieldId = issue.path === 'coverImageId'
-    ? 'project-cover-image'
-    : issue.path === 'coverTitle'
-      ? 'project-cover-title'
-      : issue.path === 'title'
-        ? 'project-draft-title'
-        : objectMatch
-          ? `project-${objectMatch[1]}-${objectMatch[2] === 'manualTitle' ? 'title' : 'description'}`
-          : 'project-presentation-validation';
+  const coverFieldIds: Record<string, string> = {
+    coverImageId: 'project-cover-image',
+    coverTitle: 'project-cover-title',
+    coverSubtitle: 'project-cover-subtitle',
+    clientName: 'project-client-name',
+    mapTitle: 'project-map-title',
+    title: 'project-draft-title',
+  };
+  const objectFieldIds: Record<string, string> = {
+    manualTitle: 'title',
+    manualDescription: 'description',
+    advantages: 'advantage-0',
+    imageIds: 'images',
+  };
+  const fieldId = coverFieldIds[issue.path]
+    ?? (objectMatch ? `project-${objectMatch[1]}-${objectFieldIds[objectMatch[2] ?? ''] ?? 'title'}` : 'project-presentation-validation');
   const element = window.document.getElementById(fieldId);
 
   element?.scrollIntoView({ behavior: 'smooth', block: 'center' });

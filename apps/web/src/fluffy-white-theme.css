@@ -491,8 +491,7 @@
   .object-detail-header,
   .object-lot-header,
   .project-presentations-header,
-  .project-presentation-editor-header,
-  .project-preview-page-header
+  .project-presentation-editor-header
 ) {
   min-height: 120px;
   border: 0;
@@ -513,8 +512,7 @@
   .object-detail-header,
   .object-lot-header,
   .project-presentations-header,
-  .project-presentation-editor-header,
-  .project-preview-page-header
+  .project-presentation-editor-header
 ) :is(h1, h2) {
   color: var(--fw-ink);
   font-size: 42px;
@@ -533,8 +531,7 @@
   .object-detail-header,
   .object-lot-header,
   .project-presentations-header,
-  .project-presentation-editor-header,
-  .project-preview-page-header
+  .project-presentation-editor-header
 ) > :not(.header-actions) p:not(.eyebrow) {
   color: var(--fw-muted);
   font-size: 14px;
@@ -553,8 +550,7 @@
     .object-detail-header,
     .object-lot-header,
     .project-presentations-header,
-    .project-presentation-editor-header,
-    .project-preview-page-header
+    .project-presentation-editor-header
   ) :is(h1, h2) {
     font-size: 29px;
     overflow-wrap: anywhere;

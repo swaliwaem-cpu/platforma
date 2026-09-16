@@ -9,6 +9,8 @@ const editorSource = await readFile(new URL('../src/presentations/projects/Proje
 const previewSource = await readFile(new URL('../src/presentations/projects/ProjectPresentationPreview.tsx', import.meta.url), 'utf8');
 const stateSource = await readFile(new URL('../src/presentations/projects/projectPresentationState.ts', import.meta.url), 'utf8');
 const stylesSource = await readFile(new URL('../src/presentations/projects/projectPresentations.css', import.meta.url), 'utf8');
+const mapSnapshotSource = await readFile(new URL('../src/presentations/projects/projectPresentationMapSnapshot.ts', import.meta.url), 'utf8');
+const templateSource = await readFile(new URL('../../../packages/shared/src/project-presentation-template.mjs', import.meta.url), 'utf8');
 
 test('project presentation routes are available to every authenticated role', () => {
   assert.match(accessSource, /canAccessProjectPresentations[\s\S]*Pick<AuthUser, 'id'>[\s\S]*return Boolean\(user\);/u);
@@ -42,11 +44,15 @@ test('project editor implements versioned autosave and approved field limits', (
   assert.match(editorSource, /manualTitle/u);
   assert.match(editorSource, /manualDescription/u);
   assert.match(editorSource, /advantages/u);
-  assert.match(editorSource, /propertyClass/u);
-  assert.match(editorSource, /completion/u);
-  assert.match(editorSource, /district/u);
-  assert.match(editorSource, /developer/u);
-  assert.match(editorSource, /metro/u);
+  assert.match(editorSource, /\['price', 'Стоимость'/u);
+  assert.match(editorSource, /\['propertyClass', 'Класс'/u);
+  assert.match(editorSource, /\['metro', 'Метро'/u);
+  assert.match(editorSource, /mapTitle: normalizeOptionalText\(snapshot\.mapTitle\)/u);
+  assert.match(editorSource, /maxLength=\{projectPresentationLimits\.description\}/u);
+  assert.match(editorSource, /maxLength=\{projectPresentationLimits\.advantage\}/u);
+  for (const field of ['completion', 'district', 'developer']) {
+    assert.match(stateSource, new RegExp(`${field}: normalizeOptionalText\\(item\\.${field}\\)`, 'u'));
+  }
 });
 
 test('cover subtitle captures the input value before the deferred form update', () => {
@@ -57,8 +63,27 @@ test('cover subtitle captures the input value before the deferred form update', 
 test('project generation validates cover, project count and resolved descriptions', () => {
   assert.match(stateSource, /!form\.coverImageId && !form\.coverFile/u);
   assert.match(stateSource, /projectPresentationMaxObjects/u);
-  assert.match(stateSource, /manualDescription \?\? item\.object\.description/u);
+  assert.match(stateSource, /manualDescription \?\? truncateProjectPresentationDescription\(item\.object\.description\)/u);
   assert.match(editorSource, /openValidationIssue\(issues\[0\]\)/u);
+});
+
+test('generator requires client, map title, four advantages and three hand-picked photos', () => {
+  assert.match(stateSource, /'clientName', form\.clientName, 'Укажите имя клиента'/u);
+  assert.match(stateSource, /'mapTitle', form\.mapTitle, 'Заполните заголовок страницы с картой'/u);
+  assert.match(stateSource, /Заполните все \$\{limits\.advantages\} преимущества/u);
+  assert.match(stateSource, /item\.imageIds\.length !== limits\.images/u);
+  assert.match(stateSource, /createDraftObject[\s\S]*imageIds: \[\],/u);
+  assert.match(editorSource, /id="project-map-title"/u);
+  assert.match(editorSource, /label="Заголовок страницы с картой"/u);
+  assert.match(editorSource, /projectPresentationCoverIssuePaths\.has\(issue\.path\)/u);
+});
+
+test('continue and stepper jumps stop at the first incomplete step', () => {
+  assert.match(editorSource, /function requestStep\(step: EditorStepId\)/u);
+  assert.match(editorSource, /editorSteps\.slice\(0, targetIndex\)\.find\(\(item\) => !completedSteps\.has\(item\.id\)\)/u);
+  assert.match(editorSource, /onClick=\{\(\) => requestStep\(nextStep\.id\)\}/u);
+  assert.match(editorSource, /onStepChange=\{requestStep\}/u);
+  assert.match(editorSource, /Чтобы продолжить: /u);
 });
 
 test('custom cover upload validates 10 MB locally and keeps catalog photos as an alternative', () => {
@@ -76,14 +101,22 @@ test('custom cover upload validates 10 MB locally and keeps catalog photos as an
   assert.match(previewSource, /form\.coverFile\?\.id \?\? coverImage\?\.file\.id/u);
 });
 
-test('project preview keeps editorial 3:4 pages, company contacts and responsive sticky presentation', () => {
-  assert.match(previewSource, /kind: 'cover'/u);
-  assert.match(previewSource, /kind: 'map'/u);
-  assert.match(previewSource, /kind: 'company'/u);
-  assert.match(previewSource, /kind: 'final'/u);
+test('project preview renders the shared PDF template with the reference fonts and a live map snapshot', () => {
+  assert.match(previewSource, /renderProjectPresentationHtml\(/u);
+  assert.match(previewSource, /pageKeys: \[activePageKey\]/u);
+  assert.match(previewSource, /<iframe[\s\S]*srcDoc=\{html\}/u);
   assert.match(previewSource, /brokerPhone/u);
-  assert.match(previewSource, /fluffywhite-logo-gold\.png/u);
-  assert.match(stylesSource, /NotoSerifDisplay-Regular\.ttf/u);
+  for (const font of ['Involve-Regular', 'Involve-Medium', 'Inter-Regular', 'Inter-Medium', 'Lora-Italic']) {
+    assert.ok(previewSource.includes(`@platforma/shared/project-presentation-fonts/${font}.woff2?url`), font);
+  }
+  assert.doesNotMatch(previewSource, /fluffywhite-logo-gold\.png/u);
+  assert.doesNotMatch(stylesSource, /Noto Serif Display/u);
+  assert.match(mapSnapshotSource, /PROJECT_PRESENTATION_MAP_VIEW/u);
+  assert.match(mapSnapshotSource, /localizeOpenMapTilesLabels\(map\)/u);
+  assert.match(mapSnapshotSource, /preserveDrawingBuffer: true/u);
+  assert.match(templateSource, /Подготовлено для/u);
+  assert.doesNotMatch(templateSource, /OpenStreetMap/u);
+  assert.match(stylesSource, /\.project-preview-document\s*\{[\s\S]*transform: scale\(var\(--project-preview-scale/u);
   assert.match(stylesSource, /aspect-ratio: 3 \/ 4/u);
   assert.match(stylesSource, /position: sticky/u);
   assert.match(stylesSource, /@container \(max-width: 1180px\)/u);

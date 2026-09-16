@@ -1,5 +1,5 @@
-export const PROJECT_PRESENTATION_TEMPLATE_VERSION = 'project-catalog-editorial-a-3x4-v2';
-export const PROJECT_PRESENTATION_SNAPSHOT_VERSION = 1;
+export const PROJECT_PRESENTATION_TEMPLATE_VERSION = 'project-catalog-fw-html-3x4-v3';
+export const PROJECT_PRESENTATION_SNAPSHOT_VERSION = 2;
 export const PROJECT_PRESENTATION_PAGE_WIDTH = 540;
 export const PROJECT_PRESENTATION_PAGE_HEIGHT = 720;
 export const PROJECT_PRESENTATION_MAX_OBJECTS = 12;
@@ -56,8 +56,18 @@ export type ProjectPresentationSnapshotV1 = {
   objects: ProjectPresentationSnapshotObject[];
 };
 
-export function isProjectPresentationSnapshot(value: unknown): value is ProjectPresentationSnapshotV1 {
+// v2 adds the map page title; the broker is the user who started the generation.
+export type ProjectPresentationSnapshotV2 = Omit<ProjectPresentationSnapshotV1, 'schemaVersion'> & {
+  schemaVersion: 2;
+  map: { title: string };
+};
+
+export type ProjectPresentationSnapshot = ProjectPresentationSnapshotV1 | ProjectPresentationSnapshotV2;
+
+export function isProjectPresentationSnapshot(value: unknown): value is ProjectPresentationSnapshot {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const snapshot = value as Partial<ProjectPresentationSnapshotV1>;
-  return snapshot.schemaVersion === 1 && Array.isArray(snapshot.objects) && typeof snapshot.title === 'string';
+  const snapshot = value as Partial<ProjectPresentationSnapshot>;
+  return (snapshot.schemaVersion === 1 || snapshot.schemaVersion === 2)
+    && Array.isArray(snapshot.objects)
+    && typeof snapshot.title === 'string';
 }

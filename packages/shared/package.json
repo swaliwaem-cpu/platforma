@@ -14,7 +14,12 @@
       "types": "./src/assistant-product-submission.d.cts",
       "import": "./src/assistant-product-submission.cjs",
       "require": "./src/assistant-product-submission.cjs"
-    }
+    },
+    "./project-presentation-template": {
+      "types": "./src/project-presentation-template.d.mts",
+      "import": "./src/project-presentation-template.mjs"
+    },
+    "./project-presentation-fonts/*": "./assets/project-presentation-fonts/*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit"
