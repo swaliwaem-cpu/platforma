@@ -232,6 +232,8 @@ function ExistingProjectPresentationEditor({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [blockedStepMessage, setBlockedStepMessage] = useState<string | null>(null);
+  // One PDF at a time: repeated clicks used to queue duplicates behind a slow job.
+  const isDocumentInProgress = Boolean(document && activeDocumentStatuses.has(document.status));
   const draftRef = useRef<ProjectPresentationDraft | null>(null);
   const formRef = useRef<ProjectPresentationDraftForm | null>(null);
   const revisionRef = useRef(0);
@@ -606,7 +608,7 @@ function ExistingProjectPresentationEditor({
   }
 
   async function handleGenerate() {
-    if (!accessToken || !formRef.current || isGenerating || isCoverUploading) {
+    if (!accessToken || !formRef.current || isGenerating || isCoverUploading || isDocumentInProgress) {
       return;
     }
 
@@ -904,7 +906,11 @@ function ExistingProjectPresentationEditor({
         <div>
           <span className={`project-presentation-footer-hint${blockedStepMessage ? ' is-blocked' : ''}`} role="status">
             {blockedStepMessage
-              ?? (nextStep ? `Далее: ${nextStep.label.toLowerCase()}` : `${formatIssueCount(allValidationIssues.length)} перед генерацией`)}
+              ?? (nextStep
+                ? `Далее: ${nextStep.label.toLowerCase()}`
+                : isDocumentInProgress
+                  ? 'PDF формируется — дождитесь готовности'
+                  : `${formatIssueCount(allValidationIssues.length)} перед генерацией`)}
           </span>
           <Button className="project-presentation-footer-preview" type="button" variant="outline" onClick={() => setIsPreviewOpen(true)}>
             <EyeIcon data-icon="inline-start" aria-hidden="true" /> Preview
@@ -914,9 +920,9 @@ function ExistingProjectPresentationEditor({
               Продолжить <span aria-hidden="true">→</span>
             </Button>
           ) : (
-            <Button disabled={isGenerating || isCoverUploading || saveState === 'conflict'} type="button" onClick={() => void handleGenerate()}>
-              {isGenerating ? <LoaderCircleIcon className="project-presentation-spin" data-icon="inline-start" aria-hidden="true" /> : <FilePlus2Icon data-icon="inline-start" aria-hidden="true" />}
-              {isGenerating ? 'Формируем…' : 'Сформировать PDF'}
+            <Button disabled={isGenerating || isCoverUploading || isDocumentInProgress || saveState === 'conflict'} type="button" onClick={() => void handleGenerate()}>
+              {isGenerating || isDocumentInProgress ? <LoaderCircleIcon className="project-presentation-spin" data-icon="inline-start" aria-hidden="true" /> : <FilePlus2Icon data-icon="inline-start" aria-hidden="true" />}
+              {isGenerating || isDocumentInProgress ? 'Формируем…' : 'Сформировать PDF'}
             </Button>
           )}
         </div>

@@ -13,6 +13,7 @@ const {
 } = require('../dist/project-presentations/project-presentations-pdf.service.js');
 const {
   getProjectPresentationMapConfig,
+  renderProjectPresentationMap,
 } = require('../dist/project-presentations/project-presentations-map.js');
 const {
   PROJECT_PRESENTATION_PAGE_HEIGHT,
@@ -212,6 +213,37 @@ test('description is cut to 430 characters on a word boundary and markers fit th
   }
 });
 
+test('map rendering retries a stalled attempt on a fresh page and reports every stage', async () => {
+  const template = await loadTemplate();
+  const stages = [];
+  const retries = [];
+  let contexts = 0;
+  const failingBrowser = {
+    newContext: async () => {
+      contexts += 1;
+      return {
+        route: async () => undefined,
+        newPage: async () => { throw new Error(`stalled ${contexts}`); },
+        close: async () => undefined,
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => renderProjectPresentationMap(
+      failingBrowser,
+      template,
+      [{ latitude: 55.75, longitude: 37.61 }],
+      { enabled: true, styleUrl: 'https://example.test/style', timeoutMs: 1000, attempts: 2 },
+      { onStage: async (stage) => stages.push(stage), onRetry: (error, attempt) => retries.push([attempt, error.message]) },
+    ),
+    /stalled 2/,
+  );
+  assert.equal(contexts, 2);
+  assert.deepEqual(retries, [[1, 'stalled 1']]);
+  assert.deepEqual(stages, []);
+});
+
 test('reference fonts are bundled with their OFL licenses and runtime settings have safe defaults', async () => {
   const template = await loadTemplate();
   for (const file of template.PROJECT_PRESENTATION_FONT_FILES) {
@@ -227,7 +259,9 @@ test('reference fonts are bundled with their OFL licenses and runtime settings h
   assert.deepEqual(getProjectPresentationMapConfig({}), {
     enabled: true,
     styleUrl: 'https://tiles.openfreemap.org/styles/liberty',
-    timeoutMs: 30_000,
+    timeoutMs: 20_000,
+    attempts: 2,
   });
+  assert.equal(getProjectPresentationMapConfig({ PROJECT_PRESENTATIONS_MAP_ATTEMPTS: '0' }).attempts, 1);
   assert.equal(getProjectPresentationMapConfig({ PROJECT_PRESENTATIONS_MAP_ENABLED: 'false' }).enabled, false);
 });

@@ -27,6 +27,8 @@ type Progress = ((progress: number) => Promise<void>) | undefined;
 const assetOrigin = 'https://presentation.invalid';
 const renderTimeoutMs = 60_000;
 const imageConcurrency = 4;
+const mapProgress = { start: 60, page: 62, busyLimit: 72, map: 73 } as const;
+const mapProgressTickMs = 2_000;
 // Image boxes of the template (CSS px), rendered at 2x for print.
 const imageBoxes = {
   cover: { width: 720, height: 470 },
@@ -62,7 +64,7 @@ export class ProjectPresentationsPdfService {
     });
     try {
       await onProgress?.(60);
-      const map = await this.renderMap(browser, template, snapshot);
+      const map = await this.renderMap(browser, template, snapshot, onProgress);
       if (map) assets.set('map', { body: map.image, contentType: 'image/jpeg' });
       const mapRenderedAt = Date.now();
       await onProgress?.(75);
@@ -90,7 +92,8 @@ export class ProjectPresentationsPdfService {
       const seconds = (from: number, to: number) => ((to - from) / 1000).toFixed(1);
       this.logger.log(
         `Project presentation printed: ${snapshot.objects.length + 4} pages, images ${seconds(startedAt, imagesLoadedAt)}s, `
-          + `map ${map ? seconds(imagesLoadedAt, mapRenderedAt) : 'fallback'}s, print ${seconds(mapRenderedAt, Date.now())}s`,
+          + `map ${map ? `${seconds(imagesLoadedAt, mapRenderedAt)}s` : `fallback after ${seconds(imagesLoadedAt, mapRenderedAt)}s`}, `
+          + `print ${seconds(mapRenderedAt, Date.now())}s`,
       );
       return Buffer.from(pdf);
     } finally {
@@ -181,9 +184,21 @@ export class ProjectPresentationsPdfService {
     browser: Browser,
     template: ProjectPresentationTemplateModule,
     snapshot: ProjectPresentationSnapshot,
+    onProgress: Progress,
   ) {
     const config = getProjectPresentationMapConfig();
     if (!config.enabled) return null;
+    // The basemap is the slowest step: keep the progress (and the job heartbeat) moving while it renders.
+    let progress: number = mapProgress.start;
+    const report = async (value: number) => {
+      progress = Math.max(progress, value);
+      await onProgress?.(progress);
+    };
+    let pendingTick: Promise<void> = Promise.resolve();
+    const ticker = setInterval(() => {
+      if (progress >= mapProgress.busyLimit) return;
+      pendingTick = pendingTick.then(() => report(progress + 1)).catch(() => undefined);
+    }, mapProgressTickMs);
     const points = snapshot.objects.filter(
       (object): object is typeof object & ProjectPresentationMapPoint =>
         typeof object.latitude === 'number' && Number.isFinite(object.latitude)
@@ -195,11 +210,20 @@ export class ProjectPresentationsPdfService {
         template,
         points.map(({ latitude, longitude }) => ({ latitude, longitude })),
         config,
+        {
+          onStage: (stage) => report(mapProgress[stage]),
+          onRetry: (error, attempt) => this.logger.warn(
+            `Project presentation map attempt ${attempt} failed, retrying: ${describeError(error)}`,
+          ),
+        },
       );
     } catch (error) {
       // The PDF is still useful without the basemap: markers fall back to a plain background.
       this.logger.warn(`Project presentation map failed: ${describeError(error)}`);
       return null;
+    } finally {
+      clearInterval(ticker);
+      await pendingTick;
     }
   }
 

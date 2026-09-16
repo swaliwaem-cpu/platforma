@@ -78,6 +78,13 @@ test('generator requires client, map title, four advantages and three hand-picke
   assert.match(editorSource, /projectPresentationCoverIssuePaths\.has\(issue\.path\)/u);
 });
 
+test('generation runs one PDF at a time instead of queueing duplicates', () => {
+  assert.match(editorSource, /const isDocumentInProgress = Boolean\(document && activeDocumentStatuses\.has\(document\.status\)\)/u);
+  assert.match(editorSource, /disabled=\{isGenerating \|\| isCoverUploading \|\| isDocumentInProgress/u);
+  assert.match(editorSource, /isGenerating \|\| isCoverUploading \|\| isDocumentInProgress\) \{\s*return;/u);
+  assert.match(editorSource, /PDF формируется — дождитесь готовности/u);
+});
+
 test('continue and stepper jumps stop at the first incomplete step', () => {
   assert.match(editorSource, /function requestStep\(step: EditorStepId\)/u);
   assert.match(editorSource, /editorSteps\.slice\(0, targetIndex\)\.find\(\(item\) => !completedSteps\.has\(item\.id\)\)/u);

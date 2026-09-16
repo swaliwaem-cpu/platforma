@@ -18,16 +18,13 @@ type BrowserMapArgs = {
   view: MapView;
   timeoutMs: number;
 };
+type StyleLayer = { id: string; type: string; layout?: Record<string, unknown> };
 type BrowserMap = {
   once(event: string, listener: (event?: { error?: { message?: string } }) => void): void;
   on(event: string, listener: (event?: { error?: { message?: string } }) => void): void;
-  getStyle(): { layers: Array<{ id: string; type: string; layout?: Record<string, unknown> }> };
-  setLayoutProperty(layerId: string, name: string, value: unknown): void;
-  jumpTo(options: { center: [number, number]; zoom: number }): void;
-  fitBounds(bounds: [[number, number], [number, number]], options: Record<string, unknown>): void;
   project(point: [number, number]): { x: number; y: number };
   isStyleLoaded(): boolean;
-  triggerRepaint(): void;
+  areTilesLoaded(): boolean;
 };
 type MapLibreGlobal = { Map: new (options: Record<string, unknown>) => BrowserMap };
 
@@ -45,9 +42,19 @@ const libraryFiles = new Map([
 export function getProjectPresentationMapConfig(environment: NodeJS.ProcessEnv = process.env) {
   const enabled = environment.PROJECT_PRESENTATIONS_MAP_ENABLED?.trim().toLowerCase() !== 'false';
   const styleUrl = environment.PROJECT_PRESENTATIONS_MAP_STYLE_URL?.trim() || defaultStyleUrl;
-  const timeoutMs = Number(environment.PROJECT_PRESENTATIONS_MAP_TIMEOUT_MS) || 30_000;
-  return { enabled, styleUrl, timeoutMs };
+  // Per phase (page, style, render). A normal render takes ~6 s, so a stalled phase is retried on a fresh page.
+  const timeoutMs = Number(environment.PROJECT_PRESENTATIONS_MAP_TIMEOUT_MS) || 20_000;
+  const rawAttempts = Number.parseInt(environment.PROJECT_PRESENTATIONS_MAP_ATTEMPTS ?? '', 10);
+  const attempts = Number.isFinite(rawAttempts) ? Math.max(1, rawAttempts) : 2;
+  return { enabled, styleUrl, timeoutMs, attempts };
 }
+
+export type ProjectPresentationMapStage = 'page' | 'map';
+type MapRenderConfig = ReturnType<typeof getProjectPresentationMapConfig>;
+type MapRenderHooks = {
+  onStage?: (stage: ProjectPresentationMapStage) => Promise<void>;
+  onRetry?: (error: unknown, attempt: number) => void;
+};
 
 // Renders the OpenFreeMap style with MapLibre in the same Chromium and returns a screenshot
 // plus the pixel positions of the projects, so the template can draw crisp vector markers.
@@ -55,8 +62,28 @@ export async function renderProjectPresentationMap(
   browser: Browser,
   template: ProjectPresentationTemplateModule,
   points: ProjectPresentationMapPoint[],
-  config: { styleUrl: string; timeoutMs: number },
+  config: MapRenderConfig,
+  hooks: MapRenderHooks = {},
 ): Promise<ProjectPresentationMapSnapshot> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= config.attempts; attempt += 1) {
+    try {
+      return await renderMapOnce(browser, template, points, config, hooks);
+    } catch (error) {
+      lastError = error;
+      if (attempt < config.attempts) hooks.onRetry?.(error, attempt);
+    }
+  }
+  throw lastError;
+}
+
+async function renderMapOnce(
+  browser: Browser,
+  template: ProjectPresentationTemplateModule,
+  points: ProjectPresentationMapPoint[],
+  config: MapRenderConfig,
+  hooks: MapRenderHooks,
+) {
   const size: MapSize = template.PROJECT_PRESENTATION_MAP_SIZE;
   const libraryDir = dirname(require.resolve('maplibre-gl/dist/maplibre-gl.css'));
   const html = '<!doctype html><html><head><link rel="stylesheet" href="/maplibre/maplibre-gl.css">'
@@ -82,13 +109,14 @@ export async function renderProjectPresentationMap(
     const page = await context.newPage();
     await page.goto(`${mapOrigin}/`, { timeout: config.timeoutMs });
     await page.waitForFunction(() => 'maplibregl' in window, undefined, { timeout: config.timeoutMs });
-    const args: BrowserMapArgs = {
+    await hooks.onStage?.('page');
+    const markers = await page.evaluate(drawMapInBrowser, {
       styleUrl: config.styleUrl,
       points,
       view: template.PROJECT_PRESENTATION_MAP_VIEW,
       timeoutMs: config.timeoutMs,
-    };
-    const markers = await page.evaluate(drawMapInBrowser, args);
+    });
+    await hooks.onStage?.('map');
     const image = await page.locator('#map').screenshot({ type: 'jpeg', quality: 88, timeout: config.timeoutMs });
     return { image, markers };
   } finally {
@@ -96,55 +124,63 @@ export async function renderProjectPresentationMap(
   }
 }
 
+// Runs inside the page (serialized by Playwright). The style is localized before the map is created
+// and the camera starts on the projects, so MapLibre loads and renders the tiles in a single pass.
 async function drawMapInBrowser({ styleUrl, points, view, timeoutMs }: BrowserMapArgs) {
-  const maplibre = (window as unknown as { maplibregl: MapLibreGlobal }).maplibregl;
-  const withTimeout = <T>(promise: Promise<T>, label: string) => Promise.race([
-    promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Map ${label} timed out`)), timeoutMs)),
-  ]);
-  const map = new maplibre.Map({
-    container: 'map',
-    style: styleUrl,
-    center: view.defaultCenter,
-    zoom: view.defaultZoom,
-    interactive: false,
-    attributionControl: false,
-    fadeDuration: 0,
-    pixelRatio: 2,
-  });
-  await withTimeout(new Promise<void>((resolve, reject) => {
-    map.once('load', () => resolve());
-    map.on('error', (event) => {
-      if (!map.isStyleLoaded()) reject(new Error(event?.error?.message || 'Map style failed to load'));
-    });
-  }), 'style');
+  const deadline = <T>(promise: Promise<T>, message: string) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), timeoutMs); }),
+    ]).finally(() => clearTimeout(timer));
+  };
+  const response = await deadline(fetch(styleUrl), 'Map style request timed out');
+  if (!response.ok) throw new Error(`Map style request failed: ${response.status}`);
+  const style = await deadline(response.json() as Promise<{ layers: StyleLayer[] }>, 'Map style request timed out');
 
   // Same Russian labels as the platform map (openMapTilesLabelLocalization.ts).
   const usesLatinName = (value: unknown): boolean => typeof value === 'string'
     ? value.includes('name:latin') || value.includes('name_en')
     : Array.isArray(value) && value.some(usesLatinName);
-  for (const layer of map.getStyle().layers) {
-    if (layer.type === 'symbol' && usesLatinName(layer.layout?.['text-field'])) {
-      map.setLayoutProperty(layer.id, 'text-field', ['coalesce', ['get', 'name:ru'], ['get', 'name:nonlatin'], '']);
+  for (const layer of style.layers) {
+    if (layer.type === 'symbol' && layer.layout && usesLatinName(layer.layout['text-field'])) {
+      layer.layout['text-field'] = ['coalesce', ['get', 'name:ru'], ['get', 'name:nonlatin'], ''];
     }
   }
 
   const coordinates = points.map((point) => [point.longitude, point.latitude] as [number, number]);
-  const idle = new Promise<void>((resolve) => map.once('idle', () => resolve()));
   const [single] = coordinates;
+  const camera: Record<string, unknown> = { center: view.defaultCenter, zoom: view.defaultZoom };
   if (coordinates.length === 1 && single) {
-    map.jumpTo({ center: single, zoom: view.singlePointZoom });
+    Object.assign(camera, { center: single, zoom: view.singlePointZoom });
   } else if (coordinates.length > 1) {
     const longitudes = coordinates.map(([longitude]) => longitude);
     const latitudes = coordinates.map(([, latitude]) => latitude);
-    map.fitBounds(
-      [[Math.min(...longitudes), Math.min(...latitudes)], [Math.max(...longitudes), Math.max(...latitudes)]],
-      { padding: view.padding, maxZoom: view.maxZoom, animate: false },
-    );
+    Object.assign(camera, {
+      bounds: [[Math.min(...longitudes), Math.min(...latitudes)], [Math.max(...longitudes), Math.max(...latitudes)]],
+      fitBoundsOptions: { padding: view.padding, maxZoom: view.maxZoom },
+    });
   }
-  // Guarantees a fresh render (and an idle event) even when the camera did not move.
-  map.triggerRepaint();
-  await withTimeout(idle, 'tiles');
+
+  const maplibre = (window as unknown as { maplibregl: MapLibreGlobal }).maplibregl;
+  const map = new maplibre.Map({
+    container: 'map',
+    style,
+    ...camera,
+    interactive: false,
+    attributionControl: false,
+    fadeDuration: 0,
+    pixelRatio: 2,
+  });
+  await deadline(new Promise<void>((resolve, reject) => {
+    map.once('load', () => resolve());
+    map.on('error', (event) => {
+      if (!map.isStyleLoaded()) reject(new Error(event?.error?.message || 'Map style failed to load'));
+    });
+  }), 'Map rendering timed out');
+  if (!map.areTilesLoaded()) {
+    await deadline(new Promise<void>((resolve) => map.once('idle', () => resolve())), 'Map tiles timed out');
+  }
   return coordinates.map((coordinate) => {
     const { x, y } = map.project(coordinate);
     return { x, y };
