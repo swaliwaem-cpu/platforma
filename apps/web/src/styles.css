@@ -942,35 +942,94 @@ fieldset {
   padding-top: 14px;
 }
 
+/* Profile page, reference .fw-profile-grid: profile card next to the password card. */
 .cabinet-page {
   display: grid;
-  gap: 18px;
-  width: min(100%, 980px);
-  max-width: 980px;
-}
-
-.cabinet-page .content-panel {
+  gap: 16px;
   width: 100%;
 }
 
-.cabinet-profile-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
+.cabinet-header {
+  align-items: center;
 }
 
-.cabinet-profile-identity {
+.cabinet-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 396px;
+  gap: 16px;
+  align-items: start;
+}
+
+.cabinet-profile-card,
+.cabinet-security-card {
+  display: grid;
+  align-content: start;
+  gap: 26px;
+}
+
+.cabinet-profile-intro {
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 16px;
+  gap: 14px;
+}
+
+.cabinet-profile-name {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.cabinet-profile-name h3 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}
+
+.cabinet-profile-name p {
+  margin: 0;
+  color: var(--catalog-ink-700);
+  font-size: 14px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.cabinet-security-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.cabinet-security-icon {
+  display: grid;
+  place-items: center;
+  color: var(--catalog-ink-900);
+}
+
+.cabinet-security-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.cabinet-security-head h3 {
+  margin: 0;
+  font-size: 16.38px;
+  line-height: 25px;
+}
+
+.cabinet-security-head p {
+  margin: 4px 0 0;
+  color: var(--catalog-ink-700);
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .profile-avatar {
   display: grid;
-  width: 72px;
-  min-width: 72px;
+  width: 68px;
+  min-width: 68px;
   aspect-ratio: 1;
   overflow: hidden;
   place-items: center;
@@ -988,37 +1047,59 @@ fieldset {
   object-fit: cover;
 }
 
-.profile-form,
-.profile-photo-form {
+.profile-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.cabinet-field--wide {
+  grid-column: 1 / -1;
+}
+
+.cabinet-photo-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 10px;
   align-items: end;
-  margin-top: 24px;
 }
 
 .password-form {
   display: grid;
-  gap: 16px;
-  margin-top: 24px;
+  gap: 14px;
 }
 
-.cabinet-section-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
+.password-form .secondary-button,
+.profile-form .primary-button {
+  justify-self: start;
+}
+@media (max-width: 1100px) {
+  .cabinet-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-.cabinet-badges,
+@media (max-width: 560px) {
+  .cabinet-profile-intro {
+    flex-wrap: wrap;
+  }
+
+  .cabinet-profile-intro .role-pill {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .cabinet-profile-name {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
 .permission-chip-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.cabinet-badges {
-  justify-content: flex-end;
 }
 
 .role-pill,
@@ -1043,44 +1124,6 @@ fieldset {
   max-width: 100%;
   overflow-wrap: anywhere;
   white-space: normal;
-}
-
-.cabinet-section-list {
-  display: grid;
-  gap: 12px;
-  margin: 24px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.cabinet-section-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  border: 1px solid #e0e6ed;
-  border-radius: 6px;
-  background: #f8fafc;
-  padding: 14px;
-}
-
-.cabinet-section-main {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-}
-
-.cabinet-section-main strong {
-  color: var(--catalog-ink-900);
-  font-size: 16px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.cabinet-section-main span {
-  color: var(--catalog-ink-700);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .permission-chip-list {
@@ -9445,29 +9488,9 @@ tr.user-row--deactivated .text-button {
     gap: 6px;
   }
 
-  .cabinet-profile-header,
-  .cabinet-section-header,
-  .cabinet-section-list li {
-    align-items: stretch;
-    grid-template-columns: 1fr;
-  }
-
-  .cabinet-profile-header {
-    flex-direction: column;
-  }
-
-  .cabinet-profile-identity,
-  .cabinet-section-header {
-    flex-direction: column;
-  }
-
   .profile-form,
-  .profile-photo-form {
+  .cabinet-photo-row {
     grid-template-columns: 1fr;
-  }
-
-  .cabinet-badges {
-    justify-content: flex-start;
   }
 
   .object-detail-hero {

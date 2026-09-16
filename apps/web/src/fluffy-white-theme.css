@@ -860,6 +860,12 @@
   padding: 0;
 }
 
+/* .fw-profile-card / .fw-security-card: radius 26, 24px padding. */
+:root[data-app-theme] body :is(.cabinet-profile-card, .cabinet-security-card) {
+  border-radius: 26px;
+  padding: 24px;
+}
+
 /* .fw-admin-card: radius 24, flat at rest. */
 :root[data-app-theme] body .admin-action-card {
   border: 0;
@@ -941,7 +947,6 @@
   .empty-detail-block,
   .admin-empty-state,
   .object-layouts-cta,
-  .cabinet-section-list li,
   .training-material-row,
   .training-material-create-card,
   .training-object-import-card,

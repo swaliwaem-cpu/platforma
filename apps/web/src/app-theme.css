@@ -253,7 +253,6 @@ html[data-app-theme] .admin-empty-state {
 
 html[data-app-theme] :is(
   .admin-action-card,
-  .cabinet-section-list li,
   .role-permissions-panel,
   .registration-password-panel,
   .permission-chip--role,
@@ -463,7 +462,7 @@ html[data-app-theme] :is(.object-description, .object-content-section-text) {
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(.table-subtext, .muted-cell, .cabinet-section-main span, .admin-action-card p, .user-form-section-header p, .role-permissions-title p, .object-form-section-header p, .catalog-link-column-header p, .feed-form-section-header p, .feed-source-cell span, .feed-source-analysis-header span, .feed-source-analysis-object span, .feed-source-analysis-object code, .feed-source-discovery-platform span, .feed-source-discovery-platform code, .feed-source-analysis-summary dt, .feed-source-mappings-list span, .feed-run-date-cell span, .feed-unit-cell span, .object-feed-unit-cell span, .object-feed-media-button, .object-feed-media-empty, .object-feed-media-carousel-caption span, .feed-source-cell code, .preview-meta, .preview-detail-list span, .file-actions span, .gallery-close-confirm strong, .gallery-close-confirm span, .import-metric-cell span, .import-report-user span, .report-section-header span, .report-issue-meta dt, .detail-file-list span, .metro-list span, .detail-file-action span, .object-detail-action span, .permission-chip--role code, .map-object-card dt, .map-object-card-image--empty, .map-fallback, .map-loading) {
+html[data-app-theme] :is(.table-subtext, .muted-cell, .admin-action-card p, .user-form-section-header p, .role-permissions-title p, .object-form-section-header p, .catalog-link-column-header p, .feed-form-section-header p, .feed-source-cell span, .feed-source-analysis-header span, .feed-source-analysis-object span, .feed-source-analysis-object code, .feed-source-discovery-platform span, .feed-source-discovery-platform code, .feed-source-analysis-summary dt, .feed-source-mappings-list span, .feed-run-date-cell span, .feed-unit-cell span, .object-feed-unit-cell span, .object-feed-media-button, .object-feed-media-empty, .object-feed-media-carousel-caption span, .feed-source-cell code, .preview-meta, .preview-detail-list span, .file-actions span, .gallery-close-confirm strong, .gallery-close-confirm span, .import-metric-cell span, .import-report-user span, .report-section-header span, .report-issue-meta dt, .detail-file-list span, .metro-list span, .detail-file-action span, .object-detail-action span, .permission-chip--role code, .map-object-card dt, .map-object-card-image--empty, .map-fallback, .map-loading) {
   color: var(--app-theme-ink-700);
 }
 

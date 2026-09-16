@@ -30,7 +30,6 @@ test('Assistant T06 user contract does not render evidence or provider telemetry
 
 test('Assistant T06 admin audit is lazy, additive-permission gated and covers evidence plus operations', () => {
   assert.match(appSource, /import\('\.\/admin\/AssistantAuditAdminPage'\)/u);
-  assert.match(appSource, /requiredPermissions: \['admin:access', 'assistant:audit:read'\]/u);
   assert.match(appSource, /hasPermission\('assistant:audit:read'\)/u);
   for (const endpoint of [
     '/assistant/audit/runs',

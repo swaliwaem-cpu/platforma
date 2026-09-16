@@ -14,6 +14,7 @@ import {
   Building2,
   House,
   Layers,
+  LockIcon,
   LogOut,
   MenuIcon,
   MoonIcon,
@@ -59,14 +60,6 @@ type NavItem = {
   requiredPermissions: readonly string[];
   children?: readonly NavChildItem[];
 };
-type CabinetSection = {
-  id: string;
-  label: string;
-  group: string;
-  path: string;
-  requiredPermissions: readonly string[];
-};
-
 const ObjectsAdminPage = lazy(() =>
   import('./admin/ObjectsAdminPage').then((module) => ({
     default: module.ObjectsAdminPage,
@@ -169,79 +162,6 @@ const navItems: readonly NavItem[] = [
     ],
   },
 ];
-
-const cabinetSections = [
-  {
-    id: 'profile',
-    label: 'Профиль',
-    group: 'Кабинет',
-    path: '/cabinet',
-    requiredPermissions: [],
-  },
-  {
-    id: 'catalog',
-    label: 'Каталог объектов',
-    group: 'Каталог',
-    path: '/catalog',
-    requiredPermissions: ['objects:read'],
-  },
-  {
-    id: 'catalog-map',
-    label: 'Карта каталога',
-    group: 'Каталог',
-    path: '/catalog/map',
-    requiredPermissions: ['objects:read'],
-  },
-  {
-    id: 'presentations',
-    label: 'Подборки лотов',
-    group: 'Презентации',
-    path: '/presentations',
-    requiredPermissions: [],
-  },
-  {
-    id: 'admin-objects',
-    label: 'Управление объектами',
-    group: 'Админка',
-    path: '/admin/objects',
-    requiredPermissions: ['admin:access', 'objects:read'],
-  },
-  {
-    id: 'admin-users',
-    label: 'Пользователи',
-    group: 'Админка',
-    path: '/admin/users',
-    requiredPermissions: ['admin:access', 'users:read'],
-  },
-  {
-    id: 'admin-catalog-links',
-    label: 'Ссылки каталога',
-    group: 'Админка',
-    path: '/admin/catalog-links',
-    requiredPermissions: ['admin:access', 'objects:update'],
-  },
-  {
-    id: 'admin-feeds',
-    label: 'Фиды',
-    group: 'Админка',
-    path: '/admin/feeds',
-    requiredPermissions: ['admin:access', 'feeds:read'],
-  },
-  {
-    id: 'admin-assistant-audit',
-    label: 'Аудит ИИ-помощника',
-    group: 'Админка',
-    path: '/admin/assistant-audit',
-    requiredPermissions: ['admin:access', 'assistant:audit:read'],
-  },
-  {
-    id: 'admin-import',
-    label: 'Импорт WordPress',
-    group: 'Админка',
-    path: '/admin/import',
-    requiredPermissions: ['admin:access', 'import:preview'],
-  },
-] as const satisfies readonly CabinetSection[];
 
 function usePathname() {
   const [location, setLocation] = useState(() => readAppLocation());
@@ -636,7 +556,7 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : (
-          <CabinetHome navigate={navigate} />
+          <CabinetHome />
         )}
       </section>
       {accessToken && hasPermission('objects:read') ? (
@@ -1005,9 +925,8 @@ function isValidRegistrationPassword(password: string) {
   );
 }
 
-function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void }) {
+function CabinetHome() {
   const { accessToken, user, updateUser } = useAuth();
-  const [areSectionsVisible, setAreSectionsVisible] = useState(false);
   const [profileName, setProfileName] = useState('');
   const [brokerPhone, setBrokerPhone] = useState('');
   const [brokerEmail, setBrokerEmail] = useState('');
@@ -1032,8 +951,6 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
   if (!user) {
     return null;
   }
-
-  const availableSections = getAvailableCabinetSections(user);
 
   async function handleProfileSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1140,205 +1057,147 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
 
   return (
     <div className="cabinet-page">
-      <section className="content-panel">
-        <div className="cabinet-profile-header">
-          <div className="cabinet-profile-identity">
+      {/* Reference profile screen: page head, profile card next to the password card. */}
+      <header className="page-header cabinet-header">
+        <div>
+          <h2>Профиль</h2>
+          <p>Личные данные, контакты для презентаций и смена пароля.</p>
+        </div>
+        <span className={`status-pill status-pill--${user.status.toLowerCase()}`}>
+          {userStatusLabels[user.status]}
+        </span>
+      </header>
+
+      <div className="cabinet-grid">
+        <section className="content-panel cabinet-profile-card" aria-labelledby="cabinet-profile-title">
+          <div className="cabinet-profile-intro">
             <ProfileAvatar accessToken={accessToken} user={user} />
-            <div>
-              <p className="eyebrow">Профиль</p>
-              <h2>{user.name ?? user.email}</h2>
+            <div className="cabinet-profile-name">
+              <h3 id="cabinet-profile-title">{user.name ?? user.email}</h3>
+              <p>{user.email}</p>
             </div>
-          </div>
-          <div className="cabinet-badges" aria-label="Роль и статус">
             <span className="role-pill">{user.role.name}</span>
-            <span className={`status-pill status-pill--${user.status.toLowerCase()}`}>
-              {userStatusLabels[user.status]}
+          </div>
+
+          <form className="profile-form" onSubmit={(event) => void handleProfileSubmit(event)}>
+            <label>
+              Имя
+              <input
+                autoComplete="name"
+                name="name"
+                type="text"
+                value={profileName}
+                onChange={(event) => setProfileName(event.target.value)}
+              />
+            </label>
+
+            <label>
+              Телефон брокера
+              <input
+                autoComplete="tel"
+                name="brokerPhone"
+                placeholder="+7 999 000-00-00"
+                type="tel"
+                value={brokerPhone}
+                onChange={(event) => setBrokerPhone(event.target.value)}
+              />
+            </label>
+
+            <label className="cabinet-field--wide">
+              Почта брокера
+              <input
+                autoComplete="email"
+                name="brokerEmail"
+                placeholder="broker@example.com"
+                type="email"
+                value={brokerEmail}
+                onChange={(event) => setBrokerEmail(event.target.value)}
+              />
+            </label>
+
+            <div className="cabinet-field--wide cabinet-photo-row">
+              <label>
+                Фото профиля
+                <input
+                  key={profilePhotoFile ? 'profile-photo-selected' : 'profile-photo-empty'}
+                  accept="image/jpeg,image/png,image/webp"
+                  type="file"
+                  onChange={(event) => setProfilePhotoFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <button
+                className="secondary-button secondary-button--fit"
+                disabled={isPhotoUploading || !profilePhotoFile}
+                type="button"
+                onClick={() => void handleProfilePhotoUpload()}
+              >
+                {isPhotoUploading ? 'Загрузка' : 'Загрузить фото'}
+              </button>
+            </div>
+
+            {profileError ? <p className="form-error cabinet-field--wide">{profileError}</p> : null}
+            {profileNotice ? <p className="form-notice cabinet-field--wide">{profileNotice}</p> : null}
+
+            <button className="primary-button primary-button--fit" disabled={isProfileSubmitting} type="submit">
+              {isProfileSubmitting ? 'Сохранение' : 'Сохранить профиль'}
+            </button>
+          </form>
+        </section>
+
+        <section className="content-panel cabinet-security-card" aria-labelledby="cabinet-password-title">
+          <div className="cabinet-security-head">
+            <span className="cabinet-security-icon" aria-hidden="true">
+              <LockIcon />
+            </span>
+            <span>
+              <h3 id="cabinet-password-title">Смена пароля</h3>
+              <p>Минимум 8 символов, заглавная буква и спецсимвол.</p>
             </span>
           </div>
-        </div>
 
-        <form className="profile-form" onSubmit={(event) => void handleProfileSubmit(event)}>
-          <label>
-            Имя
-            <input
-              autoComplete="name"
-              name="name"
-              type="text"
-              value={profileName}
-              onChange={(event) => setProfileName(event.target.value)}
-            />
-          </label>
+          <form className="password-form" onSubmit={(event) => void handlePasswordSubmit(event)}>
+            <label>
+              Текущий пароль
+              <input
+                autoComplete="current-password"
+                name="current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+              />
+            </label>
 
-          <label>
-            Телефон брокера
-            <input
-              autoComplete="tel"
-              name="brokerPhone"
-              placeholder="+7 999 000-00-00"
-              type="tel"
-              value={brokerPhone}
-              onChange={(event) => setBrokerPhone(event.target.value)}
-            />
-          </label>
+            <label>
+              Новый пароль
+              <input
+                autoComplete="new-password"
+                name="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </label>
 
-          <label>
-            Почта брокера
-            <input
-              autoComplete="email"
-              name="brokerEmail"
-              placeholder="broker@example.com"
-              type="email"
-              value={brokerEmail}
-              onChange={(event) => setBrokerEmail(event.target.value)}
-            />
-          </label>
+            <label>
+              Повторите новый пароль
+              <input
+                autoComplete="new-password"
+                name="new-password-repeat"
+                type="password"
+                value={newPasswordRepeat}
+                onChange={(event) => setNewPasswordRepeat(event.target.value)}
+              />
+            </label>
 
-          <button className="primary-button primary-button--fit" disabled={isProfileSubmitting} type="submit">
-            {isProfileSubmitting ? 'Сохранение' : 'Сохранить профиль'}
-          </button>
-        </form>
+            {passwordError ? <p className="form-error">{passwordError}</p> : null}
+            {passwordNotice ? <p className="form-notice">{passwordNotice}</p> : null}
 
-        <div className="profile-photo-form">
-          <label>
-            Фото профиля
-            <input
-              key={profilePhotoFile ? 'profile-photo-selected' : 'profile-photo-empty'}
-              accept="image/jpeg,image/png,image/webp"
-              type="file"
-              onChange={(event) => setProfilePhotoFile(event.target.files?.[0] ?? null)}
-            />
-          </label>
-          <button
-            className="secondary-button secondary-button--fit"
-            disabled={isPhotoUploading || !profilePhotoFile}
-            type="button"
-            onClick={() => void handleProfilePhotoUpload()}
-          >
-            {isPhotoUploading ? 'Загрузка' : 'Загрузить фото'}
-          </button>
-        </div>
-
-        {profileError ? <p className="form-error">{profileError}</p> : null}
-        {profileNotice ? <p className="form-notice">{profileNotice}</p> : null}
-
-        <dl className="details-list">
-          <div>
-            <dt>Email</dt>
-            <dd>{user.email}</dd>
-          </div>
-          <div>
-            <dt>Телефон брокера</dt>
-            <dd>{user.brokerPhone ?? 'Не заполнен'}</dd>
-          </div>
-          <div>
-            <dt>Почта брокера</dt>
-            <dd>{user.brokerEmail ?? 'Не заполнена'}</dd>
-          </div>
-          <div>
-            <dt>Роль</dt>
-            <dd>{user.role.name}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className="content-panel">
-        <div className="cabinet-section-header">
-          <div>
-            <p className="eyebrow">Доступные разделы</p>
-            <h2>Разделы для роли</h2>
-          </div>
-
-          <button
-            aria-expanded={areSectionsVisible}
-            className="secondary-button secondary-button--fit"
-            type="button"
-            onClick={() => setAreSectionsVisible((value) => !value)}
-          >
-            {areSectionsVisible ? 'Скрыть разделы' : `Показать разделы (${availableSections.length})`}
-          </button>
-        </div>
-
-        {areSectionsVisible ? (
-          availableSections.length ? (
-            <ul className="cabinet-section-list">
-              {availableSections.map((section) => (
-                <li key={section.id}>
-                  <div className="cabinet-section-main">
-                    <strong>{section.id === 'presentations' && canAccessProjectPresentations(user) ? 'Презентации ЖК' : section.label}</strong>
-                    <span>{section.group}</span>
-                    {section.requiredPermissions.length ? (
-                      <div className="permission-chip-list" aria-label="Права">
-                        {section.requiredPermissions.map((permission) => (
-                          <span className="permission-chip" key={permission}>
-                            {permission}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <button
-                    className="secondary-button secondary-button--fit"
-                    type="button"
-                    onClick={() => navigate(getCabinetSectionPath(user, section))}
-                  >
-                    Открыть
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted-text">Для текущей роли нет доступных разделов.</p>
-          )
-        ) : null}
-      </section>
-
-      <section className="content-panel">
-        <p className="eyebrow">Безопасность</p>
-        <h2>Смена пароля</h2>
-
-        <form className="password-form" onSubmit={(event) => void handlePasswordSubmit(event)}>
-          <label>
-            Текущий пароль
-            <input
-              autoComplete="current-password"
-              name="current-password"
-              type="password"
-              value={currentPassword}
-              onChange={(event) => setCurrentPassword(event.target.value)}
-            />
-          </label>
-
-          <label>
-            Новый пароль
-            <input
-              autoComplete="new-password"
-              name="new-password"
-              type="password"
-              value={newPassword}
-              onChange={(event) => setNewPassword(event.target.value)}
-            />
-          </label>
-
-          <label>
-            Повторите новый пароль
-            <input
-              autoComplete="new-password"
-              name="new-password-repeat"
-              type="password"
-              value={newPasswordRepeat}
-              onChange={(event) => setNewPasswordRepeat(event.target.value)}
-            />
-          </label>
-
-          {passwordError ? <p className="form-error">{passwordError}</p> : null}
-          {passwordNotice ? <p className="form-notice">{passwordNotice}</p> : null}
-
-          <button className="primary-button primary-button--fit" disabled={isPasswordSubmitting} type="submit">
-            {isPasswordSubmitting ? 'Сохранение' : 'Сменить пароль'}
-          </button>
-        </form>
-      </section>
+            <button className="secondary-button secondary-button--fit" disabled={isPasswordSubmitting} type="submit">
+              {isPasswordSubmitting ? 'Сохранение' : 'Сменить пароль'}
+            </button>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1571,22 +1430,8 @@ function getNavigationPath(user: AuthUser, item: NavItem) {
     : item.path;
 }
 
-function getCabinetSectionPath(user: AuthUser, section: CabinetSection) {
-  return section.id === 'presentations' && canAccessProjectPresentations(user)
-    ? '/presentations/projects'
-    : section.path;
-}
-
 function canAccessNavigationItem(hasPermission: (permission: string) => boolean, item: Pick<NavItem, 'requiredPermissions'>) {
   return canAccessPermissions(hasPermission, item.requiredPermissions);
 }
 
-function canAccessCabinetSection(user: AuthUser, section: CabinetSection) {
-  const permissions = new Set(user.permissions);
 
-  return section.requiredPermissions.every((permission) => permissions.has(permission));
-}
-
-function getAvailableCabinetSections(user: AuthUser) {
-  return cabinetSections.filter((section) => canAccessCabinetSection(user, section));
-}

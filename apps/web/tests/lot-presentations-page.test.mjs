@@ -15,14 +15,13 @@ const dialogSource = readFileSync(resolve(currentDir, '../src/components/ui/dial
 const radioGroupSource = readFileSync(resolve(currentDir, '../src/components/ui/radio-group.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 
-test('lot presentations route is available from sidebar and cabinet navigation', () => {
+test('lot presentations route is available from the sidebar', () => {
   assert.match(appSource, /import \{ LotPresentationsPage \} from '\.\/presentations\/LotPresentationsPage';/);
   assert.match(appSource, /import \{ canAccessLotPresentations, canAccessProjectPresentations \} from '\.\/presentations\/presentationAccess';/);
   assert.match(appSource, /type AppSection = 'cabinet' \| 'catalog' \| 'presentations' \| 'training' \| 'admin';/);
   assert.match(accessSource, /export function canAccessLotPresentations\([\s\S]*Pick<AuthUser, 'id'>[\s\S]*return Boolean\(user\);/);
   assert.doesNotMatch(accessSource, /admin@fluffywhite\.moscow|localHostnames|import\.meta\.env\.DEV/);
   assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\]/);
-  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки лотов'[\s\S]*group:\s*'Презентации'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\]/);
   assert.doesNotMatch(appSource, /MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL|requiredUserEmail/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations'\)[\s\S]*\? 'presentations'/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations\/'\)/);
@@ -31,7 +30,6 @@ test('lot presentations route is available from sidebar and cabinet navigation',
     appSource,
     /navItems\.filter\([\s\S]*item\.id !== 'training' \|\| trainingEnabled[\s\S]*canAccessNavigationItem\(hasPermission, item\)/,
   );
-  assert.match(appSource, /return cabinetSections\.filter\(\(section\) => canAccessCabinetSection\(user, section\)\);/);
   assert.match(appSource, /function canAccessNavigationItem[\s\S]*return canAccessPermissions\(hasPermission, item\.requiredPermissions\);/);
 });
 
@@ -41,8 +39,7 @@ test('cabinet profile stores broker contacts used by PDFs', () => {
   assert.match(appSource, /body: JSON\.stringify\(\{[\s\S]*name: profileName,[\s\S]*brokerPhone,[\s\S]*brokerEmail,[\s\S]*\}\)/);
   assert.match(appSource, /name="brokerPhone"[\s\S]*value=\{brokerPhone\}/);
   assert.match(appSource, /name="brokerEmail"[\s\S]*value=\{brokerEmail\}/);
-  assert.match(appSource, /<dt>Телефон брокера<\/dt>[\s\S]*<dd>\{user\.brokerPhone \?\? 'Не заполнен'\}<\/dd>/);
-  assert.match(appSource, /<dt>Почта брокера<\/dt>[\s\S]*<dd>\{user\.brokerEmail \?\? 'Не заполнена'\}<\/dd>/);
+  assert.match(appSource, /<p>\{user\.email\}<\/p>/);
 });
 
 test('lot pages and feed rows expose add to workspace actions', () => {

@@ -12,7 +12,6 @@ test('admin catalog links route is registered in app routing and admin home', ()
   assert.match(appSource, /pathname\.startsWith\('\/admin\/catalog-links'\)/);
   assert.match(appSource, /<CatalogLinksAdminPage onBack=\{\(\) => navigate\('\/admin'\)\} \/>/);
   assert.match(appSource, /onOpenCatalogLinks=\{\(\) => navigate\('\/admin\/catalog-links'\)\}/);
-  assert.match(appSource, /id:\s*'admin-catalog-links'[\s\S]*label:\s*'Ссылки каталога'[\s\S]*path:\s*'\/admin\/catalog-links'[\s\S]*requiredPermissions:\s*\['admin:access', 'objects:update'\]/);
 });
 
 test('admin home exposes catalog links card for object editors', () => {
