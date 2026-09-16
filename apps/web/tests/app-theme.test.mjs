@@ -63,7 +63,6 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
     '.object-feed-status--available',
     '.multi-select-dropdown-button',
     '.feed-details dd',
-    '.feed-source-upload-button',
     '.admin-empty-state',
     '.metro-list strong',
     '.carousel-thumbnail',
@@ -87,12 +86,39 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
   );
 });
 
+test('dark theme follows the Fluffy White reference dark mode', () => {
+  const appTheme = readFileSync(resolve(srcDir, 'app-theme.css'), 'utf8');
+  const fluffyWhite = readFileSync(resolve(srcDir, 'fluffy-white-theme.css'), 'utf8');
+  const darkTokens = fluffyWhite.match(/:root\[data-app-theme="dark-premium"\] \{[\s\S]*?\n\}/)?.[0] ?? '';
+
+  // The visual layer is shared: rules are not scoped to the light theme any more.
+  assert.doesNotMatch(fluffyWhite, /:root\[data-app-theme="minimal-luxury"\] body/);
+  assert.match(fluffyWhite, /:root\[data-app-theme\] body \.app-shell aside\.sidebar\s*\{/);
+
+  // Token values read from `.fw-app.dark` of the reference.
+  assert.match(darkTokens, /--fw-panel: rgb\(42 44 46 \/ 52%\);/);
+  assert.match(darkTokens, /--fw-control: rgb\(42 44 46 \/ 52%\);/);
+  assert.match(darkTokens, /--fw-text: #f1f2f3;/);
+  assert.match(darkTokens, /--fw-muted: #999ca0;/);
+  assert.match(darkTokens, /--fw-line: rgb\(255 255 255 \/ 4\.7%\);/);
+  assert.match(darkTokens, /--fw-hover-bg: rgb\(255 255 255 \/ 10%\);/);
+  assert.match(darkTokens, /--fw-hover-line: rgb\(255 255 255 \/ 17%\);/);
+  assert.match(darkTokens, /--fw-primary-bg: #2b2e31;/);
+  assert.match(darkTokens, /--fw-menu-bg: rgb\(20 21 22 \/ 96%\);/);
+  assert.match(darkTokens, /--fw-success: #58d6a0;/);
+  assert.match(darkTokens, /linear-gradient\(135deg, #070809 0%, #121314 48%, #050607 100%\)/);
+
+  // The old navy and gold dark palette is gone.
+  assert.doesNotMatch(appTheme, /#c8a66a|#0f1720|#151b23/);
+  assert.match(appTheme, /html\[data-app-theme="dark-premium"\] \{[\s\S]*?--app-theme-ink-900: #f1f2f3;[\s\S]*?--app-theme-primary: #96989b;/);
+});
+
 test('app theme stylesheet gives galleries theme-aware backgrounds', () => {
   const styles = readFileSync(resolve(srcDir, 'app-theme.css'), 'utf8');
 
   assert.match(
     styles,
-    /html\[data-app-theme="dark-premium"\]\s*\{[\s\S]*?--app-theme-gallery-backdrop:\s*rgb\(10 15 22 \/ 88%\);[\s\S]*?--app-theme-gallery-surface:\s*#0f1720;[\s\S]*?--app-theme-gallery-stage:\s*#0b1118;[\s\S]*?\}/,
+    /html\[data-app-theme="dark-premium"\]\s*\{[\s\S]*?--app-theme-gallery-backdrop:\s*rgb\(8 9 10 \/ 94%\);[\s\S]*?--app-theme-gallery-surface:\s*var\(--app-theme-surface\);[\s\S]*?--app-theme-gallery-stage:\s*var\(--app-theme-surface-muted\);[\s\S]*?\}/,
   );
   assert.match(
     styles,

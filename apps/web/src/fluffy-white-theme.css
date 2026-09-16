@@ -1,15 +1,17 @@
 /*
- * Fluffy White — visual layer of the light theme (minimal-luxury).
+ * Fluffy White — visual layer of both themes: light (minimal-luxury) and dark (dark-premium).
  *
  * Literal port of the reference styleguide (fluffy-white-styleguide…/cabinet).
  * Every value below was read from the live reference with getComputedStyle,
- * including :hover and :active states — do not "adapt" them to other palettes.
- * The dark theme (dark-premium) is not touched by this file.
+ * including :hover and :active states, in its `.fw-app.light` and `.fw-app.dark`
+ * modes — do not "adapt" them to other palettes. Rules only use `--fw-*` tokens;
+ * each theme defines the token values, and the few places where the dark
+ * reference differs in structure (not just colour) live at the end of the file.
  *
- * Selector prefix `:root[data-app-theme="minimal-luxury"] body` has specificity
- * (0,2,1): together with the component selector it outranks the generic
- * `html[data-app-theme] :is(...)` rules from app-theme.css and the single/double
- * class rules of lazily loaded module stylesheets (training, presentations).
+ * Selector prefix `:root[data-app-theme] body` has specificity (0,2,1): together
+ * with the component selector it outranks the generic `html[data-app-theme] :is(...)`
+ * rules from app-theme.css and the single/double class rules of lazily loaded
+ * module stylesheets (training, presentations).
  */
 
 :root[data-app-theme="minimal-luxury"] {
@@ -24,10 +26,26 @@
   --fw-muted: #66635f;
   --fw-hover-bg: rgb(45 38 32 / 10%);
   --fw-hover-line: rgb(45 38 32 / 17%);
+  --fw-primary-bg: var(--fw-control);
+  --fw-primary-text: var(--fw-text);
   --fw-primary-line: rgb(0 0 0 / 20%);
   --fw-primary-hover: #383c40;
   --fw-primary-pressed: #202326;
   --fw-primary-hover-line: rgb(255 255 255 / 20%);
+  --fw-primary-hover-text: #ffffff;
+  --fw-solid: #0e0d0c;
+  --fw-solid-text: #ffffff;
+  --fw-solid-hover: #383c40;
+  --fw-solid-pressed: #202326;
+  --fw-outline-line: var(--fw-line);
+  --fw-segment-text: #111111;
+  --fw-fact-pill-bg: var(--fw-control);
+  --fw-menu-bg: rgb(250 248 245 / 96%);
+  --fw-option-bg: rgb(250 248 245 / 50%);
+  --fw-dialog-bg: var(--fw-panel);
+  --fw-orb-one: rgb(105 103 100 / 44%);
+  --fw-orb-two: rgb(105 103 100 / 24%);
+  --fw-selection: rgb(105 103 100 / 34%);
   --fw-success: #168b5e;
   --fw-success-soft: rgb(22 163 106 / 13%);
   --fw-warning: #b87300;
@@ -45,6 +63,7 @@
     inset -1px -1px 0 rgb(58 58 55 / 13%),
     0 20px 56px rgb(70 70 66 / 12%);
   --fw-lift-shadow: 0 12px 28px rgb(38 40 42 / 17%);
+  --fw-card-hover-shadow: var(--fw-lift-shadow);
   --fw-field-shadow:
     inset 0 0 0 0.5px rgb(255 255 255 / 18%),
     inset 0 1px 1px rgb(255 255 255 / 28%),
@@ -62,6 +81,11 @@
   --fw-avatar-shadow: inset 0 1px 0 rgb(255 255 255 / 82%);
   --fw-media-glass: rgb(255 255 255 / 28%);
   --fw-media-label: rgb(24 24 22 / 46%);
+  background: var(--fw-canvas) fixed;
+}
+
+/* Motion tokens shared by both themes. */
+:root[data-app-theme] {
   --fw-ease: cubic-bezier(0.22, 0.75, 0.18, 1);
   --fw-lift: -1px;
   --fw-press: 1px;
@@ -75,11 +99,86 @@
     border-color 0.24s,
     box-shadow 0.24s,
     transform 0.24s;
-  background: var(--fw-canvas) fixed;
+}
+
+/*
+ * Dark theme tokens: the reference `.fw-app.dark` — near-black gradient canvas,
+ * translucent graphite glass, light ink, white-veil hovers.
+ */
+:root[data-app-theme="dark-premium"] {
+  --fw-canvas: #08090a;
+  --fw-panel: rgb(42 44 46 / 52%);
+  --fw-control: rgb(42 44 46 / 52%);
+  --fw-control-hover: rgb(255 255 255 / 10%);
+  --fw-line: rgb(255 255 255 / 4.7%);
+  --fw-line-strong: rgb(255 255 255 / 17%);
+  --fw-ink: #f1f2f3;
+  --fw-text: #f1f2f3;
+  --fw-muted: #999ca0;
+  --fw-hover-bg: rgb(255 255 255 / 10%);
+  --fw-hover-line: rgb(255 255 255 / 17%);
+  --fw-primary-bg: #2b2e31;
+  --fw-primary-text: #ffffff;
+  --fw-primary-line: rgb(255 255 255 / 20%);
+  --fw-primary-hover: rgb(255 255 255 / 10%);
+  --fw-primary-pressed: rgb(255 255 255 / 10%);
+  --fw-primary-hover-line: rgb(255 255 255 / 17%);
+  --fw-primary-hover-text: #f1f2f3;
+  --fw-solid: #2b2e31;
+  --fw-solid-text: #ffffff;
+  --fw-solid-hover: #3a3d40;
+  --fw-solid-pressed: #232527;
+  --fw-outline-line: rgb(241 242 243 / 20%);
+  --fw-segment-text: #ffffff;
+  --fw-fact-pill-bg: transparent;
+  --fw-menu-bg: rgb(20 21 22 / 96%);
+  --fw-option-bg: transparent;
+  --fw-dialog-bg: rgb(20 21 22 / 96%);
+  --fw-orb-one: rgb(150 152 155 / 44%);
+  --fw-orb-two: rgb(150 152 155 / 24%);
+  --fw-selection: rgb(150 152 155 / 34%);
+  --fw-success: #58d6a0;
+  --fw-success-soft: rgb(88 214 160 / 12%);
+  --fw-warning: #ffc865;
+  --fw-warning-soft: rgb(255 200 101 / 12%);
+  --fw-danger: #ff718a;
+  --fw-danger-soft: rgb(255 113 138 / 12%);
+  --fw-role: #ff5c55;
+  --fw-role-soft: rgb(214 47 40 / 22%);
+  --fw-glass-shadow:
+    inset 0 0 0 0.5px rgb(211 211 207 / 7.5%),
+    inset 0 1px 1px rgb(224 224 220 / 16%),
+    inset 1px 0 2px rgb(224 224 220 / 6%),
+    inset -5px 0 12px rgb(224 224 220 / 3%),
+    inset 0 -5px 12px rgb(255 255 255 / 2%),
+    inset -1px -1px 0 rgb(0 0 0 / 38%),
+    0 22px 60px rgb(0 0 0 / 24%);
+  --fw-lift-shadow: 0 10px 20px rgb(0 0 0 / 28%);
+  --fw-card-hover-shadow: var(--fw-glass-shadow);
+  --fw-field-shadow:
+    inset 0 0 0 0.5px rgb(211 211 207 / 5.5%),
+    inset 0 1px 1px rgb(224 224 220 / 12%),
+    inset 1px 0 1px rgb(224 224 220 / 4.3%),
+    inset -4px 0 9px rgb(224 224 220 / 2.4%),
+    inset 0 -4px 9px rgb(0 0 0 / 13%),
+    inset -1px -1px 0 rgb(0 0 0 / 24%);
+  --fw-field-hover-shadow:
+    0 10px 20px rgb(0 0 0 / 28%),
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    inset 0 -1px 0 rgb(0 0 0 / 16%);
+  --fw-search-shadow: inset 0 1px 0 rgb(255 255 255 / 4.94%);
+  --fw-search-hover-shadow: var(--fw-field-hover-shadow);
+  --fw-menu-shadow: 0 20px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 8%);
+  --fw-avatar-shadow: inset 0 1px 0 rgb(255 255 255 / 8.2%);
+  background:
+    radial-gradient(circle at 14% 9%, rgb(91 93 96 / 12%), transparent 32%),
+    radial-gradient(circle at 84% 32%, rgb(47 49 51 / 11%), transparent 36%),
+    linear-gradient(135deg, #070809 0%, #121314 48%, #050607 100%);
+  background-attachment: fixed;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-app-theme="minimal-luxury"] {
+  :root[data-app-theme] {
     --fw-lift: 0px;
     --fw-press: 0px;
   }
@@ -91,13 +190,13 @@
  * shells must stay transparent to let them show through.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body,
-:root[data-app-theme="minimal-luxury"] body :is(.app-shell, .workspace, .login-shell) {
+:root[data-app-theme] body,
+:root[data-app-theme] body :is(.app-shell, .workspace, .login-shell) {
   background: transparent;
 }
 
-:root[data-app-theme="minimal-luxury"] body::before,
-:root[data-app-theme="minimal-luxury"] body::after {
+:root[data-app-theme] body::before,
+:root[data-app-theme] body::after {
   position: fixed;
   z-index: -1;
   border-radius: 50%;
@@ -107,24 +206,24 @@
   pointer-events: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body::before {
+:root[data-app-theme] body::before {
   top: -160px;
   left: -180px;
   width: 520px;
   height: 520px;
-  background: radial-gradient(circle, rgb(105 103 100 / 44%), transparent 68%);
+  background: radial-gradient(circle, var(--fw-orb-one), transparent 68%);
 }
 
-:root[data-app-theme="minimal-luxury"] body::after {
+:root[data-app-theme] body::after {
   top: 18%;
   right: -240px;
   width: 680px;
   height: 680px;
-  background: radial-gradient(circle, rgb(105 103 100 / 24%), transparent 69%);
+  background: radial-gradient(circle, var(--fw-orb-two), transparent 69%);
 }
 
-:root[data-app-theme="minimal-luxury"] body ::selection {
-  background: rgb(105 103 100 / 34%);
+:root[data-app-theme] body ::selection {
+  background: var(--fw-selection);
   color: var(--fw-text);
 }
 
@@ -132,17 +231,17 @@
  * Typography: 400 for text and controls, 500 for headings.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(h1, h2, h3, h4, h5) {
+:root[data-app-theme] body :is(h1, h2, h3, h4, h5) {
   color: var(--fw-ink);
   font-weight: 500;
   letter-spacing: 0;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.workspace, .login-shell, [role="dialog"]) :is(strong, b, dd) {
+:root[data-app-theme] body :is(.workspace, .login-shell, [role="dialog"]) :is(strong, b, dd) {
   font-weight: 500;
 }
 
-:root[data-app-theme="minimal-luxury"] body .eyebrow {
+:root[data-app-theme] body .eyebrow {
   margin-bottom: 4px;
   color: var(--fw-muted);
   font-size: 11px;
@@ -152,12 +251,12 @@
   text-transform: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.muted-text, .helper-text, .table-subtext) {
+:root[data-app-theme] body :is(.muted-text, .helper-text, .table-subtext) {
   color: var(--fw-muted);
   font-weight: 400;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(label, .toolbar-field, .catalog-link-field) {
+:root[data-app-theme] body :is(label, .toolbar-field, .catalog-link-field) {
   gap: 7px;
   color: var(--fw-muted);
   font-size: 11px;
@@ -167,12 +266,12 @@
   text-transform: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body dt {
+:root[data-app-theme] body dt {
   color: var(--fw-muted);
   font-weight: 400;
 }
 
-:root[data-app-theme="minimal-luxury"] body label:has(> input:is([type="checkbox"], [type="radio"])) {
+:root[data-app-theme] body label:has(> input:is([type="checkbox"], [type="radio"])) {
   color: var(--fw-text);
   font-size: 14px;
   line-height: 21px;
@@ -182,7 +281,7 @@
  * Sidebar (.fw-sidebar-main): 238px / 76px rail, radius 28, solid glass.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar {
+:root[data-app-theme] body .app-shell aside.sidebar {
   border: 0;
   border-radius: 28px;
   background: var(--fw-panel);
@@ -193,11 +292,11 @@
   transition: width 0.48s var(--fw-ease);
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-title {
+:root[data-app-theme] body .sidebar .sidebar-title {
   color: var(--fw-ink);
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-toggle {
+:root[data-app-theme] body .sidebar .sidebar-toggle {
   border: 1px solid transparent;
   border-radius: 50%;
   background: transparent;
@@ -206,7 +305,7 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .nav-item {
+:root[data-app-theme] body .sidebar .nav-item {
   height: 46px;
   gap: 12px;
   border: 1px solid transparent;
@@ -225,12 +324,12 @@
     color 0.22s;
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .nav-item svg {
+:root[data-app-theme] body .sidebar .nav-item svg {
   color: inherit;
   transition: color 0.22s;
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .nav-item.nav-item--active {
+:root[data-app-theme] body .sidebar .nav-item.nav-item--active {
   border-color: transparent;
   background: transparent;
   box-shadow: none;
@@ -238,7 +337,7 @@
   font-weight: 400;
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar :is(.nav-item, .nav-item.nav-item--active):is(:hover, :focus-visible) {
+:root[data-app-theme] body .sidebar :is(.nav-item, .nav-item.nav-item--active):is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   box-shadow: none;
@@ -247,7 +346,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .nav-subitem {
+:root[data-app-theme] body .sidebar .nav-subitem {
   border: 1px solid transparent;
   border-radius: 11px;
   background: transparent;
@@ -256,14 +355,14 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .nav-subitem.nav-subitem--active {
+:root[data-app-theme] body .sidebar .nav-subitem.nav-subitem--active {
   border-color: transparent;
   background: transparent;
   color: var(--fw-text);
   font-weight: 400;
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar :is(.nav-subitem, .nav-subitem.nav-subitem--active):is(:hover, :focus-visible) {
+:root[data-app-theme] body .sidebar :is(.nav-subitem, .nav-subitem.nav-subitem--active):is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   box-shadow: none;
@@ -273,19 +372,19 @@
 }
 
 /* Avatar reads as an outline, never as a filled (pressed-looking) control. */
-:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-avatar {
+:root[data-app-theme] body .sidebar .sidebar-avatar {
   border: 1px solid var(--fw-line);
   background: transparent;
   box-shadow: none;
   color: inherit;
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-user-text b {
+:root[data-app-theme] body .sidebar .sidebar-user-text b {
   color: var(--fw-muted);
   font-weight: 700;
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-user-text small {
+:root[data-app-theme] body .sidebar .sidebar-user-text small {
   color: var(--fw-muted);
 }
 
@@ -294,7 +393,7 @@
  * scrolling for short viewports, so 2px of block padding (offset by the
  * margin) leaves room for the 1px hover lift instead of cutting the top edge.
  */
-:root[data-app-theme="minimal-luxury"] body .sidebar .nav-list {
+:root[data-app-theme] body .sidebar .nav-list {
   margin-top: 32px;
   padding-block: 2px;
 }
@@ -305,7 +404,7 @@
  * `.app-shell aside.sidebar .sidebar-bottom` keeps these rules above the
  * global .secondary-button states declared later in this file.
  */
-:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
+:root[data-app-theme] body .app-shell aside.sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
   border: 1px solid transparent;
   border-radius: 13px;
   background: transparent;
@@ -322,7 +421,7 @@
     color 0.22s;
 }
 
-:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout):is(:hover, :focus-visible, :active) {
+:root[data-app-theme] body .app-shell aside.sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout):is(:hover, :focus-visible, :active) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   box-shadow: none;
@@ -332,19 +431,19 @@
 }
 
 /* Collapsed rail (.fw-sidebar.is-collapsed): 78px, 42px column, logo above the burger. */
-:root[data-app-theme="minimal-luxury"] body .sidebar:not(.sidebar--open) .sidebar-brand {
+:root[data-app-theme] body .sidebar:not(.sidebar--open) .sidebar-brand {
   flex-direction: column;
   align-items: center;
   gap: 10px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar:not(.sidebar--open) .nav-item {
+:root[data-app-theme] body .sidebar:not(.sidebar--open) .nav-item {
   justify-content: center;
   padding: 0;
 }
 
 /* In the rail every bottom row is a 42x46 icon cell, like the nav items. */
-:root[data-app-theme="minimal-luxury"] body .app-shell aside.sidebar:not(.sidebar--open) .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
+:root[data-app-theme] body .app-shell aside.sidebar:not(.sidebar--open) .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
   width: 100%;
   height: 46px;
   justify-content: center;
@@ -352,14 +451,14 @@
 }
 
 /* .fw-user-mini in the collapsed reference shows the bare icon without a circle. */
-:root[data-app-theme="minimal-luxury"] body .sidebar:not(.sidebar--open) .sidebar-avatar {
+:root[data-app-theme] body .sidebar:not(.sidebar--open) .sidebar-avatar {
   width: 18px;
   height: 18px;
   border: 0;
 }
 
 /* Burger keeps the reference .fw-brand button states. */
-:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-toggle:is(:hover, :focus-visible) {
+:root[data-app-theme] body .sidebar .sidebar-toggle:is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   box-shadow: none;
@@ -368,7 +467,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body .sidebar .sidebar-toggle:active {
+:root[data-app-theme] body .sidebar .sidebar-toggle:active {
   transform: translateY(var(--fw-press));
 }
 
@@ -376,7 +475,7 @@
  * Page heads (.fw-page-head): radius 28, padding 24/26, 42px title.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .page-header,
   .admin-users .page-header,
   .admin-objects .page-header,
@@ -404,7 +503,7 @@
   padding: 24px 26px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .page-header,
   .admin-home-header,
   .training-page-header,
@@ -424,7 +523,7 @@
   line-height: 1.05;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .page-header,
   .admin-home-header,
   .training-page-header,
@@ -444,7 +543,7 @@
 }
 
 @media (max-width: 560px) {
-  :root[data-app-theme="minimal-luxury"] body :is(
+  :root[data-app-theme] body :is(
     .page-header,
     .admin-home-header,
     .training-page-header,
@@ -467,7 +566,7 @@
  * radius 24, no border, glass shadow.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .login-panel,
   .content-panel,
   .table-panel,
@@ -510,15 +609,15 @@
   color: var(--fw-ink);
 }
 
-:root[data-app-theme="minimal-luxury"] body .login-panel {
+:root[data-app-theme] body .login-panel {
   border-radius: 28px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .toolbar {
+:root[data-app-theme] body .toolbar {
   border-radius: 22px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-quick-links, .object-image-carousel) {
+:root[data-app-theme] body :is(.catalog-quick-links, .object-image-carousel) {
   overflow: hidden;
 }
 
@@ -526,29 +625,29 @@
  * .fw-highlights: the panel owns the 20px 22px padding, so column dividers
  * only span the content height instead of running edge to edge.
  */
-:root[data-app-theme="minimal-luxury"] body .catalog-quick-links {
+:root[data-app-theme] body .catalog-quick-links {
   padding: 20px 22px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column {
+:root[data-app-theme] body .catalog-quick-links-column {
   gap: 10px;
   border: 0;
   padding: 0 22px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column:first-child {
+:root[data-app-theme] body .catalog-quick-links-column:first-child {
   padding-left: 0;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column:last-child {
+:root[data-app-theme] body .catalog-quick-links-column:last-child {
   padding-right: 0;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column + .catalog-quick-links-column {
+:root[data-app-theme] body .catalog-quick-links-column + .catalog-quick-links-column {
   border-left: 1px solid var(--fw-line);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column h3 {
+:root[data-app-theme] body .catalog-quick-links-column h3 {
   color: var(--fw-ink);
   font-size: 12px;
   font-weight: 400;
@@ -556,11 +655,11 @@
 }
 
 @media (max-width: 1100px) {
-  :root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column:nth-child(2) {
+  :root[data-app-theme] body .catalog-quick-links-column:nth-child(2) {
     padding-right: 0;
   }
 
-  :root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column:nth-child(3) {
+  :root[data-app-theme] body .catalog-quick-links-column:nth-child(3) {
     margin-top: 20px;
     border-top: 1px solid var(--fw-line);
     border-left: 0;
@@ -569,13 +668,13 @@
 }
 
 @media (max-width: 700px) {
-  :root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column,
-  :root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column:nth-child(2) {
+  :root[data-app-theme] body .catalog-quick-links-column,
+  :root[data-app-theme] body .catalog-quick-links-column:nth-child(2) {
     padding: 0;
   }
 
-  :root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column + .catalog-quick-links-column,
-  :root[data-app-theme="minimal-luxury"] body .catalog-quick-links-column:nth-child(3) {
+  :root[data-app-theme] body .catalog-quick-links-column + .catalog-quick-links-column,
+  :root[data-app-theme] body .catalog-quick-links-column:nth-child(3) {
     margin-top: 20px;
     border-top: 1px solid var(--fw-line);
     border-left: 0;
@@ -587,7 +686,7 @@
  * Panels nested inside another panel lose the outer glass shadow and read
  * as an outlined inner block (reference inner radius 18, line #c3bbb4).
  */
-:root[data-app-theme="minimal-luxury"] body :is(.content-panel, .table-panel, .editor-panel, .admin-panel, [data-slot="card"], .detail-section) :is(
+:root[data-app-theme] body :is(.content-panel, .table-panel, .editor-panel, .admin-panel, [data-slot="card"], .detail-section) :is(
   .content-panel,
   .table-panel,
   .editor-panel,
@@ -622,7 +721,7 @@
 }
 
 /* Admin home: header and cards stand on the canvas like .fw-admin-grid. */
-:root[data-app-theme="minimal-luxury"] body .content-panel.admin-home-panel {
+:root[data-app-theme] body .content-panel.admin-home-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
@@ -632,7 +731,7 @@
   padding: 0;
 }
 
-:root[data-app-theme="minimal-luxury"] body .admin-home-panel .admin-actions {
+:root[data-app-theme] body .admin-home-panel .admin-actions {
   gap: 16px;
 }
 
@@ -641,7 +740,7 @@
  * ------------------------------------------------------------------------- */
 
 /* .fw-property-card: radius 26, glass at rest, lift shadow on hover. */
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) {
+:root[data-app-theme] body :is(.catalog-card, .catalog-list-item) {
   overflow: hidden;
   border: 0;
   border-radius: 26px;
@@ -653,28 +752,28 @@
     transform 0.24s;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item):is(:hover, :focus-within) {
+:root[data-app-theme] body :is(.catalog-card, .catalog-list-item):is(:hover, :focus-within) {
   border-color: var(--fw-line-strong);
   background: var(--fw-panel);
-  box-shadow: var(--fw-lift-shadow);
+  box-shadow: var(--fw-card-hover-shadow);
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-media {
+:root[data-app-theme] body .catalog-card .catalog-card-media {
   border-radius: 26px 26px 0 0;
 }
 
 /* .fw-property-media has no shade: captions carry their own dark glass. */
-:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-media-shade {
+:root[data-app-theme] body .catalog-card .catalog-card-media-shade {
   display: none;
 }
 
 /* .fw-property-body: 11px muted meta, 22px/500 title, 20px/500 price, 11.67px muted price per m². */
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) .catalog-card-meta {
+:root[data-app-theme] body :is(.catalog-card, .catalog-list-item) .catalog-card-meta {
   color: var(--fw-muted);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) h3 {
+:root[data-app-theme] body :is(.catalog-card, .catalog-list-item) h3 {
   color: var(--fw-ink);
   font-size: 22px;
   font-weight: 500;
@@ -682,44 +781,44 @@
   line-height: 25.3px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-card .catalog-card-price, .catalog-list-item .catalog-list-item-price) {
+:root[data-app-theme] body :is(.catalog-card .catalog-card-price, .catalog-list-item .catalog-list-item-price) {
   color: var(--fw-ink);
   font-size: 20px;
   font-weight: 500;
   line-height: 30px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-card, .catalog-list-item) .catalog-card-price-per-meter {
+:root[data-app-theme] body :is(.catalog-card, .catalog-list-item) .catalog-card-price-per-meter {
   color: var(--fw-muted);
 }
 
 /* .fw-property-card .fw-btn: full width, 44px. */
-:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-body .catalog-card-link {
+:root[data-app-theme] body .catalog-card .catalog-card-body .catalog-card-link {
   width: 100%;
   min-height: 44px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-list-item .catalog-list-item-media {
+:root[data-app-theme] body .catalog-list-item .catalog-list-item-media {
   border-radius: 26px 0 0 26px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-list-item .catalog-list-item-link {
+:root[data-app-theme] body .catalog-list-item .catalog-list-item-link {
   min-height: 44px;
 }
 
 @media (max-width: 700px) {
-  :root[data-app-theme="minimal-luxury"] body .catalog-list-item .catalog-list-item-media {
+  :root[data-app-theme] body .catalog-list-item .catalog-list-item-media {
     border-radius: 26px 26px 0 0;
   }
 }
 
 /* .fw-property-media > div: photo indicators 12px from the top-right corner, 7px apart. */
-:root[data-app-theme="minimal-luxury"] body .catalog-card .catalog-card-document-badges {
+:root[data-app-theme] body .catalog-card .catalog-card-document-badges {
   gap: 7px;
 }
 
 /* .fw-property-media button: every photo indicator (floor plan, aerotour, PDF) is a 36px glass square, radius 11, 18px glyph. */
-:root[data-app-theme="minimal-luxury"] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge) {
+:root[data-app-theme] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge) {
   width: 36px;
   min-width: 36px;
   height: 36px;
@@ -741,19 +840,19 @@
     transform 0.18s;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):hover {
+:root[data-app-theme] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):hover {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   color: var(--fw-text);
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):active {
+:root[data-app-theme] body .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):active {
   transform: translateY(var(--fw-press));
 }
 
 /* List view: rows stand on the canvas as separate cards. */
-:root[data-app-theme="minimal-luxury"] body .catalog-list {
+:root[data-app-theme] body .catalog-list {
   gap: 16px;
   border: 0;
   background: transparent;
@@ -762,7 +861,7 @@
 }
 
 /* .fw-admin-card: radius 24, flat at rest. */
-:root[data-app-theme="minimal-luxury"] body .admin-action-card {
+:root[data-app-theme] body .admin-action-card {
   border: 0;
   border-radius: 24px;
   background: var(--fw-panel);
@@ -771,27 +870,27 @@
   padding: 20px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .admin-action-card p {
+:root[data-app-theme] body .admin-action-card p {
   color: var(--fw-muted);
   font-size: 14px;
 }
 
 /* .fw-draft: radius 22, glass. */
-:root[data-app-theme="minimal-luxury"] body :is(.training-card-grid > [data-slot="card"], .project-presentation-list-card, .project-presentation-new-card) {
+:root[data-app-theme] body :is(.training-card-grid > [data-slot="card"], .project-presentation-list-card, .project-presentation-new-card) {
   border: 0;
   border-radius: 22px;
   background: var(--fw-panel);
   box-shadow: var(--fw-glass-shadow);
 }
 
-:root[data-app-theme="minimal-luxury"] body [data-slot="card"] > [data-slot="card-footer"] {
+:root[data-app-theme] body [data-slot="card"] > [data-slot="card-footer"] {
   border-top: 1px solid var(--fw-line);
   border-radius: 0;
   background: transparent;
 }
 
 /* .fw-workflow-card: clickable card, radius 22, darkens on hover. */
-:root[data-app-theme="minimal-luxury"] body :is(.training-history-row, .training-dashboard-project-row) {
+:root[data-app-theme] body :is(.training-history-row, .training-dashboard-project-row) {
   border: 1px solid transparent;
   border-radius: 22px;
   background: var(--fw-panel);
@@ -800,12 +899,12 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body .training-dashboard-project-row {
+:root[data-app-theme] body .training-dashboard-project-row {
   border-radius: 15px;
   background: transparent;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.training-history-row, .training-dashboard-project-row):is(:hover, :focus-visible) {
+:root[data-app-theme] body :is(.training-history-row, .training-dashboard-project-row):is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   color: var(--fw-text);
@@ -813,7 +912,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.training-history-row, .training-dashboard-project-row):active {
+:root[data-app-theme] body :is(.training-history-row, .training-dashboard-project-row):active {
   transform: translateY(var(--fw-press));
 }
 
@@ -822,7 +921,7 @@
  * ------------------------------------------------------------------------- */
 
 /* Outlined inner block (.fw-object-map / .fw-dashboard-project frame). */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .lot-presentations-lot-tile,
   .catalog-link-row,
   .catalog-link-empty,
@@ -856,12 +955,12 @@
   color: var(--fw-ink);
 }
 
-:root[data-app-theme="minimal-luxury"] body .lot-presentations-lot-tile {
+:root[data-app-theme] body .lot-presentations-lot-tile {
   overflow: hidden;
 }
 
 /* Fact tiles (.fw-object-facts span): #e3ded8, line border, radius 11. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .preview-facts div,
   .object-detail-metrics div,
   .object-parameters-grid div,
@@ -884,13 +983,13 @@
 }
 
 /* Fact pills (.fw-property-facts span): #e3ded8, no border, radius 10, 11px. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .catalog-card-facts span,
   .catalog-count
 ) {
   border: 0;
   border-radius: 10px;
-  background: var(--fw-control);
+  background: var(--fw-fact-pill-bg);
   box-shadow: none;
   color: var(--fw-text);
   font-size: 11px;
@@ -898,7 +997,7 @@
 }
 
 /* .fw-avatar-large: circle, line border, control fill. */
-:root[data-app-theme="minimal-luxury"] body .profile-avatar {
+:root[data-app-theme] body .profile-avatar {
   overflow: hidden;
   border: 1px solid var(--fw-line);
   border-radius: 50%;
@@ -907,12 +1006,12 @@
   color: var(--fw-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body .profile-avatar img {
+:root[data-app-theme] body .profile-avatar img {
   border-radius: 50%;
 }
 
 /* Dividers use the reference line colour. */
-:root[data-app-theme="minimal-luxury"] body :is(th, td, .details-list > div, .object-detail-facts div, .location-list div, .catalog-map-list li, .catalog-quick-links-column, .permission-group, .object-form-section, .user-form-section, .object-content-sections, .object-content-section-item, .catalog-links-meta, .catalog-link-column, .table-meta) {
+:root[data-app-theme] body :is(th, td, .details-list > div, .object-detail-facts div, .location-list div, .catalog-map-list li, .catalog-quick-links-column, .permission-group, .object-form-section, .user-form-section, .object-content-sections, .object-content-section-item, .catalog-links-meta, .catalog-link-column, .table-meta) {
   border-color: var(--fw-line);
 }
 
@@ -921,7 +1020,7 @@
  * ------------------------------------------------------------------------- */
 
 /* Shared geometry of every reference button. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .primary-button,
   .secondary-button,
   .success-button,
@@ -952,7 +1051,7 @@
 }
 
 /* .fw-btn-primary: light at rest, inverts to graphite on hover. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .primary-button,
   .success-button,
   .admin-button--primary,
@@ -965,11 +1064,11 @@
   .training-dashboard-create-action
 ) {
   border: 1px solid var(--fw-primary-line);
-  background: var(--fw-control);
-  color: var(--fw-text);
+  background: var(--fw-primary-bg);
+  color: var(--fw-primary-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .primary-button,
   .success-button,
   .admin-button--primary,
@@ -984,12 +1083,12 @@
   border-color: var(--fw-primary-hover-line);
   background: var(--fw-primary-hover);
   box-shadow: none;
-  color: #ffffff;
+  color: var(--fw-primary-hover-text);
   outline: none;
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .primary-button,
   .success-button,
   .admin-button--primary,
@@ -1003,19 +1102,35 @@
 ):not(:disabled, [aria-disabled="true"]):active {
   border-color: var(--fw-primary-hover-line);
   background: var(--fw-primary-pressed);
-  color: #ffffff;
+  color: var(--fw-primary-hover-text);
   transform: translateY(var(--fw-press));
 }
 
-/* Lot summary CTA matches the object page «Подобрать лот»: graphite at rest in the same summary slot. */
-:root[data-app-theme="minimal-luxury"] body .object-lot-summary-action .primary-button {
-  border-color: var(--fw-text);
-  background: var(--fw-text);
-  color: #ffffff;
+/* Summary CTAs («Подобрать лот», lot «Добавить в работу»): solid graphite at rest in the summary slot. */
+:root[data-app-theme] body :is(.object-detail-summary-cta, .object-lot-summary-action .primary-button) {
+  border-color: var(--fw-solid);
+  background: var(--fw-solid);
+  color: var(--fw-solid-text);
+}
+
+:root[data-app-theme] body .object-detail-summary-cta {
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme] body .object-detail-summary-cta:is(:hover, :focus-visible) {
+  border-color: var(--fw-solid-hover);
+  background: var(--fw-solid-hover);
+  outline: none;
+  transform: translateY(var(--fw-lift));
+}
+
+:root[data-app-theme] body .object-detail-summary-cta:active {
+  background: var(--fw-solid-pressed);
+  transform: translateY(var(--fw-press));
 }
 
 /* .fw-btn-ghost / .fw-btn-outline / .fw-select-trigger. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .secondary-button,
   .admin-button--secondary,
   [data-slot="button"][data-variant="outline"],
@@ -1036,13 +1151,13 @@
   .feed-source-upload-button,
   .lot-presentations-create-modal-button
 ) {
-  border: 1px solid var(--fw-line);
+  border: 1px solid var(--fw-outline-line);
   background: var(--fw-control);
   box-shadow: none;
   color: var(--fw-ink);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .secondary-button,
   .admin-button--secondary,
   [data-slot="button"][data-variant="outline"],
@@ -1071,7 +1186,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .secondary-button,
   .admin-button--secondary,
   [data-slot="button"][data-variant="outline"],
@@ -1098,15 +1213,15 @@
   transform: translateY(var(--fw-press));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.map-measurement-button, .map-amenity-button).is-active,
-:root[data-app-theme="minimal-luxury"] body :is(.map-measurement-button, .map-amenity-button)[aria-pressed="true"] {
-  border-color: var(--fw-primary-hover-line);
-  background: var(--fw-primary-hover);
-  color: #ffffff;
+:root[data-app-theme] body :is(.map-measurement-button, .map-amenity-button).is-active,
+:root[data-app-theme] body :is(.map-measurement-button, .map-amenity-button)[aria-pressed="true"] {
+  border-color: var(--fw-solid);
+  background: var(--fw-solid);
+  color: var(--fw-solid-text);
 }
 
 /* Transparent row/table buttons (.fw-activity-list button, .fw-table-wrap td button). */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   [data-slot="button"][data-variant="ghost"],
   .admin-button--text,
   .text-button,
@@ -1131,7 +1246,7 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   [data-slot="button"][data-variant="ghost"],
   .admin-button--text,
   .text-button,
@@ -1156,7 +1271,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   [data-slot="button"][data-variant="ghost"],
   .admin-button--text,
   .text-button,
@@ -1177,7 +1292,7 @@
 }
 
 /* Compact filled buttons (.fw-draft footer button, .fw-pdf-actions button). */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .icon-action-button,
   .lot-presentations-comment-button,
   .gallery-tile-order-button,
@@ -1197,7 +1312,7 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .icon-action-button,
   .lot-presentations-comment-button,
   .gallery-tile-order-button,
@@ -1215,7 +1330,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .icon-action-button,
   .lot-presentations-comment-button,
   .gallery-tile-order-button,
@@ -1229,7 +1344,7 @@
 }
 
 /* Destructive actions keep the neutral reference surface with a danger ink. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .danger-button,
   .admin-button--danger,
   [data-slot="button"][data-variant="destructive"],
@@ -1244,7 +1359,7 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .danger-button,
   .admin-button--danger,
   [data-slot="button"][data-variant="destructive"],
@@ -1258,7 +1373,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .danger-button,
   .admin-button--danger,
   [data-slot="button"][data-variant="destructive"],
@@ -1268,7 +1383,7 @@
 }
 
 /* Chips (.fw-highlights button): radius 9, no border, 11px. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .catalog-quick-links .text-button,
   .catalog-quick-links-column li > button,
   .searchable-multi-select-chip,
@@ -1287,7 +1402,7 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .catalog-quick-links .text-button,
   .catalog-quick-links-column li > button,
   .searchable-multi-select-chip
@@ -1300,7 +1415,7 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .catalog-quick-links .text-button,
   .catalog-quick-links-column li > button,
   .searchable-multi-select-chip
@@ -1309,7 +1424,7 @@
 }
 
 /* Controls laid over photos (.fw-property-media button / .fw-media-label). */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .carousel-button,
   .carousel-modal-button,
   .carousel-modal-close,
@@ -1328,7 +1443,7 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .carousel-button,
   .carousel-modal-button,
   .carousel-modal-close,
@@ -1343,7 +1458,7 @@
   outline: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .carousel-counter,
   .carousel-modal-counter,
   .carousel-section-filter,
@@ -1361,18 +1476,18 @@
   backdrop-filter: blur(12px);
 }
 
-:root[data-app-theme="minimal-luxury"] body .carousel-thumbnail {
+:root[data-app-theme] body .carousel-thumbnail {
   border-radius: 13px;
   border-color: var(--fw-line-strong);
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body .carousel-thumbnail:is(:hover, :focus-visible) {
+:root[data-app-theme] body .carousel-thumbnail:is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body .carousel-thumbnail.carousel-thumbnail--active {
+:root[data-app-theme] body .carousel-thumbnail.carousel-thumbnail--active {
   border-color: var(--fw-text);
 }
 
@@ -1380,14 +1495,14 @@
  * Tabs (.fw-tabs) and segmented sort (.fw-segmented).
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(.lot-presentations-tabs, .project-presentations-tabs, .assistant-audit-tabs [data-slot="tabs-list"], .login-mode-toggle) {
+:root[data-app-theme] body :is(.lot-presentations-tabs, .project-presentations-tabs, .assistant-audit-tabs [data-slot="tabs-list"], .login-mode-toggle) {
   gap: 10px;
   border-bottom: 0;
   background: transparent;
   box-shadow: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .lot-presentations-tab,
   .project-presentations-tabs > button,
   [data-slot="tabs-trigger"],
@@ -1406,11 +1521,11 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.lot-presentations-tab, .project-presentations-tabs > button, [data-slot="tabs-trigger"])::after {
+:root[data-app-theme] body :is(.lot-presentations-tab, .project-presentations-tabs > button, [data-slot="tabs-trigger"])::after {
   display: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .lot-presentations-tab.is-active,
   .project-presentations-tabs > button.is-active,
   [data-slot="tabs-trigger"][data-state="active"],
@@ -1423,7 +1538,7 @@
   color: var(--fw-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .lot-presentations-tab,
   .project-presentations-tabs > button,
   [data-slot="tabs-trigger"],
@@ -1438,7 +1553,7 @@
 }
 
 /* Reference quirk: the active tab clears its fill while hovered. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .lot-presentations-tab.is-active,
   .project-presentations-tabs > button.is-active,
   [data-slot="tabs-trigger"][data-state="active"],
@@ -1449,7 +1564,7 @@
   background: transparent;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .lot-presentations-tab,
   .project-presentations-tabs > button,
   [data-slot="tabs-trigger"],
@@ -1458,7 +1573,7 @@
   transform: translateY(var(--fw-press));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.project-presentations-tabs > button, [data-slot="tabs-trigger"]) [data-slot="badge"] {
+:root[data-app-theme] body :is(.project-presentations-tabs > button, [data-slot="tabs-trigger"]) [data-slot="badge"] {
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -1468,29 +1583,29 @@
 }
 
 /* Catalog results bar (.fw-catalog-bar). */
-:root[data-app-theme="minimal-luxury"] body .catalog-results-count {
+:root[data-app-theme] body .catalog-results-count {
   color: var(--fw-muted);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-results-count b {
+:root[data-app-theme] body .catalog-results-count b {
   color: var(--fw-text);
   font-weight: 400;
 }
 
 /* .fw-segmented button: transparent, active fill, darken on hover. */
-:root[data-app-theme="minimal-luxury"] body .catalog-view-segment {
+:root[data-app-theme] body .catalog-view-segment {
   min-height: 44px;
   border: 0;
   background: transparent;
-  color: #111111;
+  color: var(--fw-segment-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-view-segment.is-active {
+:root[data-app-theme] body .catalog-view-segment.is-active {
   background: var(--fw-control);
   color: var(--fw-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-view-segment:is(:hover, :focus-visible) {
+:root[data-app-theme] body .catalog-view-segment:is(:hover, :focus-visible) {
   background: var(--fw-hover-bg);
   color: var(--fw-text);
   outline: none;
@@ -1498,48 +1613,48 @@
 }
 
 /* Reference quirk: the active segment clears its fill while hovered. */
-:root[data-app-theme="minimal-luxury"] body .catalog-view-segment.is-active:is(:hover, :focus-visible) {
+:root[data-app-theme] body .catalog-view-segment.is-active:is(:hover, :focus-visible) {
   background: transparent;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-view-segment:active {
+:root[data-app-theme] body .catalog-view-segment:active {
   transform: translateY(var(--fw-press));
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-results-bar .catalog-results-map-button {
-  color: #111111;
+:root[data-app-theme] body .catalog-results-bar .catalog-results-map-button {
+  color: var(--fw-segment-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-results-map-button.is-active {
-  border-color: var(--fw-primary-hover-line);
-  background: var(--fw-primary-hover);
-  color: #ffffff;
+:root[data-app-theme] body .catalog-results-map-button.is-active {
+  border-color: var(--fw-solid);
+  background: var(--fw-solid);
+  color: var(--fw-solid-text);
 }
 
 /* .fw-sort-trigger keeps the text ink and rotates its chevron when open. */
-:root[data-app-theme="minimal-luxury"] body .catalog-results-bar .catalog-sort-trigger {
+:root[data-app-theme] body .catalog-results-bar .catalog-sort-trigger {
   color: var(--fw-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-sort-menu {
+:root[data-app-theme] body .catalog-sort-menu {
   min-width: 100%;
   width: max-content;
 }
 
 /* .fw-catalog-tools: 18px padding, 14px gap, auto-width actions. */
-:root[data-app-theme="minimal-luxury"] body .catalog-filters {
+:root[data-app-theme] body .catalog-filters {
   padding: 18px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-search-row {
+:root[data-app-theme] body .catalog-filter-search-row {
   gap: 14px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-header-actions {
+:root[data-app-theme] body .catalog-filter-header-actions {
   gap: 8px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-header-actions .catalog-filter-reset {
+:root[data-app-theme] body .catalog-filter-header-actions .catalog-filter-reset {
   width: auto;
   max-width: none;
   flex: none;
@@ -1547,35 +1662,35 @@
 }
 
 @media (max-width: 700px) {
-  :root[data-app-theme="minimal-luxury"] body .catalog-filter-header-actions .catalog-filter-reset {
+  :root[data-app-theme] body .catalog-filter-header-actions .catalog-filter-reset {
     width: 42px;
     padding: 0;
   }
 }
 
 /* .fw-input: 42px field, 12px text, bare inner input. */
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-search-field {
+:root[data-app-theme] body .catalog-filter-search-field {
   height: 42px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-filters, .object-feed-units-toolbar) .catalog-filter-search-field input,
-:root[data-app-theme="minimal-luxury"] body :is(.catalog-filters, .object-feed-units-toolbar) .catalog-filter-search-field input:is(:hover, :focus, :focus-visible) {
+:root[data-app-theme] body :is(.catalog-filters, .object-feed-units-toolbar) .catalog-filter-search-field input,
+:root[data-app-theme] body :is(.catalog-filters, .object-feed-units-toolbar) .catalog-filter-search-field input:is(:hover, :focus, :focus-visible) {
   font-size: 12px;
   line-height: 18px;
   padding: 1px 2px;
 }
 
 /* Pinned panel: the reference lift shadow joins the glass shadow while it floats over the cards. */
-:root[data-app-theme="minimal-luxury"] body .catalog-filters.is-stuck {
+:root[data-app-theme] body .catalog-filters.is-stuck {
   box-shadow: var(--fw-glass-shadow), var(--fw-lift-shadow);
 }
 
 /* Filter pills (.fw-select-trigger at 36px): control fill, darken + lift on hover, ink when a value is set. */
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-divider {
+:root[data-app-theme] body .catalog-filter-divider {
   background: var(--fw-line);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill {
+:root[data-app-theme] body .catalog-filter-pill {
   border: 1px solid transparent;
   background: var(--fw-control);
   color: var(--fw-text);
@@ -1583,46 +1698,46 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
+:root[data-app-theme] body .catalog-filter-pill :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
   color: var(--fw-muted);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill:not(:disabled):is(:hover, :focus-visible, .is-open) {
+:root[data-app-theme] body .catalog-filter-pill:not(:disabled):is(:hover, :focus-visible, .is-open) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   outline: none;
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill:not(:disabled):active {
+:root[data-app-theme] body .catalog-filter-pill:not(:disabled):active {
   transform: translateY(var(--fw-press));
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set {
-  border-color: var(--fw-text);
-  background: var(--fw-text);
-  color: #ffffff;
+:root[data-app-theme] body .catalog-filter-pill.is-set {
+  border-color: var(--fw-solid);
+  background: var(--fw-solid);
+  color: var(--fw-solid-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
+:root[data-app-theme] body .catalog-filter-pill.is-set :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
   color: rgb(255 255 255 / 62%);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set:not(:disabled):is(:hover, :focus-visible, .is-open) {
-  border-color: var(--fw-primary-hover);
-  background: var(--fw-primary-hover);
+:root[data-app-theme] body .catalog-filter-pill.is-set:not(:disabled):is(:hover, :focus-visible, .is-open) {
+  border-color: var(--fw-solid-hover);
+  background: var(--fw-solid-hover);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-pill.is-set:not(:disabled):active {
-  background: var(--fw-primary-pressed);
+:root[data-app-theme] body .catalog-filter-pill.is-set:not(:disabled):active {
+  background: var(--fw-solid-pressed);
 }
 
 /* Range popovers: merged «от — до» field in the reference field style. */
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-title {
+:root[data-app-theme] body .catalog-filter-range-title {
   color: var(--fw-muted);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field {
+:root[data-app-theme] body .catalog-filter-range-field {
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--fw-control);
@@ -1630,23 +1745,23 @@
   transition: var(--fw-field-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field:is(:hover, :focus-within) {
+:root[data-app-theme] body .catalog-filter-range-field:is(:hover, :focus-within) {
   border-color: var(--fw-line-strong);
   background: var(--fw-control-hover);
   box-shadow: var(--fw-field-hover-shadow);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field i {
+:root[data-app-theme] body .catalog-filter-range-field i {
   background: var(--fw-line);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-range-field label {
+:root[data-app-theme] body .catalog-filter-range-field label {
   color: var(--fw-muted);
   font-size: 11px;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover .catalog-filter-range-field input,
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover .catalog-filter-range-field input:is(:hover, :focus, :focus-visible) {
+:root[data-app-theme] body .catalog-filter-popover .catalog-filter-range-field input,
+:root[data-app-theme] body .catalog-filter-popover .catalog-filter-range-field input:is(:hover, :focus, :focus-visible) {
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -1656,39 +1771,39 @@
   transform: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-clear {
+:root[data-app-theme] body .catalog-filter-popover-clear {
   color: var(--fw-muted);
   font-size: 11px;
   text-decoration-color: var(--fw-line);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-clear:hover {
+:root[data-app-theme] body .catalog-filter-popover-clear:hover {
   color: var(--fw-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-done {
-  border-color: var(--fw-text);
+:root[data-app-theme] body .catalog-filter-popover-done {
+  border-color: var(--fw-solid);
   border-radius: 12px;
-  background: var(--fw-text);
-  color: #ffffff;
+  background: var(--fw-solid);
+  color: var(--fw-solid-text);
   font-size: 13px;
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-done:hover {
-  border-color: var(--fw-primary-hover);
-  background: var(--fw-primary-hover);
+:root[data-app-theme] body .catalog-filter-popover-done:hover {
+  border-color: var(--fw-solid-hover);
+  background: var(--fw-solid-hover);
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body .catalog-filter-popover-done:active {
-  background: var(--fw-primary-pressed);
+:root[data-app-theme] body .catalog-filter-popover-done:active {
+  background: var(--fw-solid-pressed);
   transform: translateY(var(--fw-press));
 }
 
 /* Reference ≤560px: segments and the map button collapse to icons. */
 @media (max-width: 560px) {
-  :root[data-app-theme="minimal-luxury"] body .catalog-results-bar :is(.catalog-view-segment, .catalog-results-map-button) {
+  :root[data-app-theme] body .catalog-results-bar :is(.catalog-view-segment, .catalog-results-map-button) {
     gap: 0;
     font-size: 0;
     padding: 0 13px;
@@ -1700,7 +1815,7 @@
  * ------------------------------------------------------------------------- */
 
 /* Form fields (.fw-form-grid input): radius 12, soft inset glass. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="hidden"]),
   textarea,
   [data-slot="input"],
@@ -1719,7 +1834,7 @@
   transition: var(--fw-field-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="hidden"]),
   textarea,
   [data-slot="input"],
@@ -1728,7 +1843,7 @@
   color: var(--fw-muted);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="hidden"]),
   textarea,
   [data-slot="input"],
@@ -1743,7 +1858,7 @@
 }
 
 /* Search fields (.fw-input / .fw-global-search-field): radius 13, line border. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .catalog-filter-search-field,
   .toolbar-field--search input,
   .admin-toolbar-search input,
@@ -1759,7 +1874,7 @@
   font-size: 12px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .catalog-filter-search-field,
   .toolbar-field--search input,
   .admin-toolbar-search input,
@@ -1774,8 +1889,8 @@
   transform: translateY(var(--fw-lift));
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.toolbar-input-shell, .catalog-filter-search-field) input,
-:root[data-app-theme="minimal-luxury"] body :is(.toolbar-input-shell, .catalog-filter-search-field) input:is(:hover, :focus, :focus-visible) {
+:root[data-app-theme] body :is(.toolbar-input-shell, .catalog-filter-search-field) input,
+:root[data-app-theme] body :is(.toolbar-input-shell, .catalog-filter-search-field) input:is(:hover, :focus, :focus-visible) {
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -1783,7 +1898,7 @@
 }
 
 /* Select triggers (.fw-select-trigger / .fw-sort-trigger): radius 13, darken on hover. */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   select,
   .multi-select-dropdown-button,
   .object-feed-units-filter .multi-select-dropdown-button,
@@ -1802,7 +1917,7 @@
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   select:not(:disabled),
   .multi-select-dropdown-button,
   .object-feed-units-filter .multi-select-dropdown-button,
@@ -1819,7 +1934,7 @@
 }
 
 /* Dropdown menus (.fw-select-menu / .fw-sort-menu). */
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .multi-select-dropdown-menu,
   .searchable-multi-select-menu,
   .catalog-sort-menu,
@@ -1831,29 +1946,29 @@
   gap: 6px;
   border: 0;
   border-radius: 18px;
-  background: rgb(250 248 245 / 96%);
+  background: var(--fw-menu-bg);
   box-shadow: var(--fw-menu-shadow);
   padding: 10px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option) {
+:root[data-app-theme] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option) {
   min-height: 42px;
   border: 1px solid transparent;
   border-radius: 12px;
-  background: rgb(250 248 245 / 50%);
+  background: var(--fw-option-bg);
   color: var(--fw-text);
   font-weight: 400;
   padding: 0 12px;
   transition: var(--fw-button-transition);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option--selected, .searchable-multi-select-option--selected, .catalog-sort-option.is-active) {
+:root[data-app-theme] body :is(.multi-select-dropdown-option--selected, .searchable-multi-select-option--selected, .catalog-sort-option.is-active) {
   border-color: transparent;
   background: transparent;
   color: var(--fw-text);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option):is(:hover, :focus-visible, .searchable-multi-select-option--highlighted) {
+:root[data-app-theme] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option):is(:hover, :focus-visible, .searchable-multi-select-option--highlighted) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
   color: var(--fw-text);
@@ -1865,49 +1980,54 @@
  * Reference dropdown = catalog «Сколько комнат»: every menu (portal, inline
  * combobox and sort) uses its 11px/400 text, 42px rows and trailing check icon.
  */
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-menu, .searchable-multi-select-menu, .catalog-sort-menu) {
+:root[data-app-theme] body :is(.multi-select-dropdown-menu, .searchable-multi-select-menu, .catalog-sort-menu) {
   color: var(--fw-muted);
   font-size: 11px;
   font-weight: 400;
   line-height: 1.5;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option) {
+:root[data-app-theme] body :is(.multi-select-dropdown-option, .searchable-multi-select-option, .catalog-sort-option) {
   font-size: 11px;
   line-height: 1.5;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option):has(.multi-select-dropdown-option-copy, strong, small) {
+:root[data-app-theme] body :is(.multi-select-dropdown-option, .searchable-multi-select-option):has(.multi-select-dropdown-option-copy, strong, small) {
   padding-block: 6px;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option, .searchable-multi-select-option) :is(strong, b) {
+:root[data-app-theme] body :is(.multi-select-dropdown-option, .searchable-multi-select-option) :is(strong, b) {
   font-weight: 500;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-option-copy, .searchable-multi-select-option) small {
+:root[data-app-theme] body :is(.multi-select-dropdown-option-copy, .searchable-multi-select-option) small {
   color: var(--fw-muted);
   font-size: 10px;
   font-weight: 400;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.multi-select-dropdown-menu, .searchable-multi-select-menu) :is(.multi-select-dropdown-empty, .searchable-multi-select-empty) {
+:root[data-app-theme] body :is(.multi-select-dropdown-menu, .searchable-multi-select-menu) :is(.multi-select-dropdown-empty, .searchable-multi-select-empty) {
   color: var(--fw-muted);
   font-size: 11px;
   font-weight: 400;
   padding: 12px;
 }
 
+/* The combobox wrapper is invisible: its control carries the field surface. */
+:root[data-app-theme] body .catalog-link-field .searchable-multi-select {
+  background: transparent;
+}
+
 /* The search input of an inline combobox belongs to its control, not a field of its own. */
-:root[data-app-theme="minimal-luxury"] body .searchable-multi-select-value input,
-:root[data-app-theme="minimal-luxury"] body .searchable-multi-select-value input:is(:hover, :focus, :focus-visible) {
+:root[data-app-theme] body .searchable-multi-select-value input,
+:root[data-app-theme] body .searchable-multi-select-value input:is(:hover, :focus, :focus-visible) {
   border: 0;
   background: transparent;
   box-shadow: none;
   transform: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body .multi-select-dropdown-button:disabled {
+:root[data-app-theme] body .multi-select-dropdown-button:disabled {
   opacity: 0.55;
   transform: none;
 }
@@ -1916,7 +2036,7 @@
  * Status badges (.fw-status): radius 8, 10px, 5px 8px.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .status-pill,
   .role-pill,
   .import-mode-pill,
@@ -1945,7 +2065,7 @@
   text-transform: none;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .status-pill--active,
   .object-status--published,
   .gallery-tile-status--section,
@@ -1967,7 +2087,7 @@
   color: var(--fw-success);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .status-pill--invited,
   .object-status--draft,
   .feed-format-pill--avito_xml,
@@ -1980,7 +2100,7 @@
   color: var(--fw-warning);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   .status-pill--blocked,
   .import-status--failed,
   .feed-unit-status--sold,
@@ -1994,13 +2114,13 @@
 }
 
 /* .fw-role on the profile: admin role reads red. */
-:root[data-app-theme="minimal-luxury"] body .role-pill {
+:root[data-app-theme] body .role-pill {
   border-color: transparent;
   background: var(--fw-role-soft);
   color: var(--fw-role);
 }
 
-:root[data-app-theme="minimal-luxury"] body .role-pill.role-pill--table {
+:root[data-app-theme] body .role-pill.role-pill--table {
   background: transparent;
   color: var(--fw-ink);
   font-size: 11px;
@@ -2011,7 +2131,7 @@
  * Tables (.fw-table-wrap).
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(th, [data-slot="table-head"]) {
+:root[data-app-theme] body :is(th, [data-slot="table-head"]) {
   border-bottom: 1px solid var(--fw-line);
   background: transparent;
   color: var(--fw-muted);
@@ -2023,7 +2143,7 @@
 }
 
 /* Sort buttons inside headers keep the header typography. */
-:root[data-app-theme="minimal-luxury"] body :is(th, [data-slot="table-head"]) :is(.table-sort-button, [data-slot="button"]) {
+:root[data-app-theme] body :is(th, [data-slot="table-head"]) :is(.table-sort-button, [data-slot="button"]) {
   border-radius: 8px;
   color: inherit;
   font: inherit;
@@ -2031,20 +2151,24 @@
   text-transform: inherit;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(td, [data-slot="table-cell"]) {
+:root[data-app-theme] body :is(td, [data-slot="table-cell"]) {
   border-bottom: 1px solid var(--fw-line);
   color: var(--fw-ink);
 }
 
-:root[data-app-theme="minimal-luxury"] body tbody tr:hover td {
+:root[data-app-theme] body .import-duration-cell {
+  color: var(--fw-text);
+}
+
+:root[data-app-theme] body tbody tr:hover td {
   background: transparent;
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(tr.is-selected td, .catalog-map-list-item--selected) {
+:root[data-app-theme] body :is(tr.is-selected td, .catalog-map-list-item--selected) {
   background: var(--fw-hover-bg);
 }
 
-:root[data-app-theme="minimal-luxury"] body .table-meta {
+:root[data-app-theme] body .table-meta {
   border-bottom: 1px solid var(--fw-line);
   color: var(--fw-muted);
   font-size: 11px;
@@ -2055,7 +2179,7 @@
  * Dialogs and floating panels.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(
+:root[data-app-theme] body :is(
   [data-slot="dialog-content"],
   .lot-presentations-create-modal,
   .lot-presentations-project-modal,
@@ -2073,7 +2197,7 @@
 ) {
   border: 0;
   border-radius: 24px;
-  background: var(--fw-panel);
+  background: var(--fw-dialog-bg);
   box-shadow: var(--fw-glass-shadow);
   color: var(--fw-ink);
 }
@@ -2082,14 +2206,14 @@
  * Alerts and notices.
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme="minimal-luxury"] body :is(.form-notice, .admin-alert--notice) {
+:root[data-app-theme] body :is(.form-notice, .admin-alert--notice) {
   border-color: transparent;
   border-radius: 13px;
   background: var(--fw-success-soft);
   color: var(--fw-success);
 }
 
-:root[data-app-theme="minimal-luxury"] body :is(.admin-alert--error, .deactivation-confirm) {
+:root[data-app-theme] body :is(.admin-alert--error, .deactivation-confirm) {
   border-color: transparent;
   border-radius: 13px;
   background: var(--fw-danger-soft);

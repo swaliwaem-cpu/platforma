@@ -87,11 +87,14 @@ test('admin gallery modal uses stable cover slot and large responsive tile grid'
   );
 });
 
-test('admin gallery modal keeps text white in dark theme', () => {
+test('admin gallery modal uses the theme dialog surface and ink in both themes', () => {
+  const fluffyWhiteStyles = readFileSync(resolve(currentDir, '../src/fluffy-white-theme.css'), 'utf8');
+
   assert.match(
-    appThemeStyles,
-    /html\[data-app-theme="dark-premium"\] :is\(\.gallery-modal,[\s\S]*?\.gallery-tile-status,[\s\S]*?\.gallery-tile-section-select,[\s\S]*?\.gallery-tile-order-button\)\s*\{[\s\S]*?color:\s*#ffffff;[\s\S]*?\}/,
+    fluffyWhiteStyles,
+    /:root\[data-app-theme\] body :is\([\s\S]*?\.gallery-modal,[\s\S]*?\)\s*\{[\s\S]*?background:\s*var\(--fw-dialog-bg\);[\s\S]*?color:\s*var\(--fw-ink\);[\s\S]*?\}/,
   );
+  assert.doesNotMatch(appThemeStyles, /html\[data-app-theme="dark-premium"\] :is\(\.gallery-modal/);
 });
 
 test('admin gallery modal styles compact close confirmation', () => {

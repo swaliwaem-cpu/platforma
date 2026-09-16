@@ -76,9 +76,10 @@ test('catalog photo indicators share one 36px square and paint glyphs in current
     new RegExp(`\\.catalog-card :is\\(${indicators}\\) \\{[\\s\\S]*?border-radius: 11px;[\\s\\S]*?background: rgb\\(255 255 255 \\/ 28%\\);[\\s\\S]*?color: rgb\\(34 35 31\\);`),
   );
   assert.match(
-    themeSource,
-    new RegExp(`html\\[data-app-theme="dark-premium"\\] \\.catalog-card :is\\(${indicators}\\):hover \\{[\\s\\S]*?border-color: var\\(--app-theme-primary\\);[\\s\\S]*?color: var\\(--app-theme-primary\\);`),
+    fluffyWhiteSource,
+    new RegExp(`:root\\[data-app-theme\\] body \\.catalog-card :is\\(${indicators}\\):hover \\{[\\s\\S]*?border-color: var\\(--fw-hover-line\\);[\\s\\S]*?background: var\\(--fw-hover-bg\\);`),
   );
+  assert.doesNotMatch(themeSource, /html\[data-app-theme="dark-premium"\] \.catalog-card/);
 });
 
 test('catalog card marks a PDF presentation with the Fluffy White document icon', () => {

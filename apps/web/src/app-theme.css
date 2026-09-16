@@ -1,49 +1,60 @@
+/*
+ * Dark theme (dark-premium) follows the Fluffy White reference `.fw-app.dark`:
+ * graphite glass on a near-black canvas. The visual layer lives in
+ * fluffy-white-theme.css; these tokens keep base and generic rules in the same palette.
+ */
 html[data-app-theme="dark-premium"] {
   color-scheme: dark;
-  --app-theme-canvas: #0f141a;
-  --app-theme-surface: #151b23;
-  --app-theme-surface-soft: #1b2330;
-  --app-theme-surface-muted: #202a36;
-  --app-theme-control: #121922;
-  --app-theme-ink-900: #f3f6f8;
-  --app-theme-ink-800: #d8e0e8;
-  --app-theme-ink-700: #a9b6c4;
-  --app-theme-ink-600: #8291a2;
-  --app-theme-border-strong: #455263;
-  --app-theme-border: #313d4b;
-  --app-theme-border-soft: #283341;
-  --app-theme-primary: #c8a66a;
-  --app-theme-primary-deep: #e3c681;
-  --app-theme-primary-soft: #2d271c;
-  --app-theme-primary-foreground: #11161c;
-  --app-theme-object: #72bda7;
-  --app-theme-object-deep: #9edac8;
-  --app-theme-object-soft: #18332b;
-  --app-theme-accent: #d0a170;
-  --app-theme-accent-soft: #34261f;
-  --app-theme-success: #8bd7a5;
-  --app-theme-success-soft: #193226;
-  --app-theme-warning: #e8c16e;
-  --app-theme-warning-soft: #342b18;
-  --app-theme-danger: #f1a199;
-  --app-theme-danger-soft: #3b2022;
-  --app-theme-danger-foreground: #11161c;
-  --app-theme-shadow-panel: 0 18px 44px rgb(0 0 0 / 32%);
-  --app-theme-shadow-card: 0 20px 48px rgb(0 0 0 / 36%);
-  --app-theme-shadow-card-hover: 0 26px 68px rgb(0 0 0 / 46%);
-  --app-theme-shadow-overlay: 0 30px 82px rgb(0 0 0 / 54%);
-  --app-theme-focus-primary: 0 0 0 3px rgb(200 166 106 / 23%);
-  --app-theme-focus-object: 0 0 0 3px rgb(114 189 167 / 22%);
-  --app-theme-gallery-backdrop: rgb(10 15 22 / 88%);
-  --app-theme-gallery-surface: #0f1720;
-  --app-theme-gallery-stage: #0b1118;
-  --app-theme-radius-sm: 6px;
-  --app-theme-radius-md: 8px;
+  --app-theme-canvas: #08090a;
+  --app-theme-surface: rgb(42 44 46 / 52%);
+  --app-theme-surface-soft: rgb(255 255 255 / 4%);
+  --app-theme-surface-muted: rgb(42 44 46 / 52%);
+  --app-theme-control: rgb(42 44 46 / 52%);
+  --app-theme-ink-900: #f1f2f3;
+  --app-theme-ink-800: #d4d6d8;
+  --app-theme-ink-700: #999ca0;
+  --app-theme-ink-600: #999ca0;
+  --app-theme-border-strong: rgb(255 255 255 / 17%);
+  --app-theme-border: rgb(255 255 255 / 4.7%);
+  --app-theme-border-soft: rgb(255 255 255 / 4.7%);
+  --app-theme-primary: #96989b;
+  --app-theme-primary-deep: #f1f2f3;
+  --app-theme-primary-soft: rgb(150 152 155 / 14%);
+  --app-theme-primary-foreground: #ffffff;
+  --app-theme-object: #96989b;
+  --app-theme-object-deep: #c7c9cc;
+  --app-theme-object-soft: rgb(150 152 155 / 14%);
+  --app-theme-accent: #9a6a43;
+  --app-theme-accent-soft: rgb(154 106 67 / 18%);
+  --app-theme-success: #58d6a0;
+  --app-theme-success-soft: rgb(88 214 160 / 12%);
+  --app-theme-warning: #ffc865;
+  --app-theme-warning-soft: rgb(255 200 101 / 12%);
+  --app-theme-danger: #ff718a;
+  --app-theme-danger-soft: rgb(255 113 138 / 12%);
+  --app-theme-danger-foreground: #08090a;
+  --app-theme-shadow-panel:
+    inset 0 0 0 0.5px rgb(211 211 207 / 7.5%),
+    inset 0 1px 1px rgb(224 224 220 / 16%),
+    inset 1px 0 2px rgb(224 224 220 / 6%),
+    inset -5px 0 12px rgb(224 224 220 / 3%),
+    inset 0 -5px 12px rgb(255 255 255 / 2%),
+    inset -1px -1px 0 rgb(0 0 0 / 38%),
+    0 22px 60px rgb(0 0 0 / 24%);
+  --app-theme-shadow-card: none;
+  --app-theme-shadow-card-hover: 0 10px 20px rgb(0 0 0 / 28%);
+  --app-theme-shadow-overlay: 0 20px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 8%);
+  --app-theme-focus-primary: 0 0 0 3px rgb(255 255 255 / 14%);
+  --app-theme-focus-object: 0 0 0 3px rgb(255 255 255 / 14%);
+  --app-theme-gallery-backdrop: rgb(8 9 10 / 94%);
+  --app-theme-gallery-surface: var(--app-theme-surface);
+  --app-theme-gallery-stage: var(--app-theme-surface-muted);
+  --app-theme-radius-sm: 9px;
+  --app-theme-radius-md: 13px;
 }
 
 html[data-app-theme="minimal-luxury"] {
   color-scheme: light;
-  --platforma-font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   --app-theme-canvas: #ece9e5;
   --app-theme-surface: #faf8f5;
   --app-theme-surface-soft: #f0ece7;
@@ -93,6 +104,7 @@ html[data-app-theme="minimal-luxury"] {
 }
 
 html[data-app-theme] {
+  --platforma-font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   color: var(--app-theme-ink-900);
   background: var(--app-theme-canvas);
   --catalog-ink-900: var(--app-theme-ink-900);
@@ -150,6 +162,12 @@ html[data-app-theme] {
   --sidebar-accent-foreground: var(--app-theme-primary-deep);
   --sidebar-border: var(--app-theme-border);
   --sidebar-ring: var(--app-theme-primary);
+}
+
+/* Focus rings and field borders of shadcn components need a light veil on the dark canvas. */
+html[data-app-theme="dark-premium"] {
+  --ring: rgb(255 255 255 / 30%);
+  --input: rgb(255 255 255 / 17%);
 }
 
 html[data-app-theme],
@@ -300,18 +318,6 @@ html[data-app-theme] .multi-select-dropdown-button:is(:hover, :focus-visible, .i
   background: var(--app-theme-control);
   color: var(--app-theme-ink-900);
   box-shadow: var(--app-theme-focus-primary);
-}
-
-html[data-app-theme="dark-premium"] .feed-source-upload-button {
-  border-color: var(--app-theme-border-strong);
-  background: var(--app-theme-control);
-  color: var(--app-theme-ink-700);
-}
-
-html[data-app-theme="dark-premium"] .feed-source-upload-button:hover {
-  border-color: color-mix(in srgb, var(--app-theme-primary) 34%, var(--app-theme-border-strong));
-  background: var(--app-theme-surface-soft);
-  color: var(--app-theme-ink-900);
 }
 
 html[data-app-theme] :is(button, [role="button"], [data-slot="button"], summary) {
@@ -592,47 +598,10 @@ html[data-app-theme] :is(.profile-avatar, .catalog-card-facts span, .catalog-cou
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme="minimal-luxury"] .object-lot-aerotour-link {
+html[data-app-theme] .object-lot-aerotour-link {
   --object-lot-aerotour-bg: var(--app-theme-accent);
   --object-lot-aerotour-border: var(--app-theme-accent);
   --object-lot-aerotour-icon-filter: brightness(0) invert(1);
-}
-
-html[data-app-theme="dark-premium"] .object-lot-aerotour-link {
-  --object-lot-aerotour-bg: var(--app-theme-primary);
-  --object-lot-aerotour-border: var(--app-theme-primary);
-  --object-lot-aerotour-icon-filter: brightness(0);
-}
-
-/* Dark theme photo indicators: the Fluffy White 36px square on the dark card surface, gold on hover. */
-html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge) {
-  border-color: var(--app-theme-border);
-  background: color-mix(in srgb, var(--app-theme-surface) 86%, transparent);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  box-shadow: none;
-  color: var(--app-theme-ink-900);
-  pointer-events: auto;
-  transition:
-    border-color 0.18s,
-    color 0.18s,
-    transform 0.18s;
-}
-
-html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):hover {
-  border-color: var(--app-theme-primary);
-  color: var(--app-theme-primary);
-  transform: translateY(-1px);
-}
-
-html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge):active {
-  transform: translateY(1px);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html[data-app-theme="dark-premium"] .catalog-card :is(.catalog-card-pdf-badge, .catalog-card-floor-plan-badge, .catalog-card-aerotour-badge) {
-    transform: none;
-  }
 }
 
 html[data-app-theme] :is(.catalog-card-media, .catalog-list-item-media, .map-object-card-image, .preview-media, .gallery-thumb, .gallery-cover-preview, .gallery-cover-placeholder, .object-image-carousel--empty, .object-carousel-media, .carousel-thumbnail, .object-gallery-item, .map-fallback, .map-balloon-image) {
@@ -653,10 +622,6 @@ html[data-app-theme] .object-feed-media-carousel {
 
 html[data-app-theme] :is(.object-lot-media-stage, .object-feed-media-carousel-stage, .object-feed-media-carousel-image-button) {
   background: var(--app-theme-gallery-stage);
-}
-
-html[data-app-theme="dark-premium"] :is(.gallery-modal, .gallery-modal .eyebrow, .gallery-cover-meta span, .gallery-cover-meta strong, .gallery-upload-dropzone, .gallery-tile-button, .gallery-tile-preview, .gallery-tile-name, .gallery-tile-status, .gallery-tile-section-field span, .gallery-tile-section-select, .gallery-tile-order-button) {
-  color: #ffffff;
 }
 
 html[data-app-theme] .carousel-thumbnail--active {
@@ -706,117 +671,10 @@ html[data-app-theme] :is(.carousel-button, .carousel-counter, .carousel-section-
   color: var(--app-theme-surface);
 }
 
-html[data-app-theme="dark-premium"] :is(.sidebar-logo, .catalog-card-media img, .catalog-list-item-media img, .object-carousel-media img, .object-gallery-item img, .map-object-card-image, .preview-media img, .gallery-thumb img) {
-  filter: saturate(0.92) contrast(1.02);
-}
-
-html[data-app-theme="dark-premium"] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .carousel-modal-download, .object-gallery-item figcaption) {
-  background: rgb(0 0 0 / 72%);
-  color: #ffffff;
-}
-
-html[data-app-theme="minimal-luxury"] :is(.sidebar, .login-panel, .content-panel, .table-panel, .editor-panel, .admin-panel, .catalog-card, .catalog-list, .catalog-filters, .catalog-sort-bar, .catalog-quick-links, .detail-section) {
+html[data-app-theme] :is(.sidebar, .login-panel, .content-panel, .table-panel, .editor-panel, .admin-panel, .catalog-card, .catalog-list, .catalog-filters, .catalog-sort-bar, .catalog-quick-links, .detail-section) {
   box-shadow: var(--app-theme-shadow-panel);
 }
 
-html[data-app-theme="minimal-luxury"] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .object-detail-action-button) {
+html[data-app-theme] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .object-detail-action-button) {
   font-weight: 760;
-}
-
-/* Sidebar bottom rows (profile, theme, logout) behave like nav items. */
-html[data-app-theme="dark-premium"] .sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button) {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-  color: var(--app-theme-ink-800);
-}
-
-html[data-app-theme="dark-premium"] .sidebar .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button):is(:hover, :focus-visible) {
-  border-color: var(--app-theme-primary);
-  background: var(--app-theme-primary-soft);
-  color: var(--app-theme-primary-deep);
-}
-
-html[data-app-theme="dark-premium"] .sidebar :is(.sidebar-avatar, .sidebar-user-text small) {
-  border-color: var(--app-theme-border);
-  color: var(--app-theme-ink-700);
-}
-
-html[data-app-theme="dark-premium"] .sidebar .sidebar-user-text b {
-  color: var(--app-theme-ink-900);
-}
-
-/* Catalog search field: the wrapper is the control, the inner input stays bare. */
-html[data-app-theme="dark-premium"] .catalog-filter-search-field {
-  border-color: var(--app-theme-border-strong);
-  background: var(--app-theme-control);
-  color: var(--app-theme-ink-900);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-search-field:focus-within {
-  border-color: var(--app-theme-primary);
-  box-shadow: var(--app-theme-focus-primary);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-search .catalog-filter-search-field input {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-html[data-app-theme="dark-premium"] .searchable-multi-select-value input,
-html[data-app-theme="dark-premium"] .searchable-multi-select-value input:is(:hover, :focus, :focus-visible) {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-
-/* Catalog filter pills and range popovers (dark theme). */
-html[data-app-theme="dark-premium"] .catalog-filter-pill {
-  border-color: var(--app-theme-border);
-  background: var(--app-theme-control);
-  color: var(--app-theme-ink-900);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-pill:not(:disabled):is(:hover, :focus-visible, .is-open) {
-  border-color: var(--app-theme-primary);
-  outline: none;
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-pill.is-set {
-  border-color: var(--app-theme-primary);
-  background: var(--app-theme-primary);
-  color: var(--app-theme-primary-foreground);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-pill.is-set :is(.catalog-filter-pill-key, .catalog-filter-pill-chevron) {
-  color: color-mix(in srgb, var(--app-theme-primary-foreground) 64%, transparent);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-range-field {
-  border-color: var(--app-theme-border-strong);
-  background: var(--app-theme-control);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-range-field:focus-within {
-  border-color: var(--app-theme-primary);
-  box-shadow: var(--app-theme-focus-primary);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-range-field input,
-html[data-app-theme="dark-premium"] .catalog-filter-range-field input:is(:hover, :focus, :focus-visible) {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-  color: var(--app-theme-ink-900);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filter-popover-done {
-  border-color: var(--app-theme-primary);
-  background: var(--app-theme-primary);
-  color: var(--app-theme-primary-foreground);
-}
-
-html[data-app-theme="dark-premium"] .catalog-filters.is-stuck {
-  box-shadow: 0 14px 32px rgb(0 0 0 / 42%);
 }

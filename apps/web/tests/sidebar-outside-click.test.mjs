@@ -25,5 +25,5 @@ test('collapsed sidebar renders as a visible icon rail', () => {
   assert.match(styles, /--sidebar-rail-width:\s*78px;/);
   assert.match(styles, /\.sidebar--open\s*\{[\s\S]*?width:\s*var\(--sidebar-width\);[\s\S]*?\}/);
   assert.match(styles, /\.sidebar:not\(\.sidebar--open\)\s+\.nav-item\s+span\s*\{[\s\S]*?display:\s*none;[\s\S]*?\}/);
-  assert.match(themeStyles, /:root\[data-app-theme="minimal-luxury"\] body \.app-shell aside\.sidebar\s*\{/);
+  assert.match(themeStyles, /:root\[data-app-theme\] body \.app-shell aside\.sidebar\s*\{/);
 });

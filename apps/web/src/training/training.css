@@ -703,9 +703,9 @@
 
 .training-editor-stage-trigger[data-active] .training-editor-stage-number,
 .training-editor-stage-trigger[data-state="active"] .training-editor-stage-number {
-  border-color: var(--catalog-blue);
-  color: var(--catalog-panel);
-  background: var(--catalog-blue);
+  border-color: var(--fw-solid, var(--catalog-blue));
+  color: var(--fw-solid-text, var(--catalog-panel));
+  background: var(--fw-solid, var(--catalog-blue));
 }
 
 .training-editor-stage-copy {
