@@ -139,6 +139,7 @@ export class AssistantMetroTravelTimeService {
       throw new AssistantMetroTravelTimeUnavailableError('ASSISTANT_METRO_PUBLISHED_COORDINATES_INCOMPLETE');
     }
 
+    const warmup = await this.warmMissingRoutes(deadlineAt);
     let refreshed = 0;
     let publishedObjects = 0;
     let afterId: string | undefined;
@@ -204,7 +205,72 @@ export class AssistantMetroTravelTimeService {
     if (coverageGap.length > 0) {
       throw new AssistantMetroTravelTimeUnavailableError('ASSISTANT_METRO_ROUTE_COVERAGE_GAP');
     }
-    return { publishedObjects, refreshed };
+    return { publishedObjects, refreshed, warmup };
+  }
+
+  // Directory-wide refresh: every published object without a current fact gets its three nearest
+  // access points routed through the router's multi-source matrix warm-up first, so the per-object
+  // pass below is served from the walking-route cache instead of one provider call per object.
+  private async warmMissingRoutes(deadlineAt?: Date) {
+    const warmWalkingRoutes = (this.routing as Partial<MapRoutingService>).warmWalkingRoutes;
+    if (typeof warmWalkingRoutes !== 'function') return null;
+    this.assertDeadline(deadlineAt);
+    const rows = await this.prisma.$queryRaw<Array<{
+      id: string;
+      latitude: Prisma.Decimal;
+      longitude: Prisma.Decimal;
+      accessLatitude: Prisma.Decimal;
+      accessLongitude: Prisma.Decimal;
+    }>>(Prisma.sql`
+      SELECT
+        o.id::text AS id,
+        o.latitude,
+        o.longitude,
+        access.latitude AS "accessLatitude",
+        access.longitude AS "accessLongitude"
+      FROM real_estate_objects o
+      CROSS JOIN LATERAL (
+        SELECT point.latitude, point.longitude
+        FROM assistant_metro_access_points point
+        WHERE point.is_active = TRUE
+        ORDER BY point.location <-> ST_SetSRID(ST_MakePoint(o.longitude, o.latitude), 4326)::geography
+        LIMIT ${assistantMetroNearestAccessPointLimit}
+      ) access
+      WHERE o.status = 'published'::object_status
+        AND o.deleted_at IS NULL
+        AND o.latitude IS NOT NULL
+        AND o.longitude IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM assistant_object_metro_route_facts fact
+          JOIN assistant_metro_access_points current_access
+            ON current_access.id = fact.metro_access_point_id
+          WHERE fact.object_id = o.id
+            AND fact.object_latitude = o.latitude
+            AND fact.object_longitude = o.longitude
+            AND fact.access_dataset_version = current_access.dataset_version
+            AND fact.routing_profile = ${assistantMetroRoutingProfile}
+            AND current_access.is_active = TRUE
+        )
+      ORDER BY o.id
+    `);
+    const requests = new Map<string, { origin: [number, number]; destinations: [number, number][] }>();
+    for (const row of rows) {
+      const request = requests.get(row.id) ?? {
+        origin: [toCoordinate(row.latitude, -90, 90), toCoordinate(row.longitude, -180, 180)],
+        destinations: [],
+      };
+      request.destinations.push([Number(row.accessLatitude), Number(row.accessLongitude)]);
+      requests.set(row.id, request);
+    }
+    if (requests.size === 0) return { requests: 0, pairs: 0, fetched: 0, providerCalls: 0 };
+    this.assertDeadline(deadlineAt);
+    try {
+      return await warmWalkingRoutes.call(this.routing, [...requests.values()]);
+    } catch (error) {
+      if (error instanceof AssistantMetroTravelTimeUnavailableError) throw error;
+      throw new AssistantMetroTravelTimeUnavailableError('ASSISTANT_METRO_ROUTER_UNAVAILABLE');
+    }
   }
 
   private async refreshObject(object: RouteObject, deadlineAt?: Date) {

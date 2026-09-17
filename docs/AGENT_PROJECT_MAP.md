@@ -80,7 +80,7 @@ Entry: `assistant.module.ts`, `assistant.controller.ts`, воркер `assistant
 ### Структура
 
 - Корень: `assistant.service.ts` (1138 строк — conversations/messages/runs), `assistant-run.processor.ts` (in-process очередь, lease 30 с), `assistant-execution.module.ts` (единый seam `execute(runId)`), `assistant-query-planner.ts` + `assistant-planner-gateway.ts`, `assistant-logical-plan.ts` (FIX-GEO2 предикаты), `assistant-plan-grounding.ts`, `assistant-search.service.ts` + ranking (3 точных + 2 альтернативы), `assistant-answer.service.ts`, dialog/comparison.
-- `geo/` — place resolver (1511 строк, детерминированный), LocationIQ provider, Overpass collector, landmarks POINT/LINE/AREA (PostGIS), metro travel time, geo-alias, usage ledger.
+- `geo/` — place resolver (1511 строк, детерминированный), LocationIQ provider, Overpass collector, landmarks POINT/LINE/AREA (PostGIS), metro travel time (справочник входов из OSM: `scripts/assistant-metro-osm-geojson.cjs` → `assets/assistant/*.geojson` → `assistant:metro:refresh`; полный пересчёт через матричный прогрев `MapRoutingService.warmWalkingRoutes`, ORS free = 50 матриц/сутки), geo-alias, usage ledger.
 - `sources/` — knowledge base: registry, discovery (~3.5k строк), ingestion, официальные источники (HTML connector/extractor), retrieval, embeddings (pgvector), current-fact refresh, worker.
 - `catalog/` — ответы-каталоги объектов платформы.
 - `operations/` — cost/budget: каталог цен, атомарный reserve/settlement дневного USD-бюджета, model usage policy, retention (30 дней история, 180 дней агрегаты).

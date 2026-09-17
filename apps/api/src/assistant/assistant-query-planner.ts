@@ -849,13 +849,14 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
 
   const district = extractAssistantExplicitDistrict(text);
   if (district) filters.district = district;
+  const textWithoutMetroTravel = stripMetroTravelPhrases(textWithoutGeoDistance);
   const metro = extractNamedCondition(
-    textWithoutGeoDistance,
-    /(?:у\s+)?метро\s+[«"]?(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
+    textWithoutMetroTravel,
+    /(?:у\s+)?метро\s+[«"]?(?!(?:в|во|на|у|к|от|до|по|за|из|с|со|и|или|не|без)\s)(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (metro) filters.metro = metro;
   const developer = extractNamedCondition(
-    textWithoutGeoDistance,
+    textWithoutMetroTravel,
     /(?:(?:от\s+)?застройщик(?:а|ом)?|от\s+(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (developer) filters.developer = developer;
@@ -1096,6 +1097,17 @@ function parseComparisonTargetModes(value: unknown, targetCount: number) {
 
 function stripGeoDistancePhrases(value: string) {
   return stripAssistantGeoDistanceClause(value);
+}
+
+// «до метро», «от метро», «к метро», «у метро» without a station name are travel-time phrasing:
+// «пешком до метро в Хамовниках» must not become the metro filter «в Хамовниках», and «от метро»
+// must not match the developer pattern «от X». A following word that is not a preposition is
+// treated as a station name and keeps the phrase («у метро Курская»).
+const metroTravelPhrasePattern =
+  /(?<![\p{L}])(?:до|от|к|у)\s+(?:ближайш\p{L}*\s+|станци\p{L}*\s+)?метро(?=$|[\s,.;!?)])(?!\s+(?!(?:в|во|на|у|к|от|до|по|за|из|с|со|и|или|не|без|ни|а|но)\b)[\p{L}«"])/giu;
+
+function stripMetroTravelPhrases(value: string) {
+  return value.replace(metroTravelPhrasePattern, ' ');
 }
 
 function parseRooms(value: unknown) {

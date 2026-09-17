@@ -25,12 +25,35 @@ type CachedWalkingRoutes = {
   isStale: boolean;
 };
 
+type WalkingRoutePair = {
+  cacheKey: string;
+  origin: MapRoutingCoordinate;
+  destination: MapRoutingCoordinate;
+};
+
+type WalkingRouteMatrix = {
+  distances: Array<Array<number | null>>;
+  durations: Array<Array<number | null>>;
+};
+
+export type MapWalkingRoutesWarmup = {
+  requests: number;
+  pairs: number;
+  fetched: number;
+  providerCalls: number;
+};
+
 const DEFAULT_OPENROUTESERVICE_API_URL = 'https://api.openrouteservice.org';
 const DEFAULT_OPENROUTESERVICE_TIMEOUT_MS = 5_000;
 const DEFAULT_OPENROUTESERVICE_CACHE_STALE_AFTER_MS = 180 * 24 * 60 * 60 * 1_000;
 const DEFAULT_OPENROUTESERVICE_MAX_RETRIES = 2;
+// The public matrix endpoint accepts up to 3500 routes (sources × destinations) per request; the
+// default keeps a margin so a bulk warm-up never burns a daily-quota request on a rejected call.
+const DEFAULT_OPENROUTESERVICE_MATRIX_MAX_ROUTES = 2_500;
+const MAX_OPENROUTESERVICE_MATRIX_MAX_ROUTES = 3_500;
 const MAX_OPENROUTESERVICE_RETRIES = 5;
 const MAX_OPENROUTESERVICE_RETRY_DELAY_MS = 2_000;
+const ROUTING_CACHE_PERSIST_CHUNK = 100;
 const ROUTING_CACHE_PROVIDER = 'openrouteservice';
 const ROUTING_CACHE_PROFILE = 'foot-walking';
 const ROUTING_CACHE_VERSION = 'v1';
@@ -54,6 +77,13 @@ export class MapRoutingService {
   private readonly maxRetries = this.parseNonNegativeInteger(
     process.env.OPENROUTESERVICE_MAX_RETRIES,
     DEFAULT_OPENROUTESERVICE_MAX_RETRIES,
+  );
+  private readonly matrixMaxRoutes = Math.min(
+    this.parsePositiveInteger(
+      process.env.OPENROUTESERVICE_MATRIX_MAX_ROUTES,
+      DEFAULT_OPENROUTESERVICE_MATRIX_MAX_ROUTES,
+    ),
+    MAX_OPENROUTESERVICE_MATRIX_MAX_ROUTES,
   );
   private readonly inFlightRequests = new Map<string, Promise<MapWalkingRoutesResponse>>();
 
@@ -86,6 +116,135 @@ export class MapRoutingService {
     }
 
     return this.fetchAndPersistRoutes(request);
+  }
+
+  // Bulk cache warm-up: every origin→destination pair that is missing or stale is fetched through
+  // multi-source matrix requests (many origins × the union of their destinations per call), so a
+  // directory-wide refresh costs a handful of provider requests instead of one per origin. Only
+  // the requested pairs are persisted; later getWalkingRoutes calls for them are cache hits.
+  async warmWalkingRoutes(inputs: unknown[]): Promise<MapWalkingRoutesWarmup> {
+    if (!Array.isArray(inputs)) {
+      throw new BadRequestException('Walking routes warm-up input is invalid');
+    }
+    const requests = inputs.map((input) => this.parseRequest(input));
+    const pairsByKey = new Map<string, WalkingRoutePair>();
+    for (const request of requests) {
+      for (const destination of request.destinations) {
+        const cacheKey = this.createRouteCacheKey(request.origin, destination);
+        if (!pairsByKey.has(cacheKey)) pairsByKey.set(cacheKey, { cacheKey, origin: request.origin, destination });
+      }
+    }
+    const pending = await this.readMissingPairs([...pairsByKey.values()]);
+    const summary: MapWalkingRoutesWarmup = {
+      requests: requests.length,
+      pairs: pairsByKey.size,
+      fetched: 0,
+      providerCalls: 0,
+    };
+    if (pending.length === 0) return summary;
+    if (!this.apiKey) {
+      throw new ServiceUnavailableException('Walking routes are not configured');
+    }
+
+    for (const group of this.groupPairsForMatrix(pending)) {
+      const matrix = await this.requestMatrix(group.origins, group.destinations);
+      summary.providerCalls += 1;
+      const routes = group.pairs.map((pair) => {
+        const originIndex = group.originIndexByKey.get(this.coordinateKey(pair.origin));
+        const destinationIndex = group.destinationIndexByKey.get(this.coordinateKey(pair.destination));
+        const distance = originIndex === undefined || destinationIndex === undefined
+          ? undefined
+          : matrix.distances[originIndex]?.[destinationIndex];
+        const duration = originIndex === undefined || destinationIndex === undefined
+          ? undefined
+          : matrix.durations[originIndex]?.[destinationIndex];
+        if (distance === undefined || duration === undefined) {
+          throw new BadGatewayException('Walking route provider returned an invalid matrix');
+        }
+        return {
+          origin: pair.origin,
+          destination: pair.destination,
+          distanceMeters: distance === null ? null : Math.round(distance),
+          durationSeconds: duration === null ? null : Math.round(duration),
+        };
+      });
+      await this.persistRoutePairs(routes);
+      summary.fetched += routes.length;
+    }
+
+    return summary;
+  }
+
+  private async readMissingPairs(pairs: WalkingRoutePair[]) {
+    const fresh = new Set<string>();
+    const staleAfter = Date.now() - this.cacheStaleAfterMs;
+    for (let index = 0; index < pairs.length; index += ROUTING_CACHE_PERSIST_CHUNK * 5) {
+      const chunk = pairs.slice(index, index + ROUTING_CACHE_PERSIST_CHUNK * 5);
+      const cachedRoutes = await this.prisma.mapWalkingRouteCache.findMany({
+        where: { cacheKey: { in: chunk.map(({ cacheKey }) => cacheKey) } },
+        select: { cacheKey: true, calculatedAt: true },
+      });
+      for (const route of cachedRoutes) {
+        if (route.calculatedAt.getTime() > staleAfter) fresh.add(route.cacheKey);
+      }
+    }
+    return pairs.filter(({ cacheKey }) => !fresh.has(cacheKey));
+  }
+
+  private groupPairsForMatrix(pairs: WalkingRoutePair[]) {
+    const pairsByOrigin = new Map<string, { origin: MapRoutingCoordinate; pairs: WalkingRoutePair[] }>();
+    for (const pair of pairs) {
+      const originKey = this.coordinateKey(pair.origin);
+      const entry = pairsByOrigin.get(originKey) ?? { origin: pair.origin, pairs: [] };
+      entry.pairs.push(pair);
+      pairsByOrigin.set(originKey, entry);
+    }
+
+    const groups: Array<{
+      origins: MapRoutingCoordinate[];
+      destinations: MapRoutingCoordinate[];
+      originIndexByKey: Map<string, number>;
+      destinationIndexByKey: Map<string, number>;
+      pairs: WalkingRoutePair[];
+    }> = [];
+    let current = this.createMatrixGroup();
+    for (const entry of pairsByOrigin.values()) {
+      const newDestinations = entry.pairs
+        .map(({ destination }) => this.coordinateKey(destination))
+        .filter((key, index, keys) => keys.indexOf(key) === index && !current.destinationIndexByKey.has(key));
+      const routes = (current.origins.length + 1) * (current.destinations.length + newDestinations.length);
+      if (current.origins.length > 0 && routes > this.matrixMaxRoutes) {
+        groups.push(current);
+        current = this.createMatrixGroup();
+      }
+      current.originIndexByKey.set(this.coordinateKey(entry.origin), current.origins.length);
+      current.origins.push(entry.origin);
+      for (const pair of entry.pairs) {
+        const destinationKey = this.coordinateKey(pair.destination);
+        if (!current.destinationIndexByKey.has(destinationKey)) {
+          current.destinationIndexByKey.set(destinationKey, current.destinations.length);
+          current.destinations.push(pair.destination);
+        }
+        current.pairs.push(pair);
+      }
+    }
+    if (current.origins.length > 0) groups.push(current);
+
+    return groups;
+  }
+
+  private createMatrixGroup() {
+    return {
+      origins: [] as MapRoutingCoordinate[],
+      destinations: [] as MapRoutingCoordinate[],
+      originIndexByKey: new Map<string, number>(),
+      destinationIndexByKey: new Map<string, number>(),
+      pairs: [] as WalkingRoutePair[],
+    };
+  }
+
+  private coordinateKey(coordinate: MapRoutingCoordinate) {
+    return `${this.normalizeCoordinate(coordinate[0])}:${this.normalizeCoordinate(coordinate[1])}`;
   }
 
   private async fetchAndPersistRoutes(request: MapWalkingRoutesRequest) {
@@ -162,36 +321,57 @@ export class MapRoutingService {
   }
 
   private async persistRoutes(request: MapWalkingRoutesRequest, response: MapWalkingRoutesResponse) {
+    await this.persistRoutePairs(response.routes.map((route) => {
+      const destination = request.destinations[route.destinationIndex];
+
+      if (!destination) {
+        throw new BadGatewayException('Walking route provider returned an invalid destination index');
+      }
+
+      return {
+        origin: request.origin,
+        destination,
+        distanceMeters: route.distanceMeters,
+        durationSeconds: route.durationSeconds,
+      };
+    }));
+  }
+
+  private async persistRoutePairs(routes: Array<{
+    origin: MapRoutingCoordinate;
+    destination: MapRoutingCoordinate;
+    distanceMeters: number | null;
+    durationSeconds: number | null;
+  }>) {
     const calculatedAt = new Date();
+    const uniqueRoutes = [...new Map(routes.map((route) => [
+      this.createRouteCacheKey(route.origin, route.destination),
+      route,
+    ])).entries()];
 
-    await this.prisma.$transaction(
-      response.routes.map((route) => {
-        const destination = request.destinations[route.destinationIndex];
+    for (let index = 0; index < uniqueRoutes.length; index += ROUTING_CACHE_PERSIST_CHUNK) {
+      await this.prisma.$transaction(
+        uniqueRoutes.slice(index, index + ROUTING_CACHE_PERSIST_CHUNK).map(([cacheKey, route]) => {
+          const data = {
+            provider: ROUTING_CACHE_PROVIDER,
+            profile: ROUTING_CACHE_PROFILE,
+            originLatitude: this.normalizeCoordinate(route.origin[0]),
+            originLongitude: this.normalizeCoordinate(route.origin[1]),
+            destinationLatitude: this.normalizeCoordinate(route.destination[0]),
+            destinationLongitude: this.normalizeCoordinate(route.destination[1]),
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            calculatedAt,
+          };
 
-        if (!destination) {
-          throw new BadGatewayException('Walking route provider returned an invalid destination index');
-        }
-
-        const cacheKey = this.createRouteCacheKey(request.origin, destination);
-        const data = {
-          provider: ROUTING_CACHE_PROVIDER,
-          profile: ROUTING_CACHE_PROFILE,
-          originLatitude: this.normalizeCoordinate(request.origin[0]),
-          originLongitude: this.normalizeCoordinate(request.origin[1]),
-          destinationLatitude: this.normalizeCoordinate(destination[0]),
-          destinationLongitude: this.normalizeCoordinate(destination[1]),
-          distanceMeters: route.distanceMeters,
-          durationSeconds: route.durationSeconds,
-          calculatedAt,
-        };
-
-        return this.prisma.mapWalkingRouteCache.upsert({
-          where: { cacheKey },
-          create: { cacheKey, ...data },
-          update: data,
-        });
-      }),
-    );
+          return this.prisma.mapWalkingRouteCache.upsert({
+            where: { cacheKey },
+            create: { cacheKey, ...data },
+            update: data,
+          });
+        }),
+      );
+    }
   }
 
   private createRouteCacheKey(origin: MapRoutingCoordinate, destination: MapRoutingCoordinate) {
@@ -213,11 +393,30 @@ export class MapRoutingService {
   }
 
   private async requestWalkingRoutes(request: MapWalkingRoutesRequest): Promise<MapWalkingRoutesResponse> {
+    const matrix = await this.requestMatrix([request.origin], request.destinations);
+    const distances = matrix.distances[0] ?? [];
+    const durations = matrix.durations[0] ?? [];
+
+    return {
+      routes: request.destinations.map((_, destinationIndex) => ({
+        destinationIndex,
+        distanceMeters:
+          distances[destinationIndex] === null ? null : Math.round(distances[destinationIndex] as number),
+        durationSeconds:
+          durations[destinationIndex] === null ? null : Math.round(durations[destinationIndex] as number),
+      })),
+    };
+  }
+
+  private async requestMatrix(
+    origins: MapRoutingCoordinate[],
+    destinations: MapRoutingCoordinate[],
+  ): Promise<WalkingRouteMatrix> {
     const requestBody = JSON.stringify({
-      destinations: request.destinations.map((_, index) => index + 1),
-      locations: [request.origin, ...request.destinations].map(([latitude, longitude]) => [longitude, latitude]),
+      destinations: destinations.map((_, index) => origins.length + index),
+      locations: [...origins, ...destinations].map(([latitude, longitude]) => [longitude, latitude]),
       metrics: ['distance', 'duration'],
-      sources: [0],
+      sources: origins.map((_, index) => index),
       units: 'm',
     });
 
@@ -269,21 +468,9 @@ export class MapRoutingService {
         throw new BadGatewayException('Walking route provider returned an invalid matrix');
       }
 
-      const distances = this.readMatrixRow(payload.distances);
-      const durations = this.readMatrixRow(payload.durations);
-
-      if (distances.length !== request.destinations.length || durations.length !== request.destinations.length) {
-        throw new BadGatewayException('Walking route provider returned an invalid matrix');
-      }
-
       return {
-        routes: request.destinations.map((_, destinationIndex) => ({
-          destinationIndex,
-          distanceMeters:
-            distances[destinationIndex] === null ? null : Math.round(distances[destinationIndex] as number),
-          durationSeconds:
-            durations[destinationIndex] === null ? null : Math.round(durations[destinationIndex] as number),
-        })),
+        distances: this.readMatrixRows(payload.distances, origins.length, destinations.length),
+        durations: this.readMatrixRows(payload.durations, origins.length, destinations.length),
       };
     }
 
@@ -383,18 +570,22 @@ export class MapRoutingService {
     return [value[0], value[1]];
   }
 
-  private readMatrixRow(value: unknown) {
-    if (!Array.isArray(value) || !Array.isArray(value[0])) {
+  private readMatrixRows(value: unknown, rows: number, columns: number) {
+    if (!Array.isArray(value) || value.length !== rows) {
       throw new BadGatewayException('Walking route provider returned an invalid matrix');
     }
 
-    const row = value[0];
+    return value.map((row) => {
+      if (
+        !Array.isArray(row) ||
+        row.length !== columns ||
+        !row.every((item) => item === null || (typeof item === 'number' && Number.isFinite(item) && item >= 0))
+      ) {
+        throw new BadGatewayException('Walking route provider returned an invalid matrix');
+      }
 
-    if (!row.every((item) => item === null || (typeof item === 'number' && Number.isFinite(item) && item >= 0))) {
-      throw new BadGatewayException('Walking route provider returned an invalid matrix');
-    }
-
-    return row as Array<number | null>;
+      return row as Array<number | null>;
+    });
   }
 
   private parsePositiveInteger(value: string | undefined, fallback: number) {

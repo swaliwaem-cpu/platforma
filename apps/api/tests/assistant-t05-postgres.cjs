@@ -473,11 +473,11 @@ test('FIX-GEO2 full metro refresh paginates every published object and fails clo
     await metroTravelTimes.importAccessPoints(geoJson, version);
 
     const complete = await metroTravelTimes.refreshPublishedObjects();
-    assert.deepEqual(complete, { publishedObjects: published.length, refreshed: published.length });
+    assert.deepEqual(complete, { publishedObjects: published.length, refreshed: published.length, warmup: null });
     assert.equal(routeCalls, published.length);
 
     routeCalls = 0;
-    assert.deepEqual(await metroTravelTimes.refreshPublishedObjects(), { publishedObjects: published.length, refreshed: 0 });
+    assert.deepEqual(await metroTravelTimes.refreshPublishedObjects(), { publishedObjects: published.length, refreshed: 0, warmup: null });
     assert.equal(routeCalls, 0, 'unchanged materialized facts must not consume routing calls on resume');
     await prisma.assistantObjectMetroRouteFact.deleteMany({
       where: { objectId: { in: published.map(({ id }) => id) } },
@@ -1519,3 +1519,89 @@ async function waitForRun(baseUrl, runId, token) {
   }
   throw new Error('ASSISTANT_T05_RUN_TIMEOUT');
 }
+
+// Runs against the throwaway harness database: the directory refresh spans every published object
+// in the database, so foreign fixtures without coordinates would fail it closed by design.
+test('FIX-GEO2 directory refresh warms the three nearest access points of every published object in one pass', { concurrency: false }, async () => {
+  const warmCalls = [];
+  let routeCalls = 0;
+  const routing = {
+    async warmWalkingRoutes(requests) {
+      warmCalls.push(requests);
+      return { requests: requests.length, pairs: requests.length * 3, fetched: requests.length * 3, providerCalls: 1 };
+    },
+    async getWalkingRoutes({ destinations }) {
+      routeCalls += 1;
+      return {
+        routes: destinations.map((_, destinationIndex) => ({
+          destinationIndex,
+          durationSeconds: 200 + destinationIndex * 10,
+          distanceMeters: 250 + destinationIndex * 10,
+        })),
+      };
+    },
+  };
+  const metroTravelTimes = new AssistantMetroTravelTimeService(prisma, routing);
+  const version = `assistant-t05-${suffix}-bulk`;
+  const inside = fixture.objects.inside500;
+  const insideLatitude = Number(Number(inside.latitude).toFixed(6));
+  const insideLongitude = Number(Number(inside.longitude).toFixed(6));
+  // Access points at strictly increasing distances north of inside500: the nearest three are fixed.
+  const points = [0.002, 0.004, 0.006, 0.008, 0.01, 0.012].map((offset, index) => ({
+    id: `node/bulk-${index + 1}`,
+    latitude: Number((insideLatitude + offset).toFixed(6)),
+    longitude: insideLongitude,
+  }));
+  const geoJson = {
+    type: 'FeatureCollection',
+    features: points.map((point) => ({
+      type: 'Feature',
+      id: point.id,
+      properties: { name: `Станция ${point.id}`, osm_id: point.id },
+      geometry: { type: 'Point', coordinates: [point.longitude, point.latitude] },
+    })),
+  };
+  const nullObject = fixture.objects.nullCoordinates;
+
+  try {
+    await metroTravelTimes.importAccessPoints(geoJson, version);
+    await prisma.realEstateObject.update({
+      where: { id: nullObject.id },
+      data: { latitude: 55.76, longitude: 37.63 },
+    });
+    const published = await prisma.realEstateObject.findMany({
+      where: { status: 'PUBLISHED', deletedAt: null },
+      select: { id: true },
+    });
+
+    const result = await metroTravelTimes.refreshPublishedObjects();
+    assert.deepEqual(result, {
+      publishedObjects: published.length,
+      refreshed: published.length,
+      warmup: { requests: published.length, pairs: published.length * 3, fetched: published.length * 3, providerCalls: 1 },
+    });
+    assert.equal(warmCalls.length, 1);
+    assert.equal(warmCalls[0].length, published.length, 'every published object is warmed exactly once');
+    const request = warmCalls[0].find(({ origin }) => origin[0] === insideLatitude && origin[1] === insideLongitude);
+    assert.ok(request, 'the warm-up carries the object origin rounded exactly like the per-object pass');
+    assert.deepEqual(request.destinations, points.slice(0, 3).map(({ latitude, longitude }) => [latitude, longitude]));
+    assert.equal(routeCalls, published.length, 'the per-object pass runs after the warm-up');
+    assert.equal(await prisma.assistantObjectMetroRouteFact.count({ where: { accessDatasetVersion: version } }), published.length);
+
+    const again = await metroTravelTimes.refreshPublishedObjects();
+    assert.deepEqual(again, {
+      publishedObjects: published.length,
+      refreshed: 0,
+      warmup: { requests: 0, pairs: 0, fetched: 0, providerCalls: 0 },
+    });
+    assert.equal(warmCalls.length, 1, 'current facts are not warmed again');
+    assert.equal(routeCalls, published.length);
+  } finally {
+    await prisma.realEstateObject.update({
+      where: { id: nullObject.id },
+      data: { latitude: null, longitude: null },
+    });
+    await prisma.assistantObjectMetroRouteFact.deleteMany({ where: { accessDatasetVersion: version } });
+    await prisma.assistantMetroAccessPoint.deleteMany({ where: { datasetVersion: version } });
+  }
+});

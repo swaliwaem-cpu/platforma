@@ -2488,3 +2488,122 @@ async function readRequestBody(request) {
   for await (const chunk of request) chunks.push(chunk);
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
+
+test('FIX-GEO2 directory refresh warms nearest-three routes in bulk before the per-object pass', async () => {
+  const objects = [
+    { id: 'object-a', latitude: '55.750000', longitude: '37.610000' },
+    { id: 'object-b', latitude: '55.760000', longitude: '37.620000' },
+  ];
+  const accessPoints = [
+    { id: 'metro-1', stationName: 'Таганская', datasetVersion: 'v1', latitude: '55.740000', longitude: '37.620000' },
+    { id: 'metro-2', stationName: 'Марксистская', datasetVersion: 'v1', latitude: '55.741000', longitude: '37.640000' },
+    { id: 'metro-3', stationName: 'Павелецкая', datasetVersion: 'v1', latitude: '55.730000', longitude: '37.630000' },
+  ];
+  const upserts = [];
+  const prisma = {
+    realEstateObject: {
+      async findFirst() { return null; },
+      async findMany({ where, take }) {
+        return objects
+          .filter(({ id }) => !where.id || id > where.id.gt)
+          .slice(0, take)
+          .map((object) => ({ ...object }));
+      },
+    },
+    async $queryRaw(query) {
+      const sql = query.strings.join(' ');
+      if (sql.includes('CROSS JOIN LATERAL')) {
+        return objects.flatMap((object) => accessPoints.map((point) => ({
+          id: object.id,
+          latitude: object.latitude,
+          longitude: object.longitude,
+          accessLatitude: point.latitude,
+          accessLongitude: point.longitude,
+        })));
+      }
+      if (sql.includes('WHERE o.id IN')) return [];
+      if (sql.includes('LIMIT 1')) return upserts.length === objects.length ? [] : [{ id: 'gap' }];
+      return accessPoints;
+    },
+    assistantObjectMetroRouteFact: { async upsert(input) { upserts.push(input); } },
+  };
+  const warmCalls = [];
+  let routeCalls = 0;
+  const routing = {
+    async warmWalkingRoutes(requests) {
+      warmCalls.push(requests);
+      return { requests: requests.length, pairs: requests.length * 3, fetched: 6, providerCalls: 1 };
+    },
+    async getWalkingRoutes({ destinations }) {
+      routeCalls += 1;
+      return {
+        routes: destinations.map((_, destinationIndex) => ({
+          destinationIndex,
+          durationSeconds: 300 + destinationIndex * 30,
+          distanceMeters: 400 + destinationIndex * 40,
+        })),
+      };
+    },
+  };
+
+  const service = new AssistantMetroTravelTimeService(prisma, routing);
+  assert.deepEqual(await service.refreshPublishedObjects(), {
+    publishedObjects: 2,
+    refreshed: 2,
+    warmup: { requests: 2, pairs: 6, fetched: 6, providerCalls: 1 },
+  });
+  assert.deepEqual(warmCalls, [[
+    { origin: [55.75, 37.61], destinations: [[55.74, 37.62], [55.741, 37.64], [55.73, 37.63]] },
+    { origin: [55.76, 37.62], destinations: [[55.74, 37.62], [55.741, 37.64], [55.73, 37.63]] },
+  ]]);
+  assert.equal(routeCalls, 2, 'the per-object pass still runs and is expected to hit the warmed cache');
+  assert.deepEqual(upserts.map(({ where, create }) => [where.objectId, create.metroAccessPointId]), [
+    ['object-a', 'metro-1'],
+    ['object-b', 'metro-1'],
+  ]);
+
+  upserts.length = 0;
+  const withoutWarmup = new AssistantMetroTravelTimeService(prisma, { getWalkingRoutes: routing.getWalkingRoutes });
+  assert.deepEqual(await withoutWarmup.refreshPublishedObjects(), { publishedObjects: 2, refreshed: 2, warmup: null });
+
+  upserts.length = 0;
+  const failingWarmup = new AssistantMetroTravelTimeService(prisma, {
+    ...routing,
+    async warmWalkingRoutes() { throw new Error('provider exploded'); },
+  });
+  await assert.rejects(
+    failingWarmup.refreshPublishedObjects(),
+    (error) => error instanceof AssistantMetroTravelTimeUnavailableError && error.code === 'ASSISTANT_METRO_ROUTER_UNAVAILABLE',
+  );
+  assert.equal(upserts.length, 0, 'a failed warm-up must fail closed before any per-object fact is written');
+});
+
+test('FIX-GEO2 travel-time phrasing does not leak into the metro or developer filters', async () => {
+  const fromMetro = extractAssistantExplicitHardFilters(['Покажи квартиры не дальше 7 минут пешком от метро']);
+  assert.equal(fromMetro.developer, undefined, '«от метро» is not a developer');
+  assert.equal(fromMetro.metro, undefined, '«метро» without a station is not a metro filter');
+  const toMetroInDistrict = extractAssistantExplicitHardFilters([
+    'Покажи квартиры не дальше 10 минут пешком до метро в Хамовниках',
+  ]);
+  assert.equal(toMetroInDistrict.metro, undefined, '«до метро в Хамовниках» is not the metro filter «в Хамовниках»');
+  assert.equal(toMetroInDistrict.district, 'Хамовниках', 'the locative form is canonicalized later against the locations directory');
+  assert.equal(extractAssistantExplicitHardFilters(['Квартиры у метро Курская']).metro, 'Курская');
+  const named = extractAssistantExplicitHardFilters(['Двушки до 5 минут пешком до метро Сокол от застройщика ПИК']);
+  assert.equal(named.metro, 'Сокол');
+  assert.equal(named.developer, 'ПИК');
+  assert.deepEqual(named.rooms, [2]);
+
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+  const result = await planner.plan({
+    messages: ['Покажи квартиры не дальше 7 минут пешком от метро'], context: null,
+  });
+  assert.equal(result.intent.hardFilters.developer, null);
+  assert.equal(result.intent.hardFilters.metro, null);
+  assert.equal(result.intent.predicates.find((item) => item.type === 'TRAVEL_TIME').value, 7);
+  const withDistrict = await planner.plan({
+    messages: ['Покажи квартиры не дальше 10 минут пешком до метро в Хамовниках'], context: null,
+  });
+  assert.equal(withDistrict.intent.hardFilters.metro, null);
+  assert.match(withDistrict.intent.hardFilters.district, /^Хамовник/u);
+  assert.equal(withDistrict.intent.predicates.find((item) => item.type === 'TRAVEL_TIME').value, 10);
+});

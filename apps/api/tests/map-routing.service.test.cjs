@@ -343,3 +343,101 @@ function restoreCapturedEnvironment(environment) {
     restoreEnvironment(name, value);
   }
 }
+
+test('MapRoutingService warms missing walking routes through multi-source matrix requests', { concurrency: false }, async () => {
+  const requests = [];
+  const server = createServer((request, response) => {
+    let body = '';
+
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+    });
+    request.on('end', () => {
+      const parsed = JSON.parse(body);
+      requests.push({ body: parsed, url: request.url });
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        distances: parsed.sources.map((_, row) => parsed.destinations.map((_, column) => 100 * (row + 1) + column + 0.4)),
+        durations: parsed.sources.map((_, row) => parsed.destinations.map((_, column) => 60 * (row + 1) + column + 0.2)),
+      }));
+    });
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const previousEnvironment = captureEnvironment([
+    'OPENROUTESERVICE_API_KEY',
+    'OPENROUTESERVICE_API_URL',
+    'OPENROUTESERVICE_CACHE_STALE_AFTER_MS',
+    'OPENROUTESERVICE_MATRIX_MAX_ROUTES',
+  ]);
+  process.env.OPENROUTESERVICE_API_KEY = 'test-routing-key';
+  process.env.OPENROUTESERVICE_API_URL = `http://127.0.0.1:${address.port}`;
+  process.env.OPENROUTESERVICE_CACHE_STALE_AFTER_MS = '60000';
+  delete process.env.OPENROUTESERVICE_MATRIX_MAX_ROUTES;
+
+  try {
+    const service = new MapRoutingService(createTestPrisma());
+    const first = { origin: [55.75, 37.61], destinations: [[55.76, 37.62], [55.77, 37.63]] };
+    const second = { origin: [55.7, 37.6], destinations: [[55.76, 37.62], [55.71, 37.61]] };
+
+    assert.deepEqual(await service.warmWalkingRoutes([first, second]), {
+      requests: 2,
+      pairs: 4,
+      fetched: 4,
+      providerCalls: 1,
+    });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, '/v2/matrix/foot-walking');
+    assert.deepEqual(requests[0].body.sources, [0, 1]);
+    assert.deepEqual(requests[0].body.destinations, [2, 3, 4]);
+    assert.deepEqual(requests[0].body.locations, [
+      [37.61, 55.75],
+      [37.6, 55.7],
+      [37.62, 55.76],
+      [37.63, 55.77],
+      [37.61, 55.71],
+    ]);
+
+    assert.deepEqual(await service.getWalkingRoutes(first), {
+      routes: [
+        { destinationIndex: 0, distanceMeters: 100, durationSeconds: 60 },
+        { destinationIndex: 1, distanceMeters: 101, durationSeconds: 61 },
+      ],
+    });
+    assert.deepEqual(await service.getWalkingRoutes(second), {
+      routes: [
+        { destinationIndex: 0, distanceMeters: 200, durationSeconds: 120 },
+        { destinationIndex: 1, distanceMeters: 202, durationSeconds: 122 },
+      ],
+    });
+    assert.deepEqual(await service.warmWalkingRoutes([first, second]), {
+      requests: 2,
+      pairs: 4,
+      fetched: 0,
+      providerCalls: 0,
+    });
+    assert.equal(requests.length, 1, 'fresh cache entries must not be fetched again');
+
+    process.env.OPENROUTESERVICE_MATRIX_MAX_ROUTES = '4';
+    const limited = new MapRoutingService(createTestPrisma());
+    const origins = [[55.8, 37.5], [55.81, 37.51], [55.82, 37.52]];
+    const summary = await limited.warmWalkingRoutes(origins.map(([latitude, longitude]) => ({
+      origin: [latitude, longitude],
+      destinations: [[latitude + 0.01, longitude], [latitude, longitude + 0.01]],
+    })));
+    assert.deepEqual(summary, { requests: 3, pairs: 6, fetched: 6, providerCalls: 3 });
+    assert.deepEqual(requests.slice(1).map(({ body }) => body.sources), [[0], [0], [0]]);
+
+    await assert.rejects(service.warmWalkingRoutes({ origin: [55.75, 37.61], destinations: [] }), /invalid/u);
+    await assert.rejects(
+      service.warmWalkingRoutes([{ origin: [95, 37.61], destinations: [[55.76, 37.62]] }]),
+      /Origin coordinates are invalid/u,
+    );
+    assert.equal(requests.length, 4);
+  } finally {
+    restoreCapturedEnvironment(previousEnvironment);
+    server.close();
+  }
+});
