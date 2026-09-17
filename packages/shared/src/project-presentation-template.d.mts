@@ -64,9 +64,11 @@ export declare const PROJECT_PRESENTATION_LIMITS: Readonly<{
 }>;
 export declare const PROJECT_PRESENTATION_FONT_FILES: readonly ProjectPresentationFontFile[];
 export declare const PROJECT_PRESENTATION_LINKS: Readonly<{
+  chat: string;
+  start: string;
+  instagram: string;
   telegram: string;
-  instagram: string | null;
-  youtube: string | null;
+  youtube: string;
 }>;
 export declare const PROJECT_PRESENTATION_DEFAULT_PHONE: string;
 export declare const PROJECT_PRESENTATION_DEFAULT_MAP_TITLE: string;

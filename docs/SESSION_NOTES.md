@@ -10,7 +10,20 @@
 
 ---
 
+## 2026-09-17
+
+### Подборка ЖК: ссылки последней страницы из каталога FluffyWhite
+
+- `PROJECT_PRESENTATION_LINKS` (`packages/shared/src/project-presentation-template.mjs`) теперь хранит ссылки с 14-й страницы `~/Downloads/Catalog_feb_2026.pdf`: Instagram `fluffywhite.estate`, Telegram-канал `t.me/+OacAOVxTqWM0Y2Ji`, YouTube `@fluffywhite.moscow`, «Начать подбор» `clck.ru/3QmQoS` (ведёт в `t.me/fluffywhite` с заготовленным текстом). Заглушек-`span` больше нет, все три плашки — ссылки.
+- «Узнать подробности» на страницах ЖК по-прежнему ведёт на `snapshot.cta.url` (`t.me/FluffyWhite`), в превью — `PROJECT_PRESENTATION_LINKS.chat`. Снапшот и его версия не менялись: ссылки финальной страницы берутся из шаблона в момент печати.
+
 ## 2026-09-16
+
+### Production deploy full-20260916T2115Z (main 96807a5)
+
+- На прод (`193.168.48.214`) выкачен весь `main` вместо релиза карты `fcac82a`: git-бандл → `/opt/platforma-releases/full-20260916T2115Z-96807a5…`, бэкап (`.env`, pg_dump + sha256 + list) в `/opt/platforma-deploy-backups/full-20260916T2115Z/`, образы `release-96807a5…-20260916T2115Z`, итог в `deploy-result.txt` там же. Compose: `docker compose --env-file /opt/platforma/.env.production --project-directory <release> -f docker-compose.yml -f docker-compose.production.yml`.
+- Миграции ассистента требуют pgvector: Postgres пересоздан на `platforma-postgres:16-postgis3.5-pgvector0.8.6` (том `platforma_postgres_data` сохранён, данные сверены), применено 16 миграций (итого 76). Пересозданы postgres, api, web; redis, minio и `training-voice-worker` (patch5-образ, код обучения не менялся) не трогались.
+- ИИ-помощник на проде: `ASSISTANT_MODULE_ENABLED=true`, `ASSISTANT_ROLLOUT_STAGE=ADMINS`, `ASSISTANT_AI_MODE=fake` — иконку видит только роль admin (6 активных), user/training_pilot — нет (проверено `isAssistantEnabledForActor` по реальным правам). GitHub `origin/main` по-прежнему на `d8ced67` — не пушили.
 
 ### Аудит AI-ассистента: что нужно для живого режима (исследование, без изменений кода)
 
@@ -25,7 +38,7 @@
 - Генерация: pdfkit → Chromium (playwright-core, `page.pdf`). Карта: MapLibre 6 + OpenFreeMap в том же браузере (`project-presentations-map.ts`, ES-модули отдаются с виртуального `https://map.invalid`), скриншот + пиксельные позиции маркеров; без копирайта OSM (решение пользователя). Если карта не отрисовалась — маркеры на нейтральном фоне, PDF всё равно собирается. В Alpine-Chromium нет SwiftShader: в образ API добавлены `mesa-egl mesa-gles mesa-dri-gallium`, флаги `--use-gl=angle --use-angle=gl-egl` (только linux). Env: `PROJECT_PRESENTATIONS_BROWSER_EXECUTABLE_PATH`, `PROJECT_PRESENTATIONS_MAP_ENABLED` (в тестах `false`), `PROJECT_PRESENTATIONS_MAP_STYLE_URL`. Время на 3 ЖК в докере ≈16 с (карта ≈13 с), первый прогон холодный ≈70 с.
 - Данные: миграция `20260916180000_add_project_presentation_map_title` (поле «Заголовок страницы с картой» на шаге 3). Снапшот v2 (`map.title`), v1 рендерится с дефолтным заголовком. Телефон — брокера, который запускает генерацию (раньше брался автор черновика), российские номера форматируются. Перед генерацией (веб + сервер) обязательны: имя клиента, заголовок карты, у каждого ЖК 4 преимущества (≤40), ровно 3 фото из галереи (автоподстановки больше нет), описание ≤430 (текст из карточки обрезается по слову). «Продолжить» и переходы по шагам не пускают дальше первого незаполненного шага.
 - Карта рисуется за один проход: стиль скачивается и локализуется до создания карты, камера сразу на объектах (≈6 с вместо ≈8). Таймаут 20 с на этап, при зависании вторая попытка на чистой странице (`PROJECT_PRESENTATIONS_MAP_TIMEOUT_MS`, `PROJECT_PRESENTATIONS_MAP_ATTEMPTS`), пока рисуется — прогресс тикает 60→72 раз в 2 с. Лог: `Project presentation printed: … map Xs / fallback after Xs`. «Сформировать PDF» заблокирована, пока текущий документ PENDING/RUNNING: на тесте пользователь нажимал трижды при медленной карте (30 с), дубли вставали в очередь и казалось, что PDF «не делается».
-- Превью редактора — тот же HTML в iframe (`srcDoc`, масштаб по ширине) + офскрин-снимок карты (`projectPresentationMapSnapshot.ts`). Удалены pdfkit-шаблон, старые React-страницы превью, золотой логотип и Noto Serif Display. В параметрах карточки остались только Стоимость/Класс/Метро (район, девелопер, срок в новом PDF не выводятся, в данных сохраняются). Instagram/YouTube — заглушки без ссылок в `PROJECT_PRESENTATION_LINKS`.
+- Превью редактора — тот же HTML в iframe (`srcDoc`, масштаб по ширине) + офскрин-снимок карты (`projectPresentationMapSnapshot.ts`). Удалены pdfkit-шаблон, старые React-страницы превью, золотой логотип и Noto Serif Display. В параметрах карточки остались только Стоимость/Класс/Метро (район, девелопер, срок в новом PDF не выводятся, в данных сохраняются). Ссылки соцсетей — в `PROJECT_PRESENTATION_LINKS` (см. 2026-09-17).
 
 ### Профиль: экран из рефа, блок «Разделы для роли» удалён
 

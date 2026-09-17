@@ -28,11 +28,13 @@ export const PROJECT_PRESENTATION_FONT_FILES = Object.freeze([
   'Inter-Medium.woff2',
   'Lora-Italic.woff2',
 ]);
-// Instagram and YouTube stay placeholders until the real accounts are provided.
+// `chat` backs the per-project buttons; the rest are copied from the last page of the FluffyWhite catalog.
 export const PROJECT_PRESENTATION_LINKS = Object.freeze({
-  telegram: 'https://t.me/FluffyWhite',
-  instagram: null,
-  youtube: null,
+  chat: 'https://t.me/FluffyWhite',
+  start: 'https://clck.ru/3QmQoS',
+  instagram: 'https://www.instagram.com/fluffywhite.estate/',
+  telegram: 'https://t.me/+OacAOVxTqWM0Y2Ji',
+  youtube: 'https://www.youtube.com/@fluffywhite.moscow',
 });
 export const PROJECT_PRESENTATION_DEFAULT_PHONE = '+7 (495) 492-48-58';
 export const PROJECT_PRESENTATION_DEFAULT_MAP_TITLE = 'Москва, в которой хочется жить';
@@ -184,14 +186,14 @@ function renderFinal(contacts) {
 <div class="fw-start">
 ${ringsSvg('fw-start__rings', 230, 190, '#622b34', [40, 78, 116, 154, 192])}
 <p class="fw-start__quote">С FluffyWhite вы не просто покупаете квартиру.<br>Вы получаете уверенность, спокойствие, опору.</p>
-<div class="fw-start__row"><p class="fw-start__title">Начните подбор<br>недвижимости с<br>FluffyWhite</p><a class="fw-button fw-button--start" href="${escapeHtml(contacts.ctaUrl)}"><span>Начать подбор</span><span class="fw-button__arrow">${icon('arrowRight', 16)}</span></a></div>
+<div class="fw-start__row"><p class="fw-start__title">Начните подбор<br>недвижимости с<br>FluffyWhite</p><a class="fw-button fw-button--start" href="${escapeHtml(PROJECT_PRESENTATION_LINKS.start)}"><span>Начать подбор</span><span class="fw-button__arrow">${icon('arrowRight', 16)}</span></a></div>
 </div>
 <div class="fw-contacts">
 <h2 class="fw-contacts__title">Наши контакты</h2>
 <p class="fw-contacts__note">Свяжитесь с нами удобным<br>способом.</p>
 <span class="fw-contacts__label">Номер телефона</span>
 <a class="fw-contacts__phone" href="${escapeHtml(phoneHref)}" data-fit data-fit-lines="1" data-fit-min="24">${escapeHtml(phone)}</a>
-<div class="fw-socials">${socials.map(([label, href]) => `<${href ? `a href="${escapeHtml(href)}"` : 'span'} class="fw-social"><span>${label}</span><span class="fw-social__arrow">${icon('arrowUpRight', 14)}</span></${href ? 'a' : 'span'}>`).join('')}</div>
+<div class="fw-socials">${socials.map(([label, href]) => `<a href="${escapeHtml(href)}" class="fw-social"><span>${label}</span><span class="fw-social__arrow">${icon('arrowUpRight', 14)}</span></a>`).join('')}</div>
 </div>
 </section>`;
 }

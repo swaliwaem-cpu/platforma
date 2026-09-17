@@ -202,7 +202,7 @@ function createPreviewModel(
     })),
     contacts: {
       phone: brokerPhone,
-      ctaUrl: PROJECT_PRESENTATION_LINKS.telegram,
+      ctaUrl: PROJECT_PRESENTATION_LINKS.chat,
     },
   };
 }

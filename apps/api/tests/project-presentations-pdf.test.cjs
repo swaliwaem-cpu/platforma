@@ -109,11 +109,17 @@ test('project PDF is printed by Chromium on a 3:4 canvas with exactly N + 4 page
   }
 });
 
-test('project PDF links to FluffyWhite Telegram and dials the generating broker', async () => {
-  const buffer = await new ProjectPresentationsPdfService(await createFilesService()).generate(createSnapshot(1));
+test('project PDF links every project, the catalog contacts and dials the generating broker', async () => {
+  const buffer = await new ProjectPresentationsPdfService(await createFilesService()).generate(createSnapshot(2));
   const source = buffer.toString('latin1');
 
-  assert.ok((source.match(/https:\/\/t\.me\/FluffyWhite/g) ?? []).length >= 3);
+  assert.equal((source.match(/https:\/\/t\.me\/FluffyWhite/g) ?? []).length, 2);
+  for (const url of [
+    'https://clck.ru/3QmQoS',
+    'https://www.instagram.com/fluffywhite.estate/',
+    'https://t.me/+OacAOVxTqWM0Y2Ji',
+    'https://www.youtube.com/@fluffywhite.moscow',
+  ]) assert.ok(source.includes(`/URI (${url})`), url);
   assert.match(source, /tel:\+79991112233/);
 });
 
@@ -147,7 +153,7 @@ test('legacy v1 snapshots without coordinates, map title or photos stay renderab
   assert.equal(inspectPdf(buffer).pages.length, 6);
 });
 
-test('template renders the approved page order, escapes user text and keeps placeholders for socials', async () => {
+test('template renders the approved page order, escapes user text and links the catalog contacts', async () => {
   const template = await loadTemplate();
   const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
   const model = {
@@ -178,9 +184,12 @@ test('template renders the approved page order, escapes user text and keeps plac
   assert.equal((html.match(/class="fw-facts__number"/g) ?? []).length, 4);
   assert.doesNotMatch(html, /OpenStreetMap/);
   assert.match(html, /class="fw-map__marker" style="left:10px;top:20px"/);
-  assert.match(html, /<a href="https:\/\/t\.me\/FluffyWhite" class="fw-social">/);
-  assert.match(html, /<span class="fw-social"><span>Instagram<\/span>/);
-  assert.match(html, /<span class="fw-social"><span>YouTube<\/span>/);
+  assert.match(html, /class="fw-button fw-button--details" href="https:\/\/t\.me\/FluffyWhite"/);
+  assert.match(html, /class="fw-button fw-button--start" href="https:\/\/clck\.ru\/3QmQoS"/);
+  assert.match(html, /<a href="https:\/\/www\.instagram\.com\/fluffywhite\.estate\/" class="fw-social"><span>Instagram<\/span>/);
+  assert.match(html, /<a href="https:\/\/t\.me\/\+OacAOVxTqWM0Y2Ji" class="fw-social"><span>Telegram<\/span>/);
+  assert.match(html, /<a href="https:\/\/www\.youtube\.com\/@fluffywhite\.moscow" class="fw-social"><span>YouTube<\/span>/);
+  assert.doesNotMatch(html, /<span class="fw-social">/);
   assert.match(html, /href="tel:\+74954924858"/);
   assert.match(html, /font-kerning:none!important/);
   for (const file of template.PROJECT_PRESENTATION_FONT_FILES) assert.ok(html.includes(`/fonts/${file}`));
