@@ -18,7 +18,8 @@ import {
   type ExtractedSourceFact,
 } from './official-source.extractor';
 
-const embeddingBatchSize = 64;
+// DashScope text-embedding-v4 rejects requests with more than 10 inputs (InvalidParameter).
+const embeddingBatchSize = 10;
 
 export class AssistantSourceIngestionError extends Error {
   constructor(readonly code: string, readonly retryable: boolean, options?: { cause?: unknown }) {
