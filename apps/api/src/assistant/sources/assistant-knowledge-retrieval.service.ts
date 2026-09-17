@@ -7,6 +7,7 @@ import {
 import type { AssistantPageContext } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { createObjectSlugReference } from '../assistant-object-identity';
 import type { AssistantStructuredIntent } from '../assistant-query-planner';
 import { AssistantEmbeddingGateway } from './assistant-embedding.gateway';
 import type { AssistantEmbeddingOperationContext } from './assistant-embedding.gateway';
@@ -121,6 +122,17 @@ export class AssistantKnowledgeRetrievalService {
         'g'
       ))
     `;
+    // Brands are written in either alphabet («Nicole» for «ЖК Николь»); compare the Latin slug
+    // without its «zhiloj-kompleks» prefix against the transliterated reference as well.
+    const slugReference = createObjectSlugReference(projectReference);
+    const strippedProjectKey = Prisma.sql`
+      TRIM(REGEXP_REPLACE(${normalizedProjectKey}, '^(zhk|zhiloj kompleks|zhiloy kompleks|bc|biznes tsentr|mfk) ', ''))
+    `;
+    const slugCondition = slugReference.length >= 3
+      ? Prisma.sql`
+          OR ${strippedProjectKey} = ${slugReference}
+          OR ${slugReference} LIKE (${strippedProjectKey} || ' %')`
+      : Prisma.empty;
     const rows = await this.prisma.$queryRaw<ProjectIdentityRow[]>(Prisma.sql`
       SELECT DISTINCT
         o."slug" AS "projectKey",
@@ -135,6 +147,7 @@ export class AssistantKnowledgeRetrievalService {
           OR ${projectReference} LIKE (${normalizedTitle} || ' %')
           OR ${normalizedProjectKey} = ${projectReference}
           OR ${projectReference} LIKE (${normalizedProjectKey} || ' %')
+          ${slugCondition}
         )
       ORDER BY o."slug" ASC
     `);

@@ -636,7 +636,7 @@ function paidAttempt(overrides = {}) {
     executionId: '20000000-0000-4000-8000-000000000001',
     attemptOrdinal: 1,
     operation: 'PLANNER',
-    requestedModel: 'qwen-plus',
+    requestedModel: 'qwen-flash',
     status: 'SETTLED',
     reservedCostUsd: '0.05000000',
     chargedCostUsd: '0.01000000',

@@ -1001,6 +1001,112 @@ test('PIDAFIX2 trusted landmark identity matches a stored alias independently of
   );
 });
 
+test('FIX-GEO2 resolves «метро <станция>» from the metro directory without provider calls', async () => {
+  let saveInput = null;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() { return []; },
+      async saveVerifiedMetroStation(input) {
+        saveInput = input;
+        return {
+          id: 'landmark-metro-frunzenskaya',
+          kind: 'POINT',
+          label: 'метро «Фрунзенская»',
+          city: 'Москва',
+          countryCode: 'ru',
+          source: 'PLACE',
+          point: { latitude: 55.72688, longitude: 37.578328 },
+        };
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'Подбери двушку до 40 млн рядом с метро Фрунзенская',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'RESOLVED');
+  assert.equal(saveInput.stationQuery, 'фрунзенская');
+  assert.equal(saveInput.normalizedQuery, 'метро фрунзенская');
+  assert.equal(result.candidates[0].label, 'метро «Фрунзенская»');
+  assert.deepEqual(result.candidates[0].point, { latitude: 55.72688, longitude: 37.578328 });
+  assert.equal(result.candidates[0].distanceMeters, 2000);
+});
+
+test('FIX-GEO2 leaves non-metro places and unknown stations to the provider chain', async () => {
+  let metroLookups = 0;
+  let providerCalls = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    {
+      ...createUnusedProvider(),
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    {
+      async findTrustedByQuery() { return []; },
+      async saveVerifiedMetroStation() {
+        metroLookups += 1;
+        return null;
+      },
+    },
+  );
+
+  const plaza = await resolver.resolve({ content: 'Найди рядом с Павелецкой Плазой', locale: 'ru', country: 'ru' });
+  assert.equal(plaza.status, 'NOT_FOUND');
+  assert.equal(metroLookups, 0);
+
+  const unknown = await resolver.resolve({ content: 'Найди рядом с метро Несуществующая', locale: 'ru', country: 'ru' });
+  assert.equal(unknown.status, 'NOT_FOUND');
+  assert.equal(metroLookups, 1);
+  assert.equal(providerCalls, 2);
+});
+
+test('FIX-GEO2 metro directory landmark is persisted as a verified point with a directory identity', async () => {
+  const queries = [];
+  const landmarks = new AssistantGeoLandmarkService({
+    $queryRaw: async (query) => {
+      queries.push(query);
+      const sql = query.strings.join('');
+      if (sql.includes('assistant_metro_access_points')) {
+        return [{ stationName: 'Фрунзенская', datasetVersion: 'openfreemap-test', latitude: 55.72688, longitude: 37.578328, points: 4 }];
+      }
+      return [{
+        id: 'landmark-metro', kind: 'point', label: 'метро «Фрунзенская»', city: 'Москва', country: 'ru',
+        sourceProvider: 'metro_directory', latitude: 55.72688, longitude: 37.578328,
+      }];
+    },
+  });
+
+  const landmark = await landmarks.saveVerifiedMetroStation({
+    stationQuery: 'Фрунзенская',
+    normalizedQuery: 'метро фрунзенская',
+    aliases: ['метро фрунзенская'],
+    locale: 'ru',
+  });
+
+  assert.equal(landmark.id, 'landmark-metro');
+  assert.equal(landmark.kind, 'POINT');
+  assert.equal(landmark.source, 'PLACE');
+  assert.deepEqual(queries[0].values, ['фрунзенская']);
+  const insert = queries[1];
+  assert.match(insert.strings.join(''), /INSERT INTO "assistant_geo_landmarks"/u);
+  assert.ok(insert.values.includes('metro_directory'));
+  assert.ok(insert.values.includes('metro/openfreemap-test/Фрунзенская'));
+  assert.ok(insert.values.includes('метро «Фрунзенская»'));
+
+  const missing = new AssistantGeoLandmarkService({ $queryRaw: async () => [] });
+  assert.equal(await missing.saveVerifiedMetroStation({
+    stationQuery: 'Несуществующая', normalizedQuery: 'метро несуществующая', aliases: [], locale: 'ru',
+  }), null);
+});
+
 test('FIX-GEO1 explicit distance wins and INSIDE has no distance', () => {
   const near = parseResolveInput({
     content: 'Найди квартиру не дальше 3 км от Садового кольца, 1-комнатную до 35 млн',

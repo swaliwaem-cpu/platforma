@@ -208,6 +208,25 @@ export class AssistantPlaceResolverService {
       return result;
     }
 
+    // Metro stations come from the imported access-point directory, never from the geocoder:
+    // LocationIQ answers «метро X» with bus stops and the road collector then fails on them.
+    const metroStationQuery = readMetroStationQuery(input.normalizedQuery);
+    if (metroStationQuery && typeof this.landmarks.saveVerifiedMetroStation === 'function') {
+      const station = await this.landmarks.saveVerifiedMetroStation({
+        stationQuery: metroStationQuery,
+        normalizedQuery: input.normalizedQuery,
+        aliases: [...new Set([input.normalizedQuery, ...input.aliases])],
+        locale: input.locale,
+        userAlias: input.userAlias,
+      });
+      const compatible = station ? filterLandmarksForMode([station], input.mode) : [];
+      if (compatible.length > 0) {
+        const result = resolved(input, compatible.map((landmark) => toCandidate(input, landmark)));
+        await this.recordOperation(input, actorUserId, 'metro_directory', result.status, startedAt, false, 0, null);
+        return result;
+      }
+    }
+
     const cacheKey = createCacheKey(input);
     const cached = await this.readLandmarkCache(cacheKey);
     if (cached !== null) {
@@ -1062,6 +1081,13 @@ function parseDistrictFallbackInput(value: unknown): ParsedDistrictFallback | nu
   if (!district) return null;
   const input = parseResolveInput({ ...value, content: `возле ${district}` });
   return input ? { district, input } : null;
+}
+
+const metroStationQueryPattern = /^(?:метро|м\.|ст\.\s*м\.|станци[яи](?:\s+метро)?)\s+(?<station>[«"]?[\p{L}\p{N}][\p{L}\p{N}\s.-]{1,79}[»"]?)$/iu;
+
+export function readMetroStationQuery(normalizedQuery: string): string | null {
+  const station = normalizedQuery.trim().match(metroStationQueryPattern)?.groups?.station;
+  return station ? station.replace(/[«»"]/gu, '').trim() : null;
 }
 
 export function normalizePlaceQuery(value: string) {

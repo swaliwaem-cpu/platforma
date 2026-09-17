@@ -1,7 +1,4 @@
-import type {
-  AssistantSearchFilters,
-  AssistantStructuredIntent,
-} from './assistant-query-planner';
+import type { AssistantSearchFilters } from './assistant-query-planner';
 
 const filterKeys = [
   'budgetMinRub',
@@ -31,23 +28,23 @@ export function assistantFiltersHaveConflict(filters: Partial<AssistantSearchFil
     && typeof maximum === 'number' && minimum > maximum);
 }
 
-export function assistantPlannerValuesAreGrounded(
-  intent: AssistantStructuredIntent,
+// A provider-assigned filter value is grounded only when the deterministic extractors
+// read the same value from the dialog or the page context. Anything else is dropped so
+// the merge below falls back to the extracted values instead of an invented one.
+export function dropUngroundedPlannerFilterValues(
+  filters: AssistantSearchFilters,
   explicitFilters: Partial<AssistantSearchFilters>,
   contextFilters: Partial<AssistantSearchFilters>,
-  explicitComparisonTargets: string[] | null,
-) {
-  for (const filters of [intent.hardFilters, intent.softPreferences]) {
-    for (const key of filterKeys) {
-      const value = filters[key];
-      if (!filterHasSignal(key, value)) continue;
-      if (!filterValuesEqual(value, explicitFilters[key])
-        && !filterValuesEqual(value, contextFilters[key])) return false;
-    }
+): AssistantSearchFilters {
+  const result = { ...filters, rooms: [...filters.rooms] };
+  for (const key of filterKeys) {
+    const value = filters[key];
+    if (!filterHasSignal(key, value)) continue;
+    if (filterValuesEqual(value, explicitFilters[key])
+      || filterValuesEqual(value, contextFilters[key])) continue;
+    assignFilterValue(result, key, key === 'rooms' ? [] : key === 'objectType' ? 'RESIDENTIAL' : null);
   }
-  return intent.comparisonTargets.length === 0
-    || (explicitComparisonTargets !== null
-      && filterValuesEqual(intent.comparisonTargets, explicitComparisonTargets));
+  return result;
 }
 
 export function omitProviderAssignedFilters(

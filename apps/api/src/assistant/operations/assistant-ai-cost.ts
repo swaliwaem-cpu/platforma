@@ -1,4 +1,4 @@
-export const ASSISTANT_AI_PRICING_CATALOG_VERSION = 'alibaba-dashscope-pricing-2026-09-13';
+export const ASSISTANT_AI_PRICING_CATALOG_VERSION = 'alibaba-dashscope-pricing-2026-09-17';
 export const ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION = 'alibaba-dashscope-embedding-pricing-2026-09-13';
 export const ASSISTANT_AI_SERVICE_TIER = 'default';
 
@@ -16,10 +16,20 @@ type AssistantAiRates = {
 };
 
 // Rates are USD units (1e-8 USD) per token, DashScope international list prices.
-// qwen-plus: 0-256K $0.40/$1.20 per 1M, 256K-1M $1.20/$3.60 (non-thinking mode).
-// qwen-max: no tiers, $1.60/$6.40 per 1M. Neither model advertises a context
-// caching discount, so cached/cache-write tokens are billed at the standard input rate.
+// qwen-flash (planner primary): 0-256K $0.05/$0.40 per 1M, 256K-1M $0.25/$2.00.
+// qwen3.8-max (planner fallback): no tiers, $2.00/$6.00 per 1M.
+// qwen-plus (discovery): 0-256K $0.40/$1.20 per 1M, 256K-1M $1.20/$3.60 (non-thinking mode).
+// qwen-max (discovery fallback): no tiers, $1.60/$6.40 per 1M. No model advertises a context
+// caching discount here, so cached/cache-write tokens are billed at the standard input rate.
 const pricingCatalog: Record<string, Record<AssistantAiPricingTier, AssistantAiRates>> = {
+  'qwen-flash': {
+    standard: { input: 5n, cachedInput: 5n, cacheWriteInput: 5n, output: 40n },
+    long: { input: 25n, cachedInput: 25n, cacheWriteInput: 25n, output: 200n },
+  },
+  'qwen3.8-max': {
+    standard: { input: 200n, cachedInput: 200n, cacheWriteInput: 200n, output: 600n },
+    long: { input: 200n, cachedInput: 200n, cacheWriteInput: 200n, output: 600n },
+  },
   'qwen-plus': {
     standard: { input: 40n, cachedInput: 40n, cacheWriteInput: 40n, output: 120n },
     long: { input: 120n, cachedInput: 120n, cacheWriteInput: 120n, output: 360n },

@@ -4,6 +4,8 @@ import {
 } from '@prisma/client';
 import type { AssistantPageContext } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
+import { createObjectSlugReference, normalizeObjectSlug } from '../assistant-object-identity';
+
 const maximumKnowledgeQueryContextLength = 1_000;
 const knowledgeScopeQueryCuePattern = /(?:\b(?:есть|где|какая|какие|какой|когда|покажи|расскажи|сколько|что)\b|акци|архитектур|ипотек|инфраструктур|метро|паркинг|рассроч|скидк|срок|стоимост|услов|фасад|цен)/iu;
 const knowledgeProjectReferenceStopTokenPattern = /^(?:актуальн\p{L}*|акци\p{L}*|архитектур\p{L}*|все|где|действ\p{L}*|доступн\p{L}*|есть|ипотек\p{L}*|как|какая|какие|какой|когда|можно|покажи|предложен\p{L}*|прямо|работа\p{L}*|расскажи|рассроч\p{L}*|сейчас|сегодня|скидк\p{L}*|сколько|срок\p{L}*|стоимост\p{L}*|услов\p{L}*|цен\p{L}*|что)$/u;
@@ -192,6 +194,9 @@ export function resolveAssistantKnowledgeProjectIdentity<
   const allowInfrastructureTail = options.referenceQuery
     ? isAssistantKnowledgeInfrastructureReferenceQuery(options.referenceQuery)
     : false;
+  // Brands are written in either alphabet («Nicole» for «ЖК Николь»); the Latin project key
+  // without its «zhiloj kompleks» prefix is the alphabet-neutral identity.
+  const slugReference = createObjectSlugReference(referenceClause);
   const matches = new Map<string, { identity: T; specificity: number }>();
   for (const identity of identities) {
     const normalizedTitle = normalizeKnowledgeProjectTitle(identity.objectTitle);
@@ -209,6 +214,14 @@ export function resolveAssistantKnowledgeProjectIdentity<
         options.allowReferenceTail !== false,
         allowInfrastructureTail,
       ) ?? -1,
+      slugReference.length >= 3
+        ? projectIdentityMatchSpecificity(
+            slugReference,
+            normalizeObjectSlug(identity.projectKey),
+            options.allowReferenceTail !== false,
+            allowInfrastructureTail,
+          ) ?? -1
+        : -1,
     );
     if (specificity < 0) continue;
     const existing = matches.get(identity.projectKey);

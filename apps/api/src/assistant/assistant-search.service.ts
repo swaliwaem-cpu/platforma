@@ -18,6 +18,7 @@ import type {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { findCatalogSearchObjectIds } from '../objects/object-search';
+import { createObjectSlugReference } from './assistant-object-identity';
 import {
   createAssistantComparisonTargetVariants,
   type AssistantRequiredFact,
@@ -752,7 +753,14 @@ export class AssistantSearchService {
           ${createNormalizedPhraseMatch(Prisma.sql`o.title`, variant)}
           OR ${createNormalizedPhraseMatch(Prisma.sql`d.name`, variant)}
         )`));
-      conditions.push(Prisma.sql`(${Prisma.join(targetConditions, ' OR ')})`);
+      // Brands are written in either alphabet; the Latin slug is the alphabet-neutral identity.
+      const slugConditions = options.comparisonTargets.flatMap((target) => {
+        const slugReference = createObjectSlugReference(target);
+        return slugReference.length >= 3
+          ? [createNormalizedPhraseMatch(Prisma.sql`o.slug`, slugReference)]
+          : [];
+      });
+      conditions.push(Prisma.sql`(${Prisma.join([...targetConditions, ...slugConditions], ' OR ')})`);
     }
     this.applyRequiredFactConditions(conditions, options.requiredFacts, completionYear);
     this.applyContextConditions(conditions, context);

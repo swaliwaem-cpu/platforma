@@ -7,6 +7,7 @@ import {
   isAssistantExternalKnowledgeFactRequest,
   isAssistantObjectKnowledgeFactRequest,
   isAssistantObjectCatalogRequest,
+  ASSISTANT_CLARIFICATION_QUESTIONS,
   ASSISTANT_TERRA_MODEL,
   type AssistantPlannerGateway,
   type AssistantPlannerGatewayResult,
@@ -20,7 +21,7 @@ type AssistantAiMode = 'fake' | 'alibaba';
 export type AssistantAlibabaStructuredOutput = 'json_schema' | 'json_object';
 
 const assistantPlannerSchema = createAssistantPlannerSchema();
-export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-logical-plan-v1';
+export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-logical-plan-v1.1';
 export const ASSISTANT_ALIBABA_DEFAULT_BASE_URL = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 
 export class AssistantPlannerGatewayError extends Error {
@@ -301,6 +302,9 @@ export function createAssistantPlannerRequestBody(
   return {
     model: request.model,
     max_tokens: 2_500,
+    // DashScope thinking mode is on by default for Qwen chat models; with strict
+    // json_schema output it burns the whole token budget on whitespace loops.
+    enable_thinking: false,
     messages: [
       {
         role: 'system',
@@ -311,6 +315,11 @@ export function createAssistantPlannerRequestBody(
           'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
           'Не возвращай SQL, координаты или цепочку tool calls.',
           'Не выдумывай названия, числа, единицы, цены, наличие, ссылки или факты: все значения плана должны присутствовать в диалоге.',
+          'Если комнатность, бюджет, район, метро, застройщик или срок не названы в диалоге, оставь rooms пустым массивом, а остальные поля null; не подставляй «все варианты» и значения по умолчанию.',
+          'objectType всегда RESIDENTIAL, кроме явного запроса коммерческой недвижимости.',
+          'Фразы «рядом с», «возле», «около», «у метро», «в радиусе» описывают гео-контекст: не заполняй по ним metro, district и predicates.',
+          'predicates допустимы только для явного «внутри/в пределах <место>» и явного лимита минут пешком до метро.',
+          'Для SEARCH и COMPARE requiredFacts всегда содержит PRICE, AVAILABILITY, FRESHNESS и LINK.',
           'Для поиска внутри названного места используй только SPATIAL/INSIDE/PLACE.',
           'Для ограничения пешего времени до ближайшего метро используй только TRAVEL_TIME/WALK/NEAREST_METRO/LTE и минуты.',
           'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
@@ -321,6 +330,7 @@ export function createAssistantPlannerRequestBody(
           'Для явного сравнения двух ЖК или застройщиков заполни comparisonTargets двумя точными названиями.',
           'Не требуй бюджет, комнатность или локацию, если пользователь их не указал.',
           'Уточнение допустимо только для неоднозначного места, отсутствующего числового значения или конфликтующих hard conditions.',
+          'Верни только JSON-объект AssistantLogicalPlanV1 без пояснений.',
         ].join(' '),
       },
       {
@@ -378,9 +388,9 @@ function createDeterministicIntent(messages: string[]): AssistantLogicalPlanV1 {
     predicates: logical.predicates,
     needsClarification: conflicting || logical.missingTravelValue,
     clarificationQuestion: conflicting
-      ? 'Минимальное значение превышает максимальное. Уточните нужный диапазон.'
+      ? ASSISTANT_CLARIFICATION_QUESTIONS.CONFLICTING_HARD_CONDITIONS
       : logical.missingTravelValue
-      ? 'Укажите максимальное время пешком до ближайшего метро в минутах.'
+      ? ASSISTANT_CLARIFICATION_QUESTIONS.MISSING_NUMERIC_VALUE
       : null,
     clarificationReason: conflicting ? 'CONFLICTING_HARD_CONDITIONS'
       : logical.missingTravelValue ? 'MISSING_NUMERIC_VALUE' : null,

@@ -32,6 +32,8 @@ export class AssistantGeoLandmarkGeometryError extends Error {
   }
 }
 
+const metroStationLandmarkRetentionMs = 180 * 24 * 60 * 60 * 1_000;
+
 type LandmarkRow = {
   id: string;
   kind: 'point' | 'line' | 'area';
@@ -80,7 +82,7 @@ export type AssistantVerifiedLandmarkInput = {
   country: string | null;
   city: string | null;
   geometry: AssistantGeoReferenceGeometry;
-  sourceProvider: 'locationiq' | 'overpass' | 'fake' | 'knowledge';
+  sourceProvider: 'locationiq' | 'overpass' | 'fake' | 'knowledge' | 'metro_directory';
   sourceExternalId: string;
   retentionMs?: number;
   expiresAt?: Date;
@@ -425,6 +427,66 @@ export class AssistantGeoLandmarkService {
     const existing = await this.findBySourceIdentity(input.sourceProvider, input.sourceExternalId);
     if (!existing) throw new Error('ASSISTANT_GEO_LANDMARK_PERSIST_FAILED');
     return existing;
+  }
+
+  // «метро <станция>» resolves from the imported metro access-point directory without any
+  // external provider: the station point is the centroid of its active access points and is
+  // persisted as a verified landmark, so repeated lookups hit findTrustedByQuery directly.
+  async saveVerifiedMetroStation(input: {
+    stationQuery: string;
+    normalizedQuery: string;
+    aliases: string[];
+    locale: string;
+    userAlias?: string;
+  }): Promise<AssistantTrustedLandmark | null> {
+    const stationName = input.stationQuery
+      .toLocaleLowerCase('ru-RU')
+      .replace(/ё/gu, 'е')
+      .replace(/[«»"]/gu, '')
+      .replace(/\s+/gu, ' ')
+      .trim();
+    if (stationName.length < 2) return null;
+    const rows = await this.prisma.$queryRaw<Array<{
+      stationName: string;
+      datasetVersion: string;
+      latitude: number;
+      longitude: number;
+      points: number;
+    }>>(Prisma.sql`
+      SELECT
+        "station_name" AS "stationName",
+        "dataset_version" AS "datasetVersion",
+        AVG("latitude")::float8 AS "latitude",
+        AVG("longitude")::float8 AS "longitude",
+        COUNT(*)::int AS "points"
+      FROM "assistant_metro_access_points"
+      WHERE "is_active" = TRUE
+        AND lower(replace("station_name", 'ё', 'е')) = ${stationName}
+      GROUP BY "station_name", "dataset_version"
+      ORDER BY "points" DESC, "dataset_version" DESC
+      LIMIT 1
+    `);
+    const station = rows[0];
+    if (!station || !Number.isFinite(station.latitude) || !Number.isFinite(station.longitude)) return null;
+    return this.saveVerified({
+      kind: 'POINT',
+      label: `метро «${station.stationName}»`,
+      normalizedQuery: input.normalizedQuery,
+      aliases: [...new Set([...input.aliases, input.userAlias ?? '', `метро ${stationName}`])].filter(Boolean),
+      locale: input.locale,
+      country: 'ru',
+      city: 'Москва',
+      geometry: { type: 'Point', coordinates: [station.longitude, station.latitude] },
+      sourceProvider: 'metro_directory',
+      sourceExternalId: `metro/${station.datasetVersion}/${station.stationName}`.slice(0, 160),
+      retentionMs: metroStationLandmarkRetentionMs,
+      sourceMetadata: {
+        entityType: 'metro_station',
+        fetchedAt: new Date().toISOString(),
+        version: 2,
+        ...(input.userAlias ? { userAlias: input.userAlias } : {}),
+      },
+    });
   }
 
   async isClosedRoadBoundary(geometry: AssistantGeoLineGeometry): Promise<boolean> {

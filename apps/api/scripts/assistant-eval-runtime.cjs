@@ -24,7 +24,7 @@ const safeCodePattern = /^[A-Z][A-Z0-9_]{2,119}$/u;
 const internalErrorCodePattern = /^ASSISTANT_[A-Z0-9_]{2,109}$/u;
 const usdPattern = /^\d+\.\d{8}$/u;
 const tokenCountPattern = /^(?:0|[1-9]\d*)$/u;
-const alibabaModels = new Set(['qwen-plus', 'qwen-max']);
+const alibabaModels = new Set(['qwen-flash', 'qwen3.8-max', 'qwen-plus', 'qwen-max']);
 const assistantQualityFlags = new Set([
   'HARD_FILTER_VIOLATION',
   'UNSUPPORTED_FACT',

@@ -7,8 +7,8 @@ import {
   type AssistantLogicalPredicateV1,
 } from './assistant-logical-plan';
 import {
-  assistantPlannerValuesAreGrounded,
   assistantFiltersHaveConflict,
+  dropUngroundedPlannerFilterValues,
   omitProviderAssignedFilters,
   removeHardFilterOverlaps,
 } from './assistant-plan-grounding';
@@ -21,8 +21,8 @@ export { extractAssistantLogicalPredicates } from './assistant-logical-plan';
 export type { AssistantLogicalPredicateV1 } from './assistant-logical-plan';
 export type { AssistantDialogMessage } from './assistant-dialog';
 
-export const ASSISTANT_LUNA_MODEL = 'qwen-plus';
-export const ASSISTANT_TERRA_MODEL = 'qwen-max';
+export const ASSISTANT_LUNA_MODEL = 'qwen-flash';
+export const ASSISTANT_TERRA_MODEL = 'qwen3.8-max';
 
 const filterKeys = [
   'budgetMinRub',
@@ -413,11 +413,15 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
   const comparisonTargetModes = value.comparisonTargetModes === undefined
     ? undefined
     : parseComparisonTargetModes(value.comparisonTargetModes, comparisonTargets.length);
-  const requiredFacts = parseRequiredFacts(value.requiredFacts);
-  if ((value.taskType === 'SEARCH' || value.taskType === 'COMPARE')
-    && mandatorySearchFacts.some((fact) => !requiredFacts.includes(fact))) {
-    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
-  }
+  const parsedRequiredFacts = parseRequiredFacts(value.requiredFacts);
+  // PRICE/AVAILABILITY/FRESHNESS/LINK are a server-side contract for SEARCH and COMPARE,
+  // not something the model gets to decide, so they are always merged in.
+  const requiredFacts: AssistantRequiredFact[] = value.taskType === 'SEARCH' || value.taskType === 'COMPARE'
+    ? [
+        ...mandatorySearchFacts,
+        ...parsedRequiredFacts.filter((fact) => !(mandatorySearchFacts as readonly string[]).includes(fact)),
+      ]
+    : parsedRequiredFacts;
   if (typeof value.needsClarification !== 'boolean') {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   }
@@ -519,19 +523,45 @@ function parsePositiveTravelMinutes(value: unknown) {
   return value;
 }
 
-function assertLogicalPlanGrounded(plan: AssistantLogicalPlanV1, messages: string[]) {
+export const ASSISTANT_CLARIFICATION_QUESTIONS = {
+  CONFLICTING_HARD_CONDITIONS: 'Минимальное значение превышает максимальное. Уточните нужный диапазон.',
+  MISSING_NUMERIC_VALUE: 'Укажите максимальное время пешком до ближайшего метро в минутах.',
+} as const;
+
+// Every grounded plan value must equal what the deterministic extractors read from the
+// dialog, so the model cannot add information there; it only classifies the task. Qwen
+// planners readily invent filters, predicates and clarifications the dialog never
+// mentioned, so instead of rejecting the whole plan (and paying for a Terra retry that
+// rarely fits the run deadline) the ungrounded parts are replaced by the extracted ones.
+function sanitizeLogicalPlanAgainstRequest(
+  plan: AssistantLogicalPlanV1,
+  messages: string[],
+  explicitFilters: Partial<AssistantSearchFilters>,
+  contextFilters: Partial<AssistantSearchFilters>,
+  explicitComparisonTargets: string[] | null,
+): AssistantLogicalPlanV1 {
   const extracted = extractAssistantLogicalPredicates(messages);
-  if (JSON.stringify(plan.predicates) !== JSON.stringify(extracted.predicates)) {
-    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
-  }
-  const conflicting = assistantFiltersHaveConflict(extractAssistantExplicitHardFilters(messages));
-  if (conflicting !== (plan.clarificationReason === 'CONFLICTING_HARD_CONDITIONS')
-    || (!conflicting && extracted.missingTravelValue !== (plan.clarificationReason === 'MISSING_NUMERIC_VALUE'))) {
-    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
-  }
-  if (plan.clarificationReason === 'AMBIGUOUS_PLACE') {
-    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
-  }
+  const clarificationReason: AssistantClarificationReason | null = assistantFiltersHaveConflict(explicitFilters)
+    ? 'CONFLICTING_HARD_CONDITIONS'
+    : extracted.missingTravelValue
+      ? 'MISSING_NUMERIC_VALUE'
+      : null;
+  const clarificationQuestion = clarificationReason === null
+    ? null
+    : plan.clarificationReason === clarificationReason && plan.clarificationQuestion
+      ? plan.clarificationQuestion
+      : ASSISTANT_CLARIFICATION_QUESTIONS[clarificationReason];
+  const { comparisonTargetModes: _providerModes, ...rest } = plan;
+  return {
+    ...rest,
+    comparisonTargets: explicitComparisonTargets ?? [],
+    hardFilters: dropUngroundedPlannerFilterValues(plan.hardFilters, explicitFilters, contextFilters),
+    softPreferences: dropUngroundedPlannerFilterValues(plan.softPreferences, explicitFilters, contextFilters),
+    predicates: extracted.predicates,
+    needsClarification: clarificationReason !== null,
+    clarificationQuestion,
+    clarificationReason,
+  };
 }
 
 function chooseReasoningEffort(messages: string[]): AssistantReasoningEffort {
@@ -543,20 +573,17 @@ function normalizeIntentAgainstRequest(
   messages: string[],
   context: unknown,
 ): AssistantStructuredIntent {
-  if (intent.schemaVersion === 'AssistantLogicalPlanV1') {
-    assertLogicalPlanGrounded(intent as AssistantLogicalPlanV1, messages);
-  }
   const explicitFilters = extractAssistantExplicitHardFilters(messages);
   const contextFilters = extractContextHardFilters(context);
   const explicitComparison = extractAssistantComparison(messages);
-  if (intent.schemaVersion === 'AssistantLogicalPlanV1'
-    && !assistantPlannerValuesAreGrounded(
-      intent,
+  if (intent.schemaVersion === 'AssistantLogicalPlanV1') {
+    intent = sanitizeLogicalPlanAgainstRequest(
+      intent as AssistantLogicalPlanV1,
+      messages,
       explicitFilters,
       contextFilters,
       explicitComparison?.targets ?? null,
-    )) {
-    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+    );
   }
   const comparisonTargets = explicitComparison?.targets ?? intent.comparisonTargets;
   const comparisonTargetModes = explicitComparison?.modes
@@ -696,7 +723,7 @@ export function extractAssistantComparisonTargets(messages: string[]) {
 function extractAssistantComparison(messages: string[]) {
   const text = messages.join('\n');
   const match = text.match(
-    /сравн\p{L}*\s+(?:застройщик\p{L}*\s+|жк\s+)?(?<firstQuote>[«"]?)(?<first>.+?)[»"]?\s+(?<conjunction>и|с)\s+(?<secondQuote>[«"]?)(?<second>.+?)[»"]?(?=\s+(?:по\s+(?:цен|стоим|услов|срок|сдач|локац|располож|инфраструкт|доход|ликвид|планиров|площад|метро)\p{L}*|до\s+\d|бюджет\p{L}*|в\s+район)|[,.;\r\n]|$)/iu,
+    /сравн\p{L}*\s+(?:застройщик\p{L}*\s+|жк\s+)?(?<firstQuote>[«"]?)(?<first>.+?)[»"]?\s+(?<conjunction>и|с)\s+(?<secondQuote>[«"]?)(?<second>.+?)[»"]?(?=\s+(?:по\s+(?:цен|стоим|услов|срок|сдач|локац|располож|инфраструкт|доход|ликвид|планиров|площад|метро|ипотек|рассрочк|акци|бонус|скидк|отделк|парковк|класс)\p{L}*|до\s+\d|бюджет\p{L}*|в\s+район)|[,.;\r\n]|$)/iu,
   );
   if (!match?.groups) return null;
   const first = cleanComparisonTarget(match.groups.first);

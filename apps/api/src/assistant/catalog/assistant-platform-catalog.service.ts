@@ -10,6 +10,11 @@ import type { AssistantPageContext } from '@platforma/shared' with { 'resolution
 
 import { findCatalogSearchObjectIds } from '../../objects/object-search';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  createObjectSlugReference,
+  normalizeObjectIdentity,
+  objectSlugEqualsReference,
+} from '../assistant-object-identity';
 import type { AssistantStructuredIntent } from '../assistant-query-planner';
 import {
   createEmptyAssistantSearchFilters,
@@ -178,7 +183,11 @@ export class AssistantPlatformCatalogService {
 
     if (reference) {
       const searchObjectIds = await findCatalogSearchObjectIds(this.prisma, reference);
-      filters.push({ id: { in: searchObjectIds } });
+      // Title search is alphabet-bound; the Latin slug catches «ЖК Nicole» for «ЖК Николь».
+      const slugReference = createObjectSlugReference(reference).replace(/ /gu, '-');
+      filters.push(slugReference.length >= 3
+        ? { OR: [{ id: { in: searchObjectIds } }, { slug: { contains: slugReference } }] }
+        : { id: { in: searchObjectIds } });
     }
     if (!reference) await this.addContextFilters(filters, input.context);
     return { AND: filters };
@@ -271,17 +280,8 @@ function explicitProjectReference(query: string) {
 function objectMatchesReference(record: ObjectRecord, reference: string) {
   const normalizedReference = normalizeObjectIdentity(reference);
   return normalizeObjectIdentity(record.title) === normalizedReference
-    || normalizeObjectIdentity(record.slug) === normalizedReference;
-}
-
-function normalizeObjectIdentity(value: string) {
-  return value
-    .normalize('NFKC')
-    .toLocaleLowerCase('ru-RU')
-    .replace(/ё/gu, 'е')
-    .replace(/^(?:жк|жилой\s+комплекс|бц|бизнес[- ]центр|мфк)\s+/u, '')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+    || normalizeObjectIdentity(record.slug) === normalizedReference
+    || objectSlugEqualsReference(record.slug, reference);
 }
 
 function toEvidence(record: ObjectRecord): AssistantObjectEvidence {

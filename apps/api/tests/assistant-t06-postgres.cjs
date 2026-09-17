@@ -131,7 +131,7 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
   assert.equal(detail.body.run.structuredIntent.taskType, 'SEARCH');
   assert.equal(detail.body.run.audit.rankingDecisions[0].outcome, 'PRIMARY');
   assert.equal(detail.body.run.evidence[0].feedUnitId, 'unit-t06');
-  assert.equal(detail.body.run.telemetry[0].model, 'qwen-plus');
+  assert.equal(detail.body.run.telemetry[0].model, 'qwen-flash');
   assert.equal(JSON.stringify(detail.body).includes('rawPayload'), false);
   assert.equal(JSON.stringify(detail.body).includes('credential'), false);
 

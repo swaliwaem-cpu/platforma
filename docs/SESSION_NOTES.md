@@ -24,6 +24,18 @@
 - Выкачено на прод как `links-20260917T0751Z` (`3645ee6`): пересозданы только api и web, миграций нет, бэкап и `deploy-result.txt` в `/opt/platforma-deploy-backups/links-20260917T0751Z/`.
 - «Узнать подробности» на страницах ЖК по-прежнему ведёт на `snapshot.cta.url` (`t.me/FluffyWhite`), в превью — `PROJECT_PRESENTATION_LINKS.chat`. Снапшот и его версия не менялись: ссылки финальной страницы берутся из шаблона в момент печати.
 
+## 2026-09-17
+
+### Ассистент переведён в живой режим на Alibaba и починен под Qwen
+
+- Аккаунт Alibaba был под риск-контролем (`RISK.RISK_CONTROL_REJECTION` → API 403 `AccessDenied.Unpurchased`), снято после верификации. Ключ в `.env` и `apps/api/.env`, `ASSISTANT_AI_MODE`/`ASSISTANT_EMBEDDING_MODE=alibaba`, адрес `dashscope-intl` (workspace-адреса `ws-*.maas.aliyuncs.com` не нужны). Модели: Luna=`qwen-flash` ($0.05/$0.40 за 1M), Terra=`qwen3.8-max` ($2/$6), каталог цен `alibaba-dashscope-pricing-2026-09-17`. В запрос добавлен `enable_thinking:false` (qwen-plus со strict json_schema уходил в цикл табов до 2500 токенов и 45 с), в промпт — слово JSON (DashScope требует его для qwen-max/json_object). Прод-compose по-прежнему без `ASSISTANT_AI_MODE`.
+- Планировщик: план больше не отвергается целиком за незаземлённые значения. `sanitizeLogicalPlanAgainstRequest` выбрасывает незаземлённые фильтры, предикаты, цели сравнения и уточнения и подставляет детерминированные; обязательные факты SEARCH/COMPARE объединяются на сервере. Qwen выдумывал `rooms:[1,2,3]`, `objectType` и INSIDE-предикаты в 100% запросов, а Terra-fallback (~9 с) не влезал в дедлайн 15 с.
+- Гео: «метро X» резолвится из `assistant_metro_access_points` (239 станций) без LocationIQ и сохраняется как verified-ориентир `metro_directory` на 180 дней (LocationIQ на «метро X» отдаёт автобусные остановки → Overpass → UNAVAILABLE).
+- Район: извлекатель понимает предложный падеж («в Хамовниках», «в Марьине»), канонизация через `locations`/tsquery уже была. Раньше такой запрос шёл без района и отдавал МЫС из Ясенево как точное совпадение.
+- Названия ЖК: новый `assistant-object-identity.ts` — сопоставление через латинский slug (Слава↔SLAVA, Set↔СЕТ, Nicole↔Николь) в каталоге, SQL сравнения, ранжировании и разрешении проекта базы знаний. Регулярка целей сравнения знает «по ипотеке/рассрочке/акциям».
+- Воркер источников: убран `unref()` таймера (процесс завершался после первого тика). Переиндексация чанков на `text-embedding-v4` не сделана: нужен `UPDATE assistant_source_revisions SET processing_status='failed', processing_error_code='SOURCE_PROCESSING_PENDING'` для последних ревизий активных источников + `POST /assistant/sources/:id/refresh` (auto-классификатор запретил запись в БД). До этого векторный канал ретривала пуст, работают FTS и structured.
+- Проверки: api 975/975, web 352/352, харнессы t01 и fix-token зелёные на одноразовой БД, t06 падает на пустой базе (известное). Живые запросы на qwen-flash за 4–9 с: поиск с районом, сравнение SLAVA/СЕТ (167/715 лотов), факты по Nicole/Slava, «рядом с метро Фрунзенская». Открыто: «рядом с ЖК X» уходит в LocationIQ, а не в каталог; маршрутные факты до метро 50/314; виджет не рисует CLARIFICATION/UNAVAILABLE отдельно.
+
 ## 2026-09-16
 
 ### Production deploy full-20260916T2115Z (main 96807a5)

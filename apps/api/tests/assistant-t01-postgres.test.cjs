@@ -175,7 +175,7 @@ if (!databaseUrl) {
       assert.equal(persistedFirst.intentJson.hardFilters.budgetMaxRub, 25_000_000);
       assert.equal(persistedFirst.evidenceJson.length, 4);
       assert.deepEqual(persistedFirst.telemetryJson.map(({ model, reasoningEffort, outcome }) => [model, reasoningEffort, outcome]), [
-        ['qwen-plus', 'medium', 'ACCEPTED'],
+        ['qwen-flash', 'medium', 'ACCEPTED'],
       ]);
       const restoredFirstConversation = await request(
         `/assistant/conversations/${firstConversation.body.conversation.id}`,

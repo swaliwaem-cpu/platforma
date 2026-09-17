@@ -8,8 +8,19 @@ const {
   AssistantPlannerError,
   AssistantQueryPlanner,
   createAssistantComparisonTargetVariants,
+  extractAssistantComparisonTargets,
+  extractAssistantExplicitDistrict,
+  extractAssistantExplicitHardFilters,
   extractAssistantLogicalPredicates,
 } = require('../dist/assistant/assistant-query-planner.js');
+const {
+  createObjectSlugReference,
+  objectSlugContainsReference,
+  objectSlugEqualsReference,
+} = require('../dist/assistant/assistant-object-identity.js');
+const {
+  resolveAssistantKnowledgeProjectIdentity,
+} = require('../dist/assistant/sources/assistant-knowledge-policy.js');
 const {
   AssistantAnswerValidationError,
   buildAssistantSearchAnswer,
@@ -62,8 +73,8 @@ test('Assistant T02 planner routes ordinary and complex requests to the required
   assert.deepEqual(
     calls.map(({ model, reasoningEffort }) => [model, reasoningEffort]),
     [
-      ['qwen-plus', 'medium'],
-      ['qwen-plus', 'high'],
+      ['qwen-flash', 'medium'],
+      ['qwen-flash', 'high'],
     ],
   );
 });
@@ -73,7 +84,7 @@ test('Assistant T02 planner allows exactly one Terra medium fallback after local
   const planner = new AssistantQueryPlanner({
     async plan(request) {
       calls.push(request);
-      if (request.model === 'qwen-plus') return { taskType: 'SEARCH' };
+      if (request.model === 'qwen-flash') return { taskType: 'SEARCH' };
       return validIntent({ hardFilters: { ...emptyFilters(), rooms: [2] } });
     },
   });
@@ -84,15 +95,15 @@ test('Assistant T02 planner allows exactly one Terra medium fallback after local
   assert.deepEqual(
     calls.map(({ model, reasoningEffort }) => [model, reasoningEffort]),
     [
-      ['qwen-plus', 'medium'],
-      ['qwen-max', 'medium'],
+      ['qwen-flash', 'medium'],
+      ['qwen3.8-max', 'medium'],
     ],
   );
   assert.deepEqual(
     result.telemetry.map(({ model, outcome, isFallback }) => [model, outcome, isFallback]),
     [
-      ['qwen-plus', 'LOCAL_VALIDATION_FAILED', false],
-      ['qwen-max', 'ACCEPTED', true],
+      ['qwen-flash', 'LOCAL_VALIDATION_FAILED', false],
+      ['qwen3.8-max', 'ACCEPTED', true],
     ],
   );
 });
@@ -256,40 +267,37 @@ test('FIX-GEO2 does not replace a driving condition with WALK or a broad search'
   assert.equal(calls, 0);
 });
 
-test('FIX-GEO2 rejects an invented planner clarification and uses Terra only as local-plan fallback', async () => {
+test('FIX-GEO2 drops an invented planner clarification without a Terra fallback', async () => {
   const calls = [];
   const planner = new AssistantQueryPlanner({
     async plan(request) {
       calls.push(request.model);
-      return request.model === 'qwen-plus'
-        ? validLogicalIntent({
-            needsClarification: true,
-            clarificationQuestion: 'Уточните место.',
-            clarificationReason: 'AMBIGUOUS_PLACE',
-          })
-        : validLogicalIntent();
+      return validLogicalIntent({
+        needsClarification: true,
+        clarificationQuestion: 'Уточните место.',
+        clarificationReason: 'AMBIGUOUS_PLACE',
+      });
     },
   });
 
   const result = await planner.plan({ messages: ['Покажи доступные квартиры'], context: null });
 
   assert.equal(result.intent.needsClarification, false);
-  assert.deepEqual(calls, ['qwen-plus', 'qwen-max']);
+  assert.equal(result.intent.clarificationQuestion, null);
+  assert.equal(result.intent.clarificationReason, null);
+  assert.deepEqual(calls, ['qwen-flash']);
 });
 
-test('FIX-GEO2 rejects invented plan values and preserves a grounded soft preference', async () => {
+test('FIX-GEO2 drops invented plan values, keeps grounded ones and skips the Terra fallback', async () => {
   const calls = [];
   const planner = new AssistantQueryPlanner({
     async plan(request) {
       calls.push(request.model);
-      if (request.model === 'qwen-plus') {
-        return validLogicalIntent({
-          comparisonTargets: ['Выдуманный ЖК'],
-          hardFilters: { ...emptyFilters(), developer: 'Выдуманный девелопер' },
-        });
-      }
       return validLogicalIntent({
-        softPreferences: { ...emptyFilters(), metro: 'Спортивная' },
+        comparisonTargets: ['Выдуманный ЖК'],
+        hardFilters: { ...emptyFilters(), developer: 'Выдуманный девелопер' },
+        softPreferences: { ...emptyFilters(), metro: 'Спортивная', district: 'Выдуманный район' },
+        predicates: [{ type: 'SPATIAL', relation: 'INSIDE', referenceType: 'PLACE', place: 'Спортивная' }],
       });
     },
   });
@@ -299,9 +307,85 @@ test('FIX-GEO2 rejects invented plan values and preserves a grounded soft prefer
     context: null,
   });
 
-  assert.deepEqual(calls, ['qwen-plus', 'qwen-max']);
+  assert.deepEqual(calls, ['qwen-flash']);
+  assert.deepEqual(result.intent.comparisonTargets, []);
+  assert.equal(result.intent.hardFilters.developer, null);
   assert.equal(result.intent.hardFilters.metro, null);
   assert.equal(result.intent.softPreferences.metro, 'Спортивная');
+  assert.equal(result.intent.softPreferences.district, null);
+  assert.deepEqual(result.intent.predicates, []);
+});
+
+test('Assistant T02 comparison extraction stops before mortgage, installment and promotion topics', () => {
+  assert.deepEqual(extractAssistantComparisonTargets(['Сравни ЖК Слава и ЖК Set по ипотеке']), ['Слава', 'ЖК Set']);
+  assert.deepEqual(extractAssistantComparisonTargets(['Сравни «Дом Лаврушинский» и «Nicole» по рассрочке и акциям']), ['Дом Лаврушинский', 'Nicole']);
+});
+
+test('Assistant T02 district extraction understands the locative case without the word «район»', () => {
+  assert.equal(extractAssistantExplicitDistrict('Двушка до 35 млн в Хамовниках'), 'Хамовниках');
+  assert.equal(extractAssistantExplicitDistrict('Квартира в Марьине до 20 млн'), 'Марьине');
+  assert.equal(extractAssistantExplicitDistrict('Студия в Некрасовке'), 'Некрасовке');
+  assert.equal(extractAssistantExplicitDistrict('Двушка до 35 млн в районе Хамовники'), 'Хамовники');
+  assert.equal(extractAssistantExplicitDistrict('Квартира в Москве до 20 млн'), null);
+  assert.equal(extractAssistantExplicitDistrict('Квартира в продаже в новостройке'), null);
+  assert.deepEqual(extractAssistantExplicitHardFilters(['Двушка до 35 млн в Хамовниках']), {
+    budgetMaxRub: 35_000_000,
+    rooms: [2],
+    district: 'Хамовниках',
+  });
+});
+
+test('Assistant T02 object identity matches Cyrillic and Latin project names through the slug', () => {
+  assert.equal(createObjectSlugReference('ЖК Слава'), 'slava');
+  assert.equal(createObjectSlugReference('Жилой комплекс SLAVA'), 'slava');
+  assert.equal(createObjectSlugReference('ЖК Set'), 'set');
+  assert.equal(createObjectSlugReference('Nicole'), 'nicole');
+  assert.equal(objectSlugEqualsReference('zhiloj-kompleks-slava', 'ЖК Слава'), true);
+  assert.equal(objectSlugEqualsReference('zhiloj-kompleks-set', 'Set'), true);
+  assert.equal(objectSlugEqualsReference('zhiloj-kompleks-nicole', 'ЖК Nicole'), true);
+  assert.equal(objectSlugEqualsReference('zhiloj-kompleks-setl-siti', 'ЖК Set'), false);
+  assert.equal(objectSlugContainsReference('zhiloj-kompleks-set', 'ЖК Set'), true);
+  assert.equal(objectSlugContainsReference('zhiloj-kompleks-setl-siti', 'ЖК Set'), false);
+  assert.equal(objectSlugContainsReference('mys', 'ЖК'), false);
+});
+
+test('Assistant T02 knowledge project identity accepts a Latin brand for a Cyrillic catalog title', () => {
+  const identities = [
+    { projectKey: 'zhiloj-kompleks-nicole', objectTitle: 'ЖК Николь' },
+    { projectKey: 'zhiloj-kompleks-set', objectTitle: 'ЖК СЕТ' },
+  ];
+  assert.equal(resolveAssistantKnowledgeProjectIdentity('nicole', identities)?.projectKey, 'zhiloj-kompleks-nicole');
+  assert.equal(resolveAssistantKnowledgeProjectIdentity('ЖК Set', identities)?.projectKey, 'zhiloj-kompleks-set');
+  assert.equal(resolveAssistantKnowledgeProjectIdentity('николь', identities)?.projectKey, 'zhiloj-kompleks-nicole');
+  assert.equal(resolveAssistantKnowledgeProjectIdentity('slava', identities), null);
+});
+
+test('FIX-GEO2 fills mandatory search facts and drops invented room lists from a Qwen plan', async () => {
+  const calls = [];
+  const planner = new AssistantQueryPlanner({
+    async plan(request) {
+      calls.push(request.model);
+      return validLogicalIntent({
+        taskType: 'SEARCH',
+        requiredFacts: [],
+        hardFilters: { ...emptyFilters(), budgetMaxRub: 40_000_000, rooms: [1, 2, 3], metro: 'Фрунзенская' },
+        softPreferences: { ...emptyFilters(), rooms: [1, 2, 3] },
+        predicates: [{ type: 'SPATIAL', relation: 'INSIDE', referenceType: 'PLACE', place: 'Фрунзенская' }],
+      });
+    },
+  });
+
+  const result = await planner.plan({
+    messages: ['Подбери квартиру до 40 млн рядом с метро Фрунзенская'],
+    context: null,
+  });
+
+  assert.deepEqual(calls, ['qwen-flash']);
+  assert.deepEqual(result.intent.requiredFacts, ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK']);
+  assert.equal(result.intent.hardFilters.budgetMaxRub, 40_000_000);
+  assert.deepEqual(result.intent.hardFilters.rooms, []);
+  assert.deepEqual(result.intent.softPreferences.rooms, []);
+  assert.deepEqual(result.intent.predicates, []);
 });
 
 test('FIX-GEO2 follows corrected budget and walking time without parsing across messages', async () => {
@@ -1392,7 +1476,7 @@ test('Assistant T02 fake Luna planner extracts supported Platforma conditions wi
   assert.equal(result.intent.hardFilters.completionYearMax, 2028);
   assert.equal(result.intent.needsClarification, false);
   assert.deepEqual(result.telemetry.map(({ provider, model, reasoningEffort }) => [provider, model, reasoningEffort]), [
-    ['fake', 'qwen-plus', 'medium'],
+    ['fake', 'qwen-flash', 'medium'],
   ]);
 });
 
@@ -1433,7 +1517,7 @@ test('Assistant T02 planner records bounded usage telemetry without exposing it 
   assert.equal(result.intent.provider, undefined);
   assert.deepEqual(result.telemetry[0], {
     provider: 'alibaba',
-    model: 'qwen-plus',
+    model: 'qwen-flash',
     reasoningEffort: 'medium',
     outcome: 'ACCEPTED',
     errorCode: null,
@@ -1464,13 +1548,13 @@ test('Assistant T02 planner uses the same single fallback budget for downstream 
   const result = await planner.planWithValidation(
     { messages: ['Однушка до 20 млн у метро Сокол'], context: null },
     async (_intent, request) => {
-      if (request.model === 'qwen-plus') throw new AssistantAnswerValidationError('ASSISTANT_LINK_INVALID');
+      if (request.model === 'qwen-flash') throw new AssistantAnswerValidationError('ASSISTANT_LINK_INVALID');
       return 'validated-answer';
     },
   );
 
   assert.equal(result.value, 'validated-answer');
-  assert.deepEqual(calls, ['qwen-plus', 'qwen-max']);
+  assert.deepEqual(calls, ['qwen-flash', 'qwen3.8-max']);
   assert.deepEqual(result.telemetry.map(({ outcome, isFallback }) => [outcome, isFallback]), [
     ['LOCAL_VALIDATION_FAILED', false],
     ['ACCEPTED', true],
@@ -1496,13 +1580,13 @@ test('Assistant T02 planner does not turn a database failure into a Terra fallba
       && error.code === 'ASSISTANT_PLANNER_PIPELINE_FAILED'
       && error.telemetry.length === 1,
   );
-  assert.deepEqual(calls, ['qwen-plus']);
+  assert.deepEqual(calls, ['qwen-flash']);
 });
 
 test('Assistant T02 Alibaba gateway uses a bounded local HTTP stub and validates the real response shape', async () => {
   await withHttpStub(async (request, response) => {
     const body = await readRequestBody(request);
-    assert.equal(body.model, 'qwen-plus');
+    assert.equal(body.model, 'qwen-flash');
     assert.equal(body.max_tokens, 2_500);
     assert.equal(body.messages[0].role, 'system');
     assert.equal(body.messages[1].role, 'user');
@@ -1533,7 +1617,7 @@ test('Assistant T02 Alibaba gateway uses a bounded local HTTP stub and validates
   }, async (baseUrl) => {
     const gateway = new AssistantAlibabaPlannerGateway('stub-key', fetch, baseUrl, 1_000);
     const result = await gateway.plan({
-      model: 'qwen-plus',
+      model: 'qwen-flash',
       reasoningEffort: 'medium',
       messages: ['Нужна квартира'],
       context: null,
@@ -1556,7 +1640,7 @@ test('Assistant T02 Alibaba gateway keeps its timeout active while reading the r
   );
   await assert.rejects(
     gateway.plan({
-      model: 'qwen-plus',
+      model: 'qwen-flash',
       reasoningEffort: 'medium',
       messages: ['Нужна квартира'],
       context: null,
@@ -1696,7 +1780,7 @@ test('FIX-GEO2 ambiguous planned place asks one bounded clarification without Te
   assert.deepEqual(result.answer, { kind: 'CLARIFICATION', reason: 'AMBIGUOUS_PLACE' });
   assert.equal(resolveCalls, 1);
   assert.equal(searchCalls, 0);
-  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-plus']);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-flash']);
 });
 
 test('FIX-GEO2 missing walking routes returns structured UNAVAILABLE without Terra', async () => {
@@ -1738,7 +1822,7 @@ test('FIX-GEO2 missing walking routes returns structured UNAVAILABLE without Ter
   });
 
   assert.deepEqual(result.answer, { kind: 'UNAVAILABLE', reason: 'ROUTING' });
-  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-plus']);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-flash']);
 });
 
 test('FIX-GEO2 planner provider failure returns structured UNAVAILABLE without Terra', async () => {
@@ -1757,7 +1841,7 @@ test('FIX-GEO2 planner provider failure returns structured UNAVAILABLE without T
 
   assert.deepEqual(result.answer, { kind: 'UNAVAILABLE', reason: 'PROVIDER' });
   assert.equal(plannerCalls, 1);
-  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-plus']);
+  assert.deepEqual(result.telemetry.map(({ model }) => model), ['qwen-flash']);
 });
 
 test('FIX-GEO2 settles known planner usage even when planning or execution exhausts the deadline', async () => {

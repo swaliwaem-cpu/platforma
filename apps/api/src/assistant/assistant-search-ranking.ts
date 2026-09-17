@@ -3,6 +3,7 @@ import type {
   AssistantSearchResultCard,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
+import { objectSlugContainsReference } from './assistant-object-identity';
 import {
   AssistantPlannerFallbackValidationError,
   createAssistantComparisonTargetVariants,
@@ -200,7 +201,8 @@ function uniqueCandidatesByUnitId(candidates: AssistantSearchEvidence[]) {
 
 function matchesComparisonTarget(candidate: AssistantSearchEvidence, target: string) {
   return containsNormalizedPhrase(candidate.objectTitle, target)
-    || containsNormalizedPhrase(candidate.developer, target);
+    || containsNormalizedPhrase(candidate.developer, target)
+    || objectSlugContainsReference(candidate.objectSlug, target);
 }
 
 function containsNormalizedPhrase(value: string | null, expected: string) {

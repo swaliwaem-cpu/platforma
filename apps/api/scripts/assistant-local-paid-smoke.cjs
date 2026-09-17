@@ -16,6 +16,10 @@ const {
   createAssistantPlannerRequestBody,
 } = require('../dist/assistant/assistant-planner-gateway.js');
 const {
+  ASSISTANT_LUNA_MODEL,
+  ASSISTANT_TERRA_MODEL,
+} = require('../dist/assistant/assistant-query-planner.js');
+const {
   readAssistantPaidProviderReadiness,
 } = require('../dist/assistant/operations/assistant-paid-readiness.js');
 
@@ -412,8 +416,8 @@ function summarizePaidSmokeAttempts(attempts) {
   const identities = new Set();
   for (const attempt of attempts) {
     if (!attempt || attempt.operation !== 'PLANNER'
-      || (attempt.requestedModel !== 'qwen-plus'
-        && attempt.requestedModel !== 'qwen-max')
+      || (attempt.requestedModel !== ASSISTANT_LUNA_MODEL
+        && attempt.requestedModel !== ASSISTANT_TERRA_MODEL)
       || !Number.isSafeInteger(attempt.attemptOrdinal)
       || attempt.attemptOrdinal < 1
       || typeof attempt.operationRunId !== 'string'
@@ -562,8 +566,8 @@ function estimateCanaryMaximumCostUsd() {
   const costs = [];
   for (const smokeCase of canaryCases) {
     for (const [attemptOrdinal, model, reasoningEffort] of [
-      [1, 'qwen-plus', 'high'],
-      [2, 'qwen-max', 'medium'],
+      [1, ASSISTANT_LUNA_MODEL, 'high'],
+      [2, ASSISTANT_TERRA_MODEL, 'medium'],
     ]) {
       const body = createAssistantPlannerRequestBody({
         model,

@@ -97,7 +97,7 @@ RolloutEvent, Feedback/ReviewItem.
 1. UI → Place Resolver (детерминированный, без LLM) → message endpoint; прямой вызов с geo без canonical geo → HTTP 400 `ASSISTANT_GEO_CONTEXT_REQUIRED`.
 2. Создание message + `AssistantRun` (PENDING), idempotency key.
 3. RunProcessor подхватывает run; прогресс-шаги для UI.
-4. Planner: модели Luna/Terra (`gpt-5.6-luna` / `gpt-5.6-terra`), OpenAI Responses API, strict JSON schema (`assistant-logical-plan-v1`). Intent: taskType SEARCH/OBJECT/COMPARE/FACT/LEGAL_TAX, hardFilters, предикаты SPATIAL/INSIDE/PLACE + TRAVEL_TIME/WALK/NEAREST_METRO/LTE. Backend проверяет grounding.
+4. Planner: модели Luna/Terra (`qwen-flash` / `qwen3.8-max`), Alibaba DashScope compatible-mode `/chat/completions` с `enable_thinking:false`, strict JSON schema (`assistant-logical-plan-v1`). Intent: taskType SEARCH/OBJECT/COMPARE/FACT/LEGAL_TAX, hardFilters, предикаты SPATIAL/INSIDE/PLACE + TRAVEL_TIME/WALK/NEAREST_METRO/LTE. Backend проверяет grounding.
 5. Исполнение: PostGIS (`ST_DWithin`/`ST_Covers` по полной геометрии), материализованные факты «N мин пешком до метро» (on-demand максимум 3 объекта), knowledge retrieval, current-fact refresh (максимум 1 bounded refresh на run).
 6. Ответ: SEARCH_RESULTS / OBJECT_RESULTS / COMPARISON / KNOWLEDGE / CLARIFICATION / UNAVAILABLE / REFUSAL / SAFE_BOUNDARY; карточки со ссылками, freshness labels; юр./налоговые — safe boundary.
 

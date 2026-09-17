@@ -144,7 +144,7 @@ test('FIX-TOKEN keeps only indexes used by real budget, reconciliation and repor
       false,
       'SETTLED',
       'ACCEPTED',
-      'alibaba-dashscope-pricing-2026-09-13',
+      'alibaba-dashscope-pricing-2026-09-17',
       'PRICED',
       CAST('0.00010000' AS numeric),
       CAST('0.00010000' AS numeric),
@@ -173,7 +173,7 @@ test('FIX-TOKEN keeps only indexes used by real budget, reconciliation and repor
       'query-plan-validator-v1',
       false,
       'RESERVED',
-      'alibaba-dashscope-pricing-2026-09-13',
+      'alibaba-dashscope-pricing-2026-09-17',
       'RESERVED',
       CAST('0.10000000' AS numeric),
       ${planUsageDate},
@@ -774,7 +774,7 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
       ) VALUES (
         CAST(${attemptId} AS uuid), ${operationRunId}, 1, 'PLANNER', ${provider},
         'qwen-plus', 'medium', 'legacy-prompt-v1', 'legacy-validator-v1',
-        false, 'RESERVED', 'alibaba-dashscope-pricing-2026-09-13', 'RESERVED',
+        false, 'RESERVED', 'alibaba-dashscope-pricing-2026-09-17', 'RESERVED',
         CAST('0.01000000' AS numeric), ${usageDate}
       )
       ON CONFLICT ("operation_run_id", "attempt_ordinal") DO NOTHING
