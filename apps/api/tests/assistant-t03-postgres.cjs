@@ -317,6 +317,59 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     assert.equal(sourceAfterUnchanged.lastIndexedAt.toISOString(), sourceAfterFirstRevision.lastIndexedAt.toISOString());
     assert.equal(sourceAfterUnchanged.lastSuccessAt > sourceAfterFirstRevision.lastSuccessAt, true);
 
+    // Same page, different embedding model: the unchanged revision must be re-embedded, because
+    // retrieval only sees vectors of the configured model.
+    const migratedEmbeddings = {
+      isEnabled: () => true,
+      getModel: () => 'assistant-hash-embedding-v2',
+      getDimensions: () => baseEmbeddings.getDimensions(),
+      embed: (values) => embeddings.embed(values),
+    };
+    const migratedIngestion = new AssistantSourceIngestionService(
+      prisma,
+      connectorRegistry,
+      new OfficialSourceExtractor(),
+      migratedEmbeddings,
+    );
+    const migrated = await migratedIngestion.ingest(sourceId);
+    assert.equal(migrated.outcome, 'INDEXED');
+    assert.equal(migrated.revisionId, first.revisionId);
+    assert.equal(migrated.embeddedChunks, first.chunks);
+    assert.equal(await prisma.assistantSourceRevision.count({ where: { sourceId } }), 1);
+    assert.equal(embeddingCalls.length, 2);
+    assert.equal(await prisma.assistantSourceChunk.count({
+      where: { sourceId, isActive: true, embeddingModel: 'assistant-hash-embedding-v2', embeddingDimensions: 64 },
+    }), first.chunks);
+    assert.equal(await prisma.assistantSourceChunk.count({
+      where: { sourceId, isActive: true, embeddingModel: 'assistant-hash-embedding-v1' },
+    }), 0);
+    const migratedRevision = await prisma.assistantSourceRevision.findUniqueOrThrow({
+      where: { id: first.revisionId },
+    });
+    assert.equal(migratedRevision.processingStatus, 'INDEXED');
+    assert.equal(migratedRevision.processingErrorCode, null);
+    const sourceAfterMigration = await prisma.assistantKnowledgeSource.findUniqueOrThrow({
+      where: { id: sourceId },
+    });
+    assert.equal(sourceAfterMigration.lastIndexedAt.toISOString(), sourceAfterFirstRevision.lastIndexedAt.toISOString());
+    assert.equal((await migratedIngestion.ingest(sourceId)).outcome, 'UNCHANGED');
+    assert.equal(embeddingCalls.length, 2);
+    // Switching back re-embeds once more and restores the state the rest of this scenario expects.
+    const restored = await ingestion.ingest(sourceId);
+    assert.equal(restored.outcome, 'INDEXED');
+    assert.equal(embeddingCalls.length, 3);
+    assert.equal(await prisma.assistantSourceChunk.count({
+      where: {
+        sourceRevisionId: first.revisionId,
+        isActive: true,
+        embeddingModel: 'assistant-hash-embedding-v1',
+        embeddingDimensions: 64,
+      },
+    }), first.chunks);
+    const sourceAfterRestore = await prisma.assistantKnowledgeSource.findUniqueOrThrow({
+      where: { id: sourceId },
+    });
+
     const publicSourceUrl = sourceCanonicalUrl.replace(/^http:/u, 'https:');
     await prisma.assistantKnowledgeSource.update({
       where: { id: sourceId },
@@ -498,7 +551,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     assert.equal(promotion.retrievalChannels.includes('POSTGRES_FTS'), true);
     assert.equal(promotion.retrievalChannels.includes('PGVECTOR'), true);
     assert.equal(promotion.fetchedAt, firstRevision.fetchedAt.toISOString());
-    assert.equal(promotion.verifiedAt, sourceAfterUnchanged.lastSuccessAt.toISOString());
+    assert.equal(promotion.verifiedAt, sourceAfterRestore.lastSuccessAt.toISOString());
     assert.equal(promotion.sourceUrl, publicSourceUrl);
     assert.equal(promotion.sourceLabel, 'Официальный сайт проекта · developer.example');
 

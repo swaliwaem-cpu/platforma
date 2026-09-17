@@ -21,8 +21,8 @@ import {
 const embeddingBatchSize = 64;
 
 export class AssistantSourceIngestionError extends Error {
-  constructor(readonly code: string, readonly retryable: boolean) {
-    super(code);
+  constructor(readonly code: string, readonly retryable: boolean, options?: { cause?: unknown }) {
+    super(code, options);
     this.name = 'AssistantSourceIngestionError';
   }
 }
@@ -85,8 +85,19 @@ export class AssistantSourceIngestionService {
     });
     const persisted = await this.persistFetchedRevision(source, fetched, attemptStartedAt, fence);
     if (persisted.processingStatus === AssistantSourceRevisionStatus.INDEXED) {
-      await this.markSourceSuccess(source.id, source.scheduleMinutes, attemptStartedAt, false, fence);
-      return { outcome: 'UNCHANGED' as const, revisionId: persisted.id, embeddedChunks: 0 };
+      if (!(await this.hasStaleActiveEmbeddings(source.id))) {
+        await this.markSourceSuccess(source.id, source.scheduleMinutes, attemptStartedAt, false, fence);
+        return { outcome: 'UNCHANGED' as const, revisionId: persisted.id, embeddedChunks: 0 };
+      }
+      // Same page, different embedding model: retrieval only sees vectors of the configured
+      // model, so the revision goes back through extraction instead of silently dropping out.
+      await this.prisma.assistantSourceRevision.updateMany({
+        where: { id: persisted.id, processingStatus: AssistantSourceRevisionStatus.INDEXED },
+        data: {
+          processingStatus: AssistantSourceRevisionStatus.FAILED,
+          processingErrorCode: 'SOURCE_EMBEDDING_MODEL_CHANGED',
+        },
+      });
     }
 
     let extracted: ReturnType<OfficialSourceExtractor['extract']>;
@@ -179,6 +190,25 @@ export class AssistantSourceIngestionService {
         select: { id: true, fetchedAt: true, processingStatus: true },
       });
     });
+  }
+
+  private async hasStaleActiveEmbeddings(sourceId: string) {
+    if (!this.embeddings.isEnabled()) return false;
+    const model = this.embeddings.getModel();
+    const dimensions = this.embeddings.getDimensions();
+    if (!model || !dimensions) return false;
+    const stale = await this.prisma.assistantSourceChunk.count({
+      where: {
+        sourceId,
+        isActive: true,
+        OR: [
+          { embeddingModel: null },
+          { embeddingModel: { not: model } },
+          { embeddingDimensions: { not: dimensions } },
+        ],
+      },
+    });
+    return stale > 0;
   }
 
   private async prepareEmbeddings(
@@ -311,21 +341,40 @@ export class AssistantSourceIngestionService {
           data: { isActive: false },
         });
       }
+      // A revision can be processed again (embedding model change): keep fact ids stable,
+      // drop facts the extractor no longer produces and upsert chunks by ordinal.
+      const factHashes = input.facts.map((fact) => createHash('sha256').update(JSON.stringify(fact.value)).digest('hex'));
+      await transaction.assistantSourceFact.deleteMany({
+        where: {
+          sourceRevisionId: input.revisionId,
+          ...(factHashes.length > 0 ? { valueHash: { notIn: factHashes } } : {}),
+        },
+      });
+      await transaction.$executeRaw(Prisma.sql`
+        DELETE FROM "assistant_source_chunks"
+        WHERE "source_revision_id" = ${input.revisionId}::uuid
+          AND "ordinal" >= ${input.chunks.length}
+      `);
       if (input.facts.length > 0) {
         await transaction.assistantSourceFact.createMany({
-          data: input.facts.map((fact) => ({
+          data: input.facts.map((fact, index) => ({
             sourceId: input.sourceId,
             sourceRevisionId: input.revisionId,
             kind: fact.kind as AssistantSourceFactKind,
             label: fact.label.slice(0, 300),
             valueJson: fact.value as Prisma.InputJsonValue,
-            valueHash: createHash('sha256').update(JSON.stringify(fact.value)).digest('hex'),
+            valueHash: factHashes[index]!,
             searchText: fact.searchText,
             canonicalUrl: fact.canonicalUrl,
             observedAt: fact.observedAt,
             validFrom: fact.validFrom,
             isActive: shouldActivate,
           })),
+          skipDuplicates: true,
+        });
+        await transaction.assistantSourceFact.updateMany({
+          where: { sourceRevisionId: input.revisionId },
+          data: { isActive: shouldActivate },
         });
       }
       for (const chunk of input.chunks) {
@@ -351,6 +400,14 @@ export class AssistantSourceIngestionService {
             ${shouldActivate},
             CURRENT_TIMESTAMP
           )
+          ON CONFLICT ("source_revision_id", "ordinal") DO UPDATE SET
+            "text" = EXCLUDED."text",
+            "content_hash" = EXCLUDED."content_hash",
+            "embedding" = EXCLUDED."embedding",
+            "embedding_model" = EXCLUDED."embedding_model",
+            "embedding_dimensions" = EXCLUDED."embedding_dimensions",
+            "embedded_at" = EXCLUDED."embedded_at",
+            "is_active" = EXCLUDED."is_active"
         `);
       }
       await transaction.assistantSourceRevision.update({
@@ -465,7 +522,7 @@ function normalizeIngestionError(error: unknown) {
   if (isRetryableCodedError(error)) {
     return new AssistantSourceIngestionError(error.code, error.retryable);
   }
-  return new AssistantSourceIngestionError('SOURCE_PROCESSING_FAILED', true);
+  return new AssistantSourceIngestionError('SOURCE_PROCESSING_FAILED', true, { cause: error });
 }
 
 function isRetryableCodedError(error: unknown): error is { code: string; retryable: boolean } {
