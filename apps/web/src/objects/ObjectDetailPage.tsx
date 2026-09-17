@@ -5,6 +5,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type TouchEvent as ReactTouchEvent,
   type ReactNode,
 } from 'react';
 import {
@@ -17,6 +18,7 @@ import {
   Building2Icon,
   DownloadIcon,
   MapIcon,
+  Maximize2Icon,
   PencilIcon,
   RotateCcwIcon,
   SearchIcon,
@@ -663,11 +665,21 @@ function ObjectDetail({
   });
   const mapPoints = useMemo(() => getObjectMapPoints(object, mapBalloonImageUrl), [mapBalloonImageUrl, object]);
   const editObjectPath = `/admin/objects/${object.id}/edit`;
-  const metroNames = object.metroStations.map((station) => station.name).join(', ');
-  const headerLocationLine = [locationLine.line.split(' / ').join(' · '), metroNames ? `м. ${metroNames}` : null]
+  const hasLocation = Boolean(locationLine.district) || locationLine.areas.length > 0;
+  const summaryFacts = useMemo(() => getObjectSummaryFacts(object, parameterRows), [object, parameterRows]);
+  const lotsCount = object.feedUnitsCount ?? 0;
+  const specRows = lotsCount > 0
+    ? [...summaryFacts, { label: 'Лотов в продаже', value: formatNumber(lotsCount) }]
+    : summaryFacts;
+  const pricePerMeter = object.feedPricePerMeterFrom ?? object.pricePerMeterFrom;
+  const priceValue = object.feedPriceFrom ?? object.priceFrom;
+  const priceLabel = formatPriceFrom(priceValue);
+  const priceMeta = [
+    pricePerMeter ? formatPricePerMeterFrom(pricePerMeter) : null,
+    lotsCount > 0 ? `${formatNumber(lotsCount)} ${formatPlural(lotsCount, ['лот', 'лота', 'лотов'])}` : null,
+  ]
     .filter(Boolean)
     .join(' · ');
-  const summaryFacts = useMemo(() => getObjectSummaryFacts(object, parameterRows), [object, parameterRows]);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const isDescriptionLong = descriptionParagraphs.join(' ').length > 420;
 
@@ -693,116 +705,127 @@ function ObjectDetail({
         Вернуться к каталогу
       </button>
 
-      <header className="page-header object-detail-header">
-        <div>
-          <h2>{object.title}</h2>
-          <p className="object-detail-location-line">{headerLocationLine}</p>
-        </div>
-        {object.status !== 'PUBLISHED' || canEditObject ? (
-          <div className="object-detail-header-actions">
-            {object.status === 'PUBLISHED' ? null : (
-              <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
-                {objectStatusLabels[object.status]}
+      {/* Approved variant C «Кинозал»: the 16:9 photo spans the page, everything else sits under it. */}
+      <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />
+
+      {/* Passport: title, price and actions; sticks to the top while the page scrolls. */}
+      <header className="object-passport" aria-labelledby="object-title">
+        <div className="object-passport-heading">
+          <h2 id="object-title">{object.title}</h2>
+          <p className="object-detail-location-line object-passport-location">
+            {hasLocation ? <span>{locationLine.line.split(' / ').join(' · ')}</span> : null}
+            {object.metroStations.map((station) => (
+              <span className="object-passport-metro" key={station.id}>
+                <i aria-hidden="true" style={{ background: normalizeLineColor(station.lineColor) ?? undefined }} />
+                {station.name}
               </span>
-            )}
-            {canEditObject ? (
-              <a className="object-detail-edit-link" href={editObjectPath}>
-                <PencilIcon aria-hidden="true" />
-                Редактировать
-              </a>
-            ) : null}
-          </div>
-        ) : null}
-      </header>
+            ))}
+          </p>
+        </div>
 
-      {/* Reference .fw-object-layout: gallery next to the price summary with facts, documents and the lots shortcut. */}
-      <div className="object-detail-hero">
-        <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />
-
-        <aside className="detail-section object-parameters-section" aria-labelledby="object-parameters-title">
-          <p className="eyebrow" id="object-parameters-title">
+        <div className="object-passport-price" aria-labelledby="object-parameters-title">
+          <p className="sr-only" id="object-parameters-title">
             Стоимость
           </p>
-          <strong className="object-detail-summary-price">{formatPriceFrom(object.feedPriceFrom ?? object.priceFrom)}</strong>
-          <small className="object-detail-summary-price-meter">
-            {formatPricePerMeterFrom(object.feedPricePerMeterFrom ?? object.pricePerMeterFrom)}
-          </small>
+          <strong className="object-passport-price-value">{priceLabel}</strong>
+          {priceMeta ? <small>{priceMeta}</small> : null}
+        </div>
 
-          {summaryFacts.length > 0 ? (
-            <dl className="object-parameters-grid">
-              {summaryFacts.map((row) => (
-                <div key={row.label}>
-                  <dt>{row.label}</dt>
-                  <dd>{row.value}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : null}
+        <section className="object-files-section object-passport-actions" aria-labelledby="object-files-title">
+          <h3 className="sr-only" id="object-files-title">
+            Файлы и документы
+          </h3>
+          {object.status === 'PUBLISHED' ? null : (
+            <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
+              {objectStatusLabels[object.status]}
+            </span>
+          )}
+          <div className="object-detail-actions object-files-primary-actions" aria-label="Действия по объекту">
+            {primaryPresentationFile ? (
+              <SecureFileButton
+                accessToken={accessToken}
+                className="object-detail-action-button object-detail-action-button--primary"
+                fileId={primaryPresentationFile.file.id}
+                label={<FileActionLabel>Презентация</FileActionLabel>}
+                openingLabel="Открываем презентацию"
+                wrapperClassName="object-detail-action"
+              />
+            ) : (
+              <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
+                <FileActionLabel>Презентация</FileActionLabel>
+              </button>
+            )}
 
-          <section className="object-files-section" aria-labelledby="object-files-title">
-            <h3 className="sr-only" id="object-files-title">
-              Файлы и документы
-            </h3>
-            <div className="object-detail-actions object-files-primary-actions" aria-label="Действия по объекту">
-              {primaryPresentationFile ? (
-                <SecureFileButton
-                  accessToken={accessToken}
-                  className="object-detail-action-button object-detail-action-button--primary"
-                  fileId={primaryPresentationFile.file.id}
-                  label={<FileActionLabel>Презентация</FileActionLabel>}
-                  openingLabel="Открываем презентацию"
-                  wrapperClassName="object-detail-action"
-                />
-              ) : (
-                <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
-                  <FileActionLabel>Презентация</FileActionLabel>
-                </button>
-              )}
-
-              {aerotourUrl ? (
-                <a
-                  className="object-detail-action-button object-detail-action-button--secondary"
-                  href={aerotourUrl}
-                  referrerPolicy="no-referrer"
-                  rel="noopener noreferrer nofollow"
-                  target="_blank"
-                >
-                  <FileActionLabel>Аэротур</FileActionLabel>
-                </a>
-              ) : null}
-
-              {object.layoutsUrl ? (
-                <a
-                  className="object-detail-action-button object-detail-action-button--secondary"
-                  href={object.layoutsUrl}
-                  referrerPolicy="no-referrer"
-                  rel="noopener noreferrer nofollow"
-                  target="_blank"
-                >
-                  <FileActionLabel>Планировки</FileActionLabel>
-                </a>
-              ) : (
-                <button
-                  className="object-detail-action-button object-detail-action-button--disabled object-detail-action-button--missing"
-                  disabled
-                  type="button"
-                >
-                  <FileActionLabel>Планировки</FileActionLabel>
-                </button>
-              )}
-            </div>
-
-            {listedFiles.length > 0 ? (
-              <FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />
+            {aerotourUrl ? (
+              <a
+                className="object-detail-action-button object-detail-action-button--secondary"
+                href={aerotourUrl}
+                referrerPolicy="no-referrer"
+                rel="noopener noreferrer nofollow"
+                target="_blank"
+              >
+                <FileActionLabel>Аэротур</FileActionLabel>
+              </a>
             ) : null}
-          </section>
+
+            {object.layoutsUrl ? (
+              <a
+                className="object-detail-action-button object-detail-action-button--secondary"
+                href={object.layoutsUrl}
+                referrerPolicy="no-referrer"
+                rel="noopener noreferrer nofollow"
+                target="_blank"
+              >
+                <FileActionLabel>Планировки</FileActionLabel>
+              </a>
+            ) : (
+              <button
+                className="object-detail-action-button object-detail-action-button--disabled object-detail-action-button--missing"
+                disabled
+                type="button"
+              >
+                <FileActionLabel>Планировки</FileActionLabel>
+              </button>
+            )}
+          </div>
 
           <button className="object-detail-summary-cta" type="button" onClick={() => scrollToSection('object-lots')}>
             Подобрать лот
           </button>
-        </aside>
-      </div>
 
+          {canEditObject ? (
+            <a aria-label="Редактировать" className="object-detail-edit-link" href={editObjectPath} title="Редактировать">
+              <PencilIcon aria-hidden="true" />
+            </a>
+          ) : null}
+        </section>
+      </header>
+
+      {specRows.length > 0 || listedFiles.length > 0 ? (
+        <div className="object-specs-grid">
+          {specRows.length > 0 ? (
+            <section className="detail-section object-specs-section" aria-labelledby="object-specs-title">
+              <p className="eyebrow" id="object-specs-title">
+                Характеристики
+              </p>
+              <dl className="object-specs-list">
+                {specRows.map((row) => (
+                  <div key={row.label}>
+                    <dt>{row.label}</dt>
+                    <dd>{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+
+          {listedFiles.length > 0 ? (
+            <section className="detail-section object-documents-section" aria-label="Документы">
+              <FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />
+            </section>
+          ) : null}
+        </div>
+      ) : null}
       <div className="object-description-location-grid">
         <section className="detail-section object-description-section" aria-labelledby="object-description-title">
           <div>
@@ -940,6 +963,17 @@ function ObjectDetail({
           points={mapPoints}
         />
       </section>
+
+      {/* Phones: the price and the lots shortcut stay pinned to the bottom edge. */}
+      <div className="object-mobile-dock">
+        <div>
+          <strong title={priceLabel}>{priceValue ? `от ${formatCompactMoney(priceValue)} ₽` : priceLabel}</strong>
+          {pricePerMeter ? <small>{formatPricePerMeterFrom(pricePerMeter)}</small> : null}
+        </div>
+        <button className="object-detail-summary-cta" type="button" onClick={() => scrollToSection('object-lots')}>
+          Подобрать лот
+        </button>
+      </div>
     </div>
   );
 }
@@ -998,6 +1032,37 @@ function ObjectImageCarousel({
       setLightboxIndex(null);
     }
   }, [activeIndex, filteredImages.length, lightboxIndex]);
+
+  const thumbnailsRef = useRef<HTMLDivElement>(null);
+  const touchStartXRef = useRef<number | null>(null);
+
+  // Keep the active thumbnail visible in the filmstrip without scrolling the page.
+  useEffect(() => {
+    const strip = thumbnailsRef.current;
+    const thumbnail = strip?.children[activeIndex];
+
+    if (!strip || !(thumbnail instanceof HTMLElement)) {
+      return;
+    }
+
+    strip.scrollTo({ left: thumbnail.offsetLeft - (strip.clientWidth - thumbnail.offsetWidth) / 2, behavior: 'smooth' });
+  }, [activeIndex, filteredImages]);
+
+  function handleStageTouchEnd(event: ReactTouchEvent<HTMLDivElement>) {
+    const startX = touchStartXRef.current;
+    const endX = event.changedTouches[0]?.clientX;
+    touchStartXRef.current = null;
+
+    if (!hasManyImages || startX === null || endX === undefined || Math.abs(endX - startX) < 40) {
+      return;
+    }
+
+    if (endX < startX) {
+      showNextImage();
+    } else {
+      showPreviousImage();
+    }
+  }
 
   function showPreviousImage() {
     setActiveIndex((currentIndex) => (currentIndex === 0 ? filteredImages.length - 1 : currentIndex - 1));
@@ -1077,7 +1142,13 @@ function ObjectImageCarousel({
 
   return (
     <section className="media-gallery-frame object-image-carousel" aria-label="Галерея объекта">
-      <div className="media-gallery-stage object-carousel-media">
+      <div
+        className="media-gallery-stage object-carousel-media"
+        onTouchEnd={handleStageTouchEnd}
+        onTouchStart={(event) => {
+          touchStartXRef.current = event.touches[0]?.clientX ?? null;
+        }}
+      >
         <button
           aria-label="Открыть фото в полном размере"
           className="media-gallery-button object-carousel-media-button"
@@ -1101,7 +1172,7 @@ function ObjectImageCarousel({
               type="button"
               onClick={showPreviousImage}
             >
-              ‹
+              <ChevronLeftIcon aria-hidden="true" />
             </button>
             <button
               aria-label="Следующее фото"
@@ -1109,61 +1180,71 @@ function ObjectImageCarousel({
               type="button"
               onClick={showNextImage}
             >
-              ›
+              <ChevronRightIcon aria-hidden="true" />
             </button>
-            <span className="carousel-counter">
-              {activeIndex + 1} / {filteredImages.length}
-            </span>
           </>
         ) : null}
       </div>
 
-      {hasManyImages || hasSectionFilters ? (
-        <div className="carousel-thumbnail-zone">
-          {hasSectionFilters ? (
-            <div className="carousel-section-filters" aria-label="Разделы галереи">
-              {sectionOptions.map((option) => {
-                const sectionImageCount = images.filter((image) => image.section === option.value).length;
-                const sectionButtonClassName =
-                  activeSection === option.value
-                    ? 'carousel-section-filter carousel-section-filter--active'
-                    : 'carousel-section-filter';
+      <div className="object-carousel-topbar">
+        {hasSectionFilters ? (
+          <div className="carousel-section-filters" aria-label="Разделы галереи">
+            {sectionOptions.map((option) => {
+              const sectionImageCount = images.filter((image) => image.section === option.value).length;
+              const sectionButtonClassName =
+                activeSection === option.value
+                  ? 'carousel-section-filter carousel-section-filter--active'
+                  : 'carousel-section-filter';
 
-                return (
-                  <button
-                    key={option.value}
-                    className={sectionButtonClassName}
-                    disabled={sectionImageCount === 0}
-                    type="button"
-                    onClick={() => toggleSectionFilter(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-
-          {hasManyImages ? (
-            <div className="carousel-thumbnails" aria-label="Миниатюры галереи">
-              {filteredImages.map((image, index) => (
+              return (
                 <button
-                  key={image.id}
-                  aria-label={`Фото ${index + 1}`}
-                  className={index === activeIndex ? 'carousel-thumbnail carousel-thumbnail--active' : 'carousel-thumbnail'}
+                  key={option.value}
+                  className={sectionButtonClassName}
+                  disabled={sectionImageCount === 0}
                   type="button"
-                  onClick={() => setActiveIndex(index)}
+                  onClick={() => toggleSectionFilter(option.value)}
                 >
-                  <SecureImage
-                    accessToken={accessToken}
-                    alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`}
-                    fileId={image.file.id}
-                    variant="thumbnail"
-                  />
+                  {option.label}
                 </button>
-              ))}
-            </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+        <div className="object-carousel-corner">
+          {hasManyImages ? (
+            <span className="carousel-counter">
+              {activeIndex + 1} / {filteredImages.length}
+            </span>
           ) : null}
+          <button className="object-carousel-expand" type="button" onClick={openLightbox}>
+            <Maximize2Icon aria-hidden="true" />
+            Во весь экран
+          </button>
+        </div>
+      </div>
+
+      {hasManyImages ? (
+        <div className="carousel-thumbnail-zone object-carousel-filmstrip">
+          <div className="carousel-thumbnails" aria-label="Миниатюры галереи" ref={thumbnailsRef}>
+            {filteredImages.map((image, index) => (
+              <button
+                key={image.id}
+                aria-label={`Фото ${index + 1}`}
+                aria-current={index === activeIndex ? 'true' : undefined}
+                className={index === activeIndex ? 'carousel-thumbnail carousel-thumbnail--active' : 'carousel-thumbnail'}
+                type="button"
+                onClick={() => setActiveIndex(index)}
+              >
+                <SecureImage
+                  accessToken={accessToken}
+                  alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`}
+                  fileId={image.file.id}
+                  variant="thumbnail"
+                />
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 

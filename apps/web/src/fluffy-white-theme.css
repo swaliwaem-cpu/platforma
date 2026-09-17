@@ -81,6 +81,14 @@
   --fw-avatar-shadow: inset 0 1px 0 rgb(255 255 255 / 82%);
   --fw-media-glass: rgb(255 255 255 / 28%);
   --fw-media-label: rgb(24 24 22 / 46%);
+  --fw-hero-shadow: 0 30px 60px rgb(40 34 28 / 16%);
+  --fw-passport-bg: rgb(250 248 245 / 86%);
+  --fw-dock-bg: rgb(14 13 12 / 92%);
+  --fw-dock-text: #ffffff;
+  --fw-dock-muted: rgb(255 255 255 / 62%);
+  --fw-dock-action-bg: #ffffff;
+  --fw-dock-action-hover: #f0ece7;
+  --fw-dock-action-text: #0e0d0c;
   background: var(--fw-canvas) fixed;
 }
 
@@ -170,6 +178,14 @@
   --fw-search-hover-shadow: var(--fw-field-hover-shadow);
   --fw-menu-shadow: 0 20px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 8%);
   --fw-avatar-shadow: inset 0 1px 0 rgb(255 255 255 / 8.2%);
+  --fw-hero-shadow: 0 30px 60px rgb(0 0 0 / 42%);
+  --fw-passport-bg: rgb(26 27 29 / 84%);
+  --fw-dock-bg: rgb(241 242 243 / 94%);
+  --fw-dock-text: #0e0d0c;
+  --fw-dock-muted: #66635f;
+  --fw-dock-action-bg: #0e0d0c;
+  --fw-dock-action-hover: #2b2e31;
+  --fw-dock-action-text: #ffffff;
   background:
     radial-gradient(circle at 14% 9%, rgb(91 93 96 / 12%), transparent 32%),
     radial-gradient(circle at 84% 32%, rgb(47 49 51 / 11%), transparent 36%),
@@ -1490,6 +1506,114 @@
 
 :root[data-app-theme] body .carousel-thumbnail.carousel-thumbnail--active {
   border-color: var(--fw-text);
+}
+
+/*
+ * Object page, variant C «Кинозал»: the photo has no frame, its controls are glass labels,
+ * the sticky passport is translucent and phones get a contrasting price dock.
+ */
+:root[data-app-theme] body .object-detail-page .object-image-carousel {
+  border-radius: 30px;
+  background: var(--fw-control);
+  box-shadow: var(--fw-hero-shadow);
+}
+
+:root[data-app-theme] body .object-detail-page .object-image-carousel :is(.carousel-section-filter, .carousel-counter, .object-carousel-expand) {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 10px;
+  background: var(--fw-media-label);
+  color: #ffffff;
+  padding: 0 12px;
+  font-size: 12px;
+  line-height: 16px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+:root[data-app-theme] body .object-detail-page .object-image-carousel :is(.carousel-section-filter, .object-carousel-expand):not(:disabled):is(:hover, :focus-visible) {
+  border-color: rgb(255 255 255 / 60%);
+  background: rgb(24 24 22 / 64%);
+  outline: none;
+}
+
+@media (max-width: 760px) {
+  :root[data-app-theme] body .object-detail-page .object-image-carousel .object-carousel-expand {
+    display: none;
+  }
+}
+
+:root[data-app-theme] body .object-detail-page .object-image-carousel .carousel-section-filter--active,
+:root[data-app-theme] body .object-detail-page .object-image-carousel .carousel-section-filter--active:is(:hover, :focus-visible) {
+  border-color: #ffffff;
+  background: #ffffff;
+  color: #0e0d0c;
+}
+
+:root[data-app-theme] body .object-detail-page .object-image-carousel .carousel-thumbnails {
+  border-radius: 18px;
+  background: rgb(14 13 12 / 36%);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+:root[data-app-theme] body .object-detail-page .object-image-carousel .carousel-thumbnail {
+  border-radius: 10px;
+}
+
+:root[data-app-theme] body .object-detail-page .object-image-carousel .carousel-thumbnail.carousel-thumbnail--active {
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+:root[data-app-theme] body .object-passport {
+  border-radius: 24px;
+  background: var(--fw-passport-bg);
+  box-shadow: var(--fw-glass-shadow);
+  color: var(--fw-ink);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+}
+
+:root[data-app-theme] body .object-passport :is(.object-passport-location, .object-passport-price small) {
+  color: var(--fw-muted);
+}
+
+:root[data-app-theme] body .object-passport .object-passport-price-value {
+  color: var(--fw-ink);
+  font-weight: 500;
+}
+
+:root[data-app-theme] body .object-specs-list div {
+  border-top-color: color-mix(in srgb, var(--fw-line) 55%, transparent);
+}
+
+:root[data-app-theme] body .object-mobile-dock {
+  background: var(--fw-dock-bg);
+  box-shadow: 0 14px 32px rgb(0 0 0 / 24%);
+  color: var(--fw-dock-text);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+:root[data-app-theme] body .object-mobile-dock strong {
+  color: var(--fw-dock-text);
+}
+
+:root[data-app-theme] body .object-mobile-dock small {
+  color: var(--fw-dock-muted);
+}
+
+:root[data-app-theme] body .object-mobile-dock .object-detail-summary-cta {
+  border-color: var(--fw-dock-action-bg);
+  background: var(--fw-dock-action-bg);
+  color: var(--fw-dock-action-text);
+}
+
+:root[data-app-theme] body .object-mobile-dock .object-detail-summary-cta:is(:hover, :focus-visible) {
+  border-color: var(--fw-dock-action-hover);
+  background: var(--fw-dock-action-hover);
 }
 
 /* ---------------------------------------------------------------------------

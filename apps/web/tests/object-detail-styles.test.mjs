@@ -7,6 +7,7 @@ import test from 'node:test';
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 const appThemeStyles = readFileSync(resolve(currentDir, '../src/app-theme.css'), 'utf8');
+const fluffyThemeStyles = readFileSync(resolve(currentDir, '../src/fluffy-white-theme.css'), 'utf8');
 const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
 
 function getRuleBody(selector) {
@@ -155,43 +156,68 @@ test('object detail carousel modal keeps lightbox image contained', () => {
   );
 });
 
-test('object detail follows the reference layout: gallery beside the price summary', () => {
-  const heroIndex = objectDetailSource.indexOf('className="object-detail-hero"');
+test('object detail follows variant C: a 16:9 photo with everything else under it', () => {
   const carouselIndex = objectDetailSource.indexOf('<ObjectImageCarousel accessToken={accessToken}');
-  const parametersIndex = objectDetailSource.indexOf('id="object-parameters-title"');
+  const passportIndex = objectDetailSource.indexOf('<header className="object-passport" aria-labelledby="object-title">');
+  const titleIndex = objectDetailSource.indexOf('<h2 id="object-title">{object.title}</h2>');
+  const priceIndex = objectDetailSource.indexOf('id="object-parameters-title"');
   const filesIndex = objectDetailSource.indexOf('id="object-files-title"');
   const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions object-files-primary-actions"');
+  const specsIndex = objectDetailSource.indexOf('id="object-specs-title"');
   const descriptionGridIndex = objectDetailSource.indexOf('className="object-description-location-grid"');
   const lotsIndex = objectDetailSource.indexOf('<ObjectFeedUnitsSection accessToken={accessToken}');
   const contentIndex = objectDetailSource.indexOf('id="object-content-sections-title"');
   const mapIndex = objectDetailSource.indexOf('id="object-map-title"');
+  const dockIndex = objectDetailSource.indexOf('<div className="object-mobile-dock">');
+  const positions = { carouselIndex, passportIndex, titleIndex, priceIndex, filesIndex, actionsIndex, specsIndex, descriptionGridIndex, lotsIndex, contentIndex, mapIndex, dockIndex };
 
-  for (const [name, index] of Object.entries({ heroIndex, carouselIndex, parametersIndex, filesIndex, actionsIndex, descriptionGridIndex, lotsIndex, contentIndex, mapIndex })) {
+  for (const [name, index] of Object.entries(positions)) {
     assert.notEqual(index, -1, `${name} should exist`);
   }
 
-  assert.ok(heroIndex < carouselIndex && carouselIndex < parametersIndex);
-  assert.ok(parametersIndex < filesIndex && filesIndex < actionsIndex);
-  assert.ok(actionsIndex < descriptionGridIndex && descriptionGridIndex < lotsIndex);
-  assert.ok(lotsIndex < contentIndex && contentIndex < mapIndex);
+  const order = Object.values(positions);
+  assert.deepEqual([...order].sort((left, right) => left - right), order);
+  assert.doesNotMatch(objectDetailSource, /className="object-detail-hero"/);
+  assert.doesNotMatch(objectDetailSource, /className="page-header object-detail-header"/);
 
-  assert.match(objectDetailSource, /<p className="eyebrow" id="object-parameters-title">\s*Стоимость\s*<\/p>/);
-  assert.match(objectDetailSource, /formatPriceFrom\(object\.feedPriceFrom \?\? object\.priceFrom\)/);
+  assert.match(objectDetailSource, /<p className="sr-only" id="object-parameters-title">\s*Стоимость\s*<\/p>/);
+  assert.match(objectDetailSource, /const priceLabel = formatPriceFrom\(priceValue\);/);
+  assert.match(objectDetailSource, /const priceValue = object\.feedPriceFrom \?\? object\.priceFrom;/);
   assert.match(objectDetailSource, /function getObjectSummaryFacts\(object: RealEstateObjectDetail, rows: Array<\{ label: string; value: string \}>\)/);
-  assert.match(objectDetailSource, /onClick=\{\(\) => scrollToSection\('object-lots'\)\}/);
+  assert.match(objectDetailSource, /\{ label: 'Лотов в продаже', value: formatNumber\(lotsCount\) \}/);
+  assert.equal((objectDetailSource.match(/onClick=\{\(\) => scrollToSection\('object-lots'\)\}/g) ?? []).length, 2);
   assert.match(objectDetailSource, /onClick=\{\(\) => scrollToSection\('object-map'\)\}/);
 
-  assert.match(styles, /\.object-detail-hero \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) 410px;[\s\S]*?gap: 16px;/);
-  assert.match(styles, /\.object-detail-page \.object-image-carousel :is\(\.carousel-section-filters, \.carousel-thumbnails\) \{[\s\S]*?position: static;[\s\S]*?opacity: 1;/);
-  assert.match(styles, /\.object-detail-hero \.object-parameters-grid dt::after \{\s*content: " ·";/);
-  assert.match(styles, /\.object-detail-summary-cta \{[\s\S]*?margin-top: auto;/);
-  assert.match(styles, /@media \(max-width: 1100px\) \{\s*\.object-detail-hero \{\s*grid-template-columns: 1fr;/);
+  assert.match(styles, /\.object-detail-page \.object-image-carousel \{[\s\S]*?aspect-ratio: 16 \/ 9;[\s\S]*?padding: 0;/);
+  assert.match(styles, /\.object-detail-page \.object-image-carousel \.object-carousel-filmstrip \{[\s\S]*?position: absolute;[\s\S]*?bottom: 16px;/);
+  assert.match(styles, /\.object-passport \{[\s\S]*?position: sticky;[\s\S]*?top: 12px;[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
+  assert.match(styles, /\.object-mobile-dock \{\s*display: none;\s*\}/);
+  assert.match(
+    styles,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.object-passport \{\s*position: static;[\s\S]*?\.object-mobile-dock \{\s*position: sticky;[\s\S]*?bottom: 12px;[\s\S]*?display: flex;/,
+  );
+  assert.match(styles, /body:has\(\.assistant-launcher\) \.object-mobile-dock \{\s*bottom: 94px;/);
+  assert.match(fluffyThemeStyles, /:root\[data-app-theme\] body \.object-passport \{[\s\S]*?background: var\(--fw-passport-bg\);/);
+  assert.match(fluffyThemeStyles, /--fw-passport-bg: rgb\(250 248 245 \/ 86%\);/);
+  assert.match(fluffyThemeStyles, /--fw-passport-bg: rgb\(26 27 29 \/ 84%\);/);
+});
+
+test('object detail carousel lays its controls over the photo', () => {
+  const carousel = objectDetailSource.match(/function ObjectImageCarousel[\s\S]*?\nfunction ObjectFeedUnitsSection/)?.[0] ?? '';
+
+  assert.match(carousel, /<div className="object-carousel-topbar">[\s\S]*?className="carousel-section-filters"[\s\S]*?<div className="object-carousel-corner">[\s\S]*?className="carousel-counter"[\s\S]*?className="object-carousel-expand" type="button" onClick=\{openLightbox\}/);
+  assert.match(carousel, /className="carousel-thumbnail-zone object-carousel-filmstrip"[\s\S]*?ref=\{thumbnailsRef\}/);
+  assert.match(carousel, /strip\.scrollTo\(\{ left: thumbnail\.offsetLeft - \(strip\.clientWidth - thumbnail\.offsetWidth\) \/ 2, behavior: 'smooth' \}\);/);
+  assert.match(carousel, /onTouchEnd=\{handleStageTouchEnd\}/);
+  assert.match(carousel, /Math\.abs\(endX - startX\) < 40/);
+  assert.match(carousel, /<ChevronLeftIcon aria-hidden="true" \/>/);
+  assert.match(fluffyThemeStyles, /@media \(max-width: 760px\) \{\s*:root\[data-app-theme\] body \.object-detail-page \.object-image-carousel \.object-carousel-expand \{\s*display: none;/);
 });
 
 test('object files stay in the summary with primary actions and optional additional files', () => {
   assert.match(
     objectDetailSource,
-    /<section className="object-files-section" aria-labelledby="object-files-title">[\s\S]*?<h3 className="sr-only" id="object-files-title">\s*Файлы и документы\s*<\/h3>/,
+    /<section className="object-files-section object-passport-actions" aria-labelledby="object-files-title">[\s\S]*?<h3 className="sr-only" id="object-files-title">\s*Файлы и документы\s*<\/h3>/,
   );
   assert.match(objectDetailSource, /<FileActionLabel>Презентация<\/FileActionLabel>/);
   assert.match(objectDetailSource, /<FileActionLabel>Аэротур<\/FileActionLabel>/);
@@ -204,7 +230,10 @@ test('object files stay in the summary with primary actions and optional additio
   assert.match(objectDetailSource, /import \{ getLinkedFileTitle \} from '\.\.\/files\/fileDisplay';/);
   assert.match(objectDetailSource, /const primaryPresentationFile = object\.files\.find\(\(file\) => file\.type === 'PRESENTATION'\) \?\? null;/);
   assert.match(objectDetailSource, /const listedFiles = object\.files\.filter\(\(file\) => file\.id !== primaryPresentationFile\?\.id\);/);
-  assert.match(objectDetailSource, /listedFiles\.length > 0 \? \(\s*<FileList accessToken=\{accessToken\} files=\{listedFiles\} title="Дополнительные файлы" \/>\s*\) : null/);
+  assert.match(
+    objectDetailSource,
+    /listedFiles\.length > 0 \? \(\s*<section className="detail-section object-documents-section" aria-label="Документы">\s*<FileList accessToken=\{accessToken\} files=\{listedFiles\} title="Дополнительные файлы" \/>\s*<\/section>\s*\) : null/,
+  );
   assert.match(objectDetailSource, /const displayTitle = getLinkedFileTitle\(file, fileTypeLabels\);/);
   assert.match(
     objectDetailSource,
@@ -212,8 +241,8 @@ test('object files stay in the summary with primary actions and optional additio
   );
   assert.doesNotMatch(objectDetailSource, /value="Отсутствует"|value="Открыть цены"|value="Отсутствуют"/);
 
-  assert.match(styles, /\.object-detail-hero \.object-files-section \.object-files-primary-actions \{[\s\S]*?grid-template-columns: repeat\(auto-fit, minmax\(110px, 1fr\)\);/);
-  assert.match(styles, /\.object-detail-hero \.object-files-section \.object-detail-action-button \{[\s\S]*?min-height: 44px;[\s\S]*?border-radius: 13px;/);
+  assert.match(styles, /\.object-passport \.object-files-primary-actions \{\s*display: flex;\s*gap: 8px;/);
+  assert.match(styles, /\.object-passport \.object-passport-actions \.object-detail-action-button \{[\s\S]*?min-height: 44px;[\s\S]*?white-space: nowrap;/);
   assert.match(
     appThemeStyles,
     /html\[data-app-theme\] \.object-files-section \.object-detail-action-button\s*\{[\s\S]*?border-color:\s*var\(--app-theme-border-soft\);[\s\S]*?background:\s*var\(--app-theme-surface-soft\);[\s\S]*?\}/,

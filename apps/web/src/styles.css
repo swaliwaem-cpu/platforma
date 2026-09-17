@@ -5902,15 +5902,6 @@ tr.user-row--deactivated .text-button {
   line-height: 1.45;
 }
 
-.object-detail-header-actions {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-  margin-left: auto;
-}
-
 .object-lot-aerotour-link {
   --object-lot-aerotour-bg: var(--app-theme-accent, #c8a66a);
   --object-lot-aerotour-border: var(--app-theme-accent, #c8a66a);
@@ -7460,8 +7451,10 @@ tr.user-row--deactivated .text-button {
 }
 
 /*
- * Object page, reference .fw-object-layout (approved variant A): back link, page head,
- * gallery next to the price summary, «О проекте» + «Расположение», lots, details, map.
+ * Object page, approved variant C «Кинозал»: back link, the 16:9 photo across the page with
+ * section pills, counter and a glass filmstrip laid over it, the sticky passport (title, price,
+ * actions), characteristics with documents, then description, lots, details and map.
+ * The lot page keeps the older .object-detail-hero layout below.
  */
 .object-detail-back {
   display: inline-flex;
@@ -7488,52 +7481,309 @@ tr.user-row--deactivated .text-button {
 }
 
 .object-detail-page .object-image-carousel {
-  display: grid;
-  aspect-ratio: auto;
-  height: 100%;
-  grid-template-rows: minmax(390px, 1fr) auto;
-  gap: 10px;
-  place-items: stretch;
-  padding: 14px;
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  padding: 0;
+  isolation: isolate;
 }
 
 .object-detail-page .object-image-carousel .media-gallery-stage {
-  position: relative;
-  inset: auto;
-  overflow: hidden;
-  border-radius: 18px;
+  position: absolute;
+  inset: 0;
 }
 
-.object-detail-page .object-image-carousel .carousel-thumbnail-zone {
-  position: static;
-  display: grid;
-  height: auto;
-  gap: 10px;
+.object-detail-page .object-image-carousel .carousel-button {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  font-size: 0;
+}
+
+.object-detail-page .object-image-carousel .carousel-button svg {
+  width: 22px;
+  height: 22px;
+}
+
+.object-detail-page .object-image-carousel .carousel-button--previous {
+  left: 18px;
+}
+
+.object-detail-page .object-image-carousel .carousel-button--next {
+  right: 18px;
+}
+
+.object-carousel-topbar {
+  position: absolute;
+  z-index: 3;
+  top: 16px;
+  right: 16px;
+  left: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.object-carousel-topbar > * {
   pointer-events: auto;
 }
 
-.object-detail-page .object-image-carousel .carousel-thumbnail-zone::before {
-  display: none;
-}
-
-.object-detail-page .object-image-carousel :is(.carousel-section-filters, .carousel-thumbnails) {
+.object-detail-page .object-image-carousel .carousel-section-filters {
   position: static;
   width: auto;
-  max-width: 100%;
+  max-width: none;
+  flex-wrap: wrap;
   justify-content: flex-start;
   opacity: 1;
-  pointer-events: auto;
   transform: none;
 }
 
+.object-carousel-corner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.object-detail-page .object-image-carousel .carousel-counter {
+  position: static;
+}
+
+.object-carousel-expand {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.object-carousel-expand svg {
+  width: 14px;
+  height: 14px;
+}
+
+.object-detail-page .object-image-carousel .object-carousel-filmstrip {
+  position: absolute;
+  z-index: 3;
+  right: 84px;
+  bottom: 16px;
+  left: 84px;
+  display: flex;
+  height: auto;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.object-detail-page .object-image-carousel .object-carousel-filmstrip::before {
+  display: none;
+}
+
 .object-detail-page .object-image-carousel .carousel-thumbnails {
-  gap: 10px;
-  padding: 2px;
+  position: relative;
+  bottom: auto;
+  left: auto;
+  width: auto;
+  max-width: 100%;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px;
+  opacity: 1;
+  pointer-events: auto;
+  scrollbar-width: none;
+  transform: none;
+}
+
+.object-detail-page .object-image-carousel .carousel-thumbnails::-webkit-scrollbar {
+  display: none;
 }
 
 .object-detail-page .object-image-carousel .carousel-thumbnail {
-  width: 112px;
-  height: 74px;
+  width: 92px;
+  height: 52px;
+  border-width: 0;
+  opacity: 0.72;
+}
+
+.object-detail-page .object-image-carousel .carousel-thumbnail--active {
+  opacity: 1;
+}
+
+.object-passport {
+  position: sticky;
+  z-index: 20;
+  top: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px 28px;
+  padding: 14px 14px 14px 26px;
+}
+
+.object-passport,
+.object-passport-heading,
+.object-specs-grid,
+.object-mobile-dock {
+  min-width: 0;
+}
+
+.object-passport-heading h2 {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.object-passport .object-passport-location {
+  display: flex;
+  overflow: hidden;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px 12px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, #000 88%, transparent);
+}
+
+.object-passport-metro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.object-passport-metro i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.object-passport-price {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  text-align: right;
+}
+
+.object-passport-price-value {
+  font-size: 26px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.object-passport-price small {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.object-passport .object-passport-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.object-passport .object-files-primary-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.object-passport .object-passport-actions .object-detail-action-button {
+  width: auto;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.object-passport .object-detail-action {
+  display: block;
+}
+
+.object-passport .object-file-action-label {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.object-passport .object-passport-actions .object-detail-summary-cta {
+  margin: 0;
+  padding: 0 20px;
+  white-space: nowrap;
+}
+
+.object-passport .object-detail-edit-link {
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+}
+
+.object-specs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.object-specs-grid > :only-child {
+  grid-column: 1 / -1;
+}
+
+.object-specs-section,
+.object-documents-section {
+  gap: 8px;
+  padding: 22px 26px;
+}
+
+.object-specs-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 32px;
+  margin: 0;
+}
+
+.object-specs-grid > :only-child .object-specs-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.object-specs-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--catalog-border-soft);
+  padding: 11px 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.object-specs-list dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.object-mobile-dock {
+  display: none;
 }
 
 .object-detail-hero .object-parameters-section {
@@ -7592,40 +7842,6 @@ tr.user-row--deactivated .text-button {
   margin: 0;
   color: var(--catalog-ink-900);
   font-size: inherit;
-  font-weight: 400;
-}
-
-.object-detail-hero .object-files-section {
-  display: grid;
-  gap: 12px;
-  margin: 12px 0;
-}
-
-.object-detail-hero .object-files-section .object-files-primary-actions {
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 8px;
-}
-
-.object-detail-hero .object-files-section .object-detail-action-button {
-  min-height: 44px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 13px;
-  padding: 0 12px;
-  text-align: center;
-}
-
-.object-detail-hero .object-files-section .object-detail-action {
-  display: block;
-}
-
-.object-detail-hero .object-files-section .object-detail-action .object-detail-action-button {
-  width: 100%;
-}
-
-.object-detail-hero .object-file-action-label {
-  color: inherit;
-  font-size: 14px;
   font-weight: 400;
 }
 
@@ -8042,18 +8258,133 @@ tr.user-row--deactivated .text-button {
     grid-template-columns: 1fr;
   }
 
-  .object-detail-page .object-image-carousel {
-    grid-template-rows: auto auto;
+  .object-passport {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .object-detail-page .object-image-carousel .media-gallery-stage {
-    aspect-ratio: 16 / 9;
+  .object-passport .object-passport-actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+
+  .object-specs-grid {
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 760px) {
-  .object-detail-page .object-image-carousel {
-    padding: 10px;
+  .object-carousel-topbar {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+  }
+
+  .object-detail-page .object-image-carousel .carousel-section-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .object-carousel-expand,
+  .object-detail-page .object-image-carousel .object-carousel-filmstrip {
+    display: none;
+  }
+
+  .object-detail-page .object-image-carousel .carousel-button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .object-passport {
+    position: static;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 18px;
+  }
+
+  .object-passport-heading h2 {
+    font-size: 26px;
+    -webkit-line-clamp: 3;
+  }
+
+  .object-passport .object-passport-location {
+    flex-wrap: wrap;
+    white-space: normal;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .object-passport-price {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .object-passport .object-passport-actions .object-detail-summary-cta {
+    display: none;
+  }
+
+  .object-passport .object-files-primary-actions,
+  .object-passport .object-detail-action,
+  .object-passport .object-passport-actions .object-detail-action-button {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .object-passport .object-passport-actions .object-detail-action-button {
+    padding: 0 10px;
+    white-space: normal;
+  }
+
+  .object-specs-section,
+  .object-documents-section {
+    padding: 18px;
+  }
+
+  .object-specs-list,
+  .object-specs-grid > :only-child .object-specs-list {
+    grid-template-columns: 1fr;
+  }
+
+  .object-mobile-dock {
+    position: sticky;
+    z-index: 20;
+    bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-radius: 20px;
+    padding: 8px 8px 8px 14px;
+  }
+
+  /* The assistant launcher owns the bottom-right corner, so the dock floats above it. */
+  body:has(.assistant-launcher) .object-mobile-dock {
+    bottom: 94px;
+  }
+
+  .object-mobile-dock div {
+    display: grid;
+    min-width: 0;
+  }
+
+  .object-mobile-dock strong {
+    overflow: hidden;
+    font-size: 15px;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .object-mobile-dock small {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .object-mobile-dock .object-detail-summary-cta {
+    flex: none;
+    min-height: 42px;
+    margin: 0;
+    padding: 0 14px;
   }
 
   .object-lot-hero .object-lot-media-carousel {
@@ -8113,11 +8444,6 @@ tr.user-row--deactivated .text-button {
   .object-lot-house-section .object-developer-link {
     width: 100%;
     justify-content: center;
-  }
-
-  .object-detail-page .object-image-carousel .carousel-thumbnail {
-    width: 72px;
-    height: 52px;
   }
 }
 
@@ -9242,11 +9568,6 @@ tr.user-row--deactivated .text-button {
 
   .object-detail-location-line {
     font-size: 14px;
-  }
-
-  .object-detail-header-actions {
-    align-items: flex-start;
-    margin-left: 0;
   }
 
   .object-feed-units-heading {
