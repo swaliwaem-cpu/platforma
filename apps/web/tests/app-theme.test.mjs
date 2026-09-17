@@ -208,7 +208,7 @@ test('sidebar exposes an icon-only theme toggle wired to app theme helpers', () 
   assert.match(themeStyles, /:is\([^)]*\.theme-toggle[^)]*\)/);
 });
 
-test('collapsed sidebar reserves a rail and the expanded panel overlays the workspace', () => {
+test('collapsed sidebar reserves a rail, the expanded panel overlays the workspace, phones get a bottom bar', () => {
   const appSource = readFileSync(resolve(srcDir, 'App.tsx'), 'utf8');
   const styles = readFileSync(resolve(srcDir, 'styles.css'), 'utf8');
 
@@ -229,6 +229,14 @@ test('collapsed sidebar reserves a rail and the expanded panel overlays the work
   );
   assert.match(
     styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.workspace:has\(\.catalog-page\)[\s\S]*?calc\(var\(--sidebar-rail-width\) \+ 28px\);[\s\S]*?\}/,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.sidebar,\s*\.sidebar--open \{\s*top: auto;\s*right: 10px;\s*bottom: calc\(10px \+ env\(safe-area-inset-bottom, 0px\)\);\s*left: 10px;\s*width: auto;/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.sidebar-content \{\s*display: grid;\s*grid-auto-columns: minmax\(0, 1fr\);\s*grid-auto-flow: column;/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.workspace:has\(\.catalog-page\)[\s\S]*?padding: 12px 14px calc\(94px \+ env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?\}/,
   );
 });

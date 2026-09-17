@@ -83,12 +83,6 @@
   --fw-media-label: rgb(24 24 22 / 46%);
   --fw-hero-shadow: 0 30px 60px rgb(40 34 28 / 16%);
   --fw-passport-bg: rgb(250 248 245 / 86%);
-  --fw-dock-bg: rgb(14 13 12 / 92%);
-  --fw-dock-text: #ffffff;
-  --fw-dock-muted: rgb(255 255 255 / 62%);
-  --fw-dock-action-bg: #ffffff;
-  --fw-dock-action-hover: #f0ece7;
-  --fw-dock-action-text: #0e0d0c;
   background: var(--fw-canvas) fixed;
 }
 
@@ -180,12 +174,6 @@
   --fw-avatar-shadow: inset 0 1px 0 rgb(255 255 255 / 8.2%);
   --fw-hero-shadow: 0 30px 60px rgb(0 0 0 / 42%);
   --fw-passport-bg: rgb(26 27 29 / 84%);
-  --fw-dock-bg: rgb(241 242 243 / 94%);
-  --fw-dock-text: #0e0d0c;
-  --fw-dock-muted: #66635f;
-  --fw-dock-action-bg: #0e0d0c;
-  --fw-dock-action-hover: #2b2e31;
-  --fw-dock-action-text: #ffffff;
   background:
     radial-gradient(circle at 14% 9%, rgb(91 93 96 / 12%), transparent 32%),
     radial-gradient(circle at 84% 32%, rgb(47 49 51 / 11%), transparent 36%),
@@ -272,7 +260,7 @@
   font-weight: 400;
 }
 
-:root[data-app-theme] body :is(label, .toolbar-field, .catalog-link-field) {
+:root[data-app-theme] body :is(label, .toolbar-field, .catalog-link-field, .cabinet-photo-caption) {
   gap: 7px;
   color: var(--fw-muted);
   font-size: 11px;
@@ -471,6 +459,39 @@
   width: 18px;
   height: 18px;
   border: 0;
+}
+
+/*
+ * Phones: the bottom bar from styles.css. `aside.sidebar[aria-label]` outranks the
+ * rail rules above (ties resolve to this later block), so the bar looks the same
+ * whether or not the menu was left open on a wider screen.
+ */
+@media (max-width: 760px) {
+  /*
+   * The bar floats over content. The reference keeps the 52% dark panel here and its
+   * dark bar shows text through the icons, so the bar takes the floating-menu surface.
+   */
+  :root[data-app-theme] body .app-shell aside.sidebar[aria-label] {
+    border-radius: 20px;
+    background: var(--fw-menu-bg);
+    -webkit-backdrop-filter: blur(34px) saturate(150%);
+    backdrop-filter: blur(34px) saturate(150%);
+  }
+
+  :root[data-app-theme] body .app-shell aside.sidebar[aria-label] .nav-item,
+  :root[data-app-theme] body .app-shell aside.sidebar[aria-label] .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
+    width: auto;
+    min-width: 0;
+    height: 50px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  :root[data-app-theme] body .app-shell aside.sidebar[aria-label] .sidebar-avatar {
+    width: 18px;
+    height: 18px;
+    border: 0;
+  }
 }
 
 /* Burger keeps the reference .fw-brand button states. */
@@ -1509,8 +1530,8 @@
 }
 
 /*
- * Object page, variant C «Кинозал»: the photo has no frame, its controls are glass labels,
- * the sticky passport is translucent and phones get a contrasting price dock.
+ * Object page, variant C «Кинозал»: the photo has no frame, its controls are glass labels
+ * and the sticky passport is translucent.
  */
 :root[data-app-theme] body .object-detail-page .object-image-carousel {
   border-radius: 30px;
@@ -1542,6 +1563,12 @@
 @media (max-width: 760px) {
   :root[data-app-theme] body .object-detail-page .object-image-carousel .object-carousel-expand {
     display: none;
+  }
+
+  /* Narrower tabs so «Все» and the three sections fit a phone-wide photo. */
+  :root[data-app-theme] body .object-detail-page .object-image-carousel .carousel-section-filter {
+    flex: none;
+    padding: 0 9px;
   }
 }
 
@@ -1587,33 +1614,6 @@
 
 :root[data-app-theme] body .object-specs-list div {
   border-top-color: color-mix(in srgb, var(--fw-line) 55%, transparent);
-}
-
-:root[data-app-theme] body .object-mobile-dock {
-  background: var(--fw-dock-bg);
-  box-shadow: 0 14px 32px rgb(0 0 0 / 24%);
-  color: var(--fw-dock-text);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-}
-
-:root[data-app-theme] body .object-mobile-dock strong {
-  color: var(--fw-dock-text);
-}
-
-:root[data-app-theme] body .object-mobile-dock small {
-  color: var(--fw-dock-muted);
-}
-
-:root[data-app-theme] body .object-mobile-dock .object-detail-summary-cta {
-  border-color: var(--fw-dock-action-bg);
-  background: var(--fw-dock-action-bg);
-  color: var(--fw-dock-action-text);
-}
-
-:root[data-app-theme] body .object-mobile-dock .object-detail-summary-cta:is(:hover, :focus-visible) {
-  border-color: var(--fw-dock-action-hover);
-  background: var(--fw-dock-action-hover);
 }
 
 /* ---------------------------------------------------------------------------

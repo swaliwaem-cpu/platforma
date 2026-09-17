@@ -6,6 +6,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type ErrorInfo,
   type ReactNode,
 } from 'react';
@@ -930,7 +931,7 @@ function CabinetHome() {
   const [profileName, setProfileName] = useState('');
   const [brokerPhone, setBrokerPhone] = useState('');
   const [brokerEmail, setBrokerEmail] = useState('');
-  const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null);
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileNotice, setProfileNotice] = useState<string | null>(null);
   const [isProfileSubmitting, setIsProfileSubmitting] = useState(false);
@@ -983,14 +984,18 @@ function CabinetHome() {
     }
   }
 
-  async function handleProfilePhotoUpload() {
-    if (!accessToken) {
-      setProfileError('Сессия не найдена');
+  // The button opens the file picker; the chosen photo uploads right away.
+  async function handleProfilePhotoChange(event: ChangeEvent<HTMLInputElement>) {
+    const profilePhotoFile = event.target.files?.[0] ?? null;
+    // Reset so picking the same file again still fires `change`.
+    event.target.value = '';
+
+    if (!profilePhotoFile) {
       return;
     }
 
-    if (!profilePhotoFile) {
-      setProfileError('Выберите изображение');
+    if (!accessToken) {
+      setProfileError('Сессия не найдена');
       return;
     }
 
@@ -1008,7 +1013,6 @@ function CabinetHome() {
       });
 
       updateUser(data.user);
-      setProfilePhotoFile(null);
       setProfileNotice('Фото профиля обновлено');
     } catch (caughtError) {
       setProfileError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить фото');
@@ -1116,22 +1120,24 @@ function CabinetHome() {
             </label>
 
             <div className="cabinet-field--wide cabinet-photo-row">
-              <label>
+              <span className="cabinet-photo-caption">
                 Фото профиля
-                <input
-                  key={profilePhotoFile ? 'profile-photo-selected' : 'profile-photo-empty'}
-                  accept="image/jpeg,image/png,image/webp"
-                  type="file"
-                  onChange={(event) => setProfilePhotoFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
+                <small>JPG, PNG или WebP</small>
+              </span>
+              <input
+                ref={profilePhotoInputRef}
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                type="file"
+                onChange={(event) => void handleProfilePhotoChange(event)}
+              />
               <button
                 className="secondary-button secondary-button--fit"
-                disabled={isPhotoUploading || !profilePhotoFile}
+                disabled={isPhotoUploading}
                 type="button"
-                onClick={() => void handleProfilePhotoUpload()}
+                onClick={() => profilePhotoInputRef.current?.click()}
               >
-                {isPhotoUploading ? 'Загрузка' : 'Загрузить фото'}
+                {isPhotoUploading ? 'Загрузка' : user.profilePhotoFile ? 'Сменить фото' : 'Загрузить фото'}
               </button>
             </div>
 

@@ -1268,9 +1268,10 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Floats above the bottom navigation bar (10px gap + 68px bar + 12px). */
   .assistant-launcher {
     right: 16px;
-    bottom: 16px;
+    bottom: calc(90px + env(safe-area-inset-bottom, 0px));
   }
 
   .assistant-chat {

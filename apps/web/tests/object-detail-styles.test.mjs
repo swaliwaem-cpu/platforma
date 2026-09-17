@@ -147,7 +147,7 @@ test('object detail carousel modal download action stays at the top edge', () =>
 test('object detail carousel modal keeps lightbox image contained', () => {
   assert.match(
     styles,
-    /\.carousel-modal-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?z-index:\s*90;[\s\S]*?\}/,
+    /\.carousel-modal-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?z-index:\s*1300;[\s\S]*?\}/,
   );
 
   assert.match(
@@ -156,7 +156,7 @@ test('object detail carousel modal keeps lightbox image contained', () => {
   );
 });
 
-test('object detail follows variant C: a 16:9 photo with everything else under it', () => {
+test('object detail follows variant C: a 16:9 photo with everything else under it, lots right after the specs', () => {
   const carouselIndex = objectDetailSource.indexOf('<ObjectImageCarousel accessToken={accessToken}');
   const passportIndex = objectDetailSource.indexOf('<header className="object-passport" aria-labelledby="object-title">');
   const titleIndex = objectDetailSource.indexOf('<h2 id="object-title">{object.title}</h2>');
@@ -164,12 +164,12 @@ test('object detail follows variant C: a 16:9 photo with everything else under i
   const filesIndex = objectDetailSource.indexOf('id="object-files-title"');
   const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions object-files-primary-actions"');
   const specsIndex = objectDetailSource.indexOf('id="object-specs-title"');
-  const descriptionGridIndex = objectDetailSource.indexOf('className="object-description-location-grid"');
   const lotsIndex = objectDetailSource.indexOf('<ObjectFeedUnitsSection accessToken={accessToken}');
+  const documentsIndex = objectDetailSource.indexOf('<section className="detail-section object-documents-section"');
+  const descriptionGridIndex = objectDetailSource.indexOf('className="object-description-location-grid"');
   const contentIndex = objectDetailSource.indexOf('id="object-content-sections-title"');
   const mapIndex = objectDetailSource.indexOf('id="object-map-title"');
-  const dockIndex = objectDetailSource.indexOf('<div className="object-mobile-dock">');
-  const positions = { carouselIndex, passportIndex, titleIndex, priceIndex, filesIndex, actionsIndex, specsIndex, descriptionGridIndex, lotsIndex, contentIndex, mapIndex, dockIndex };
+  const positions = { carouselIndex, passportIndex, titleIndex, priceIndex, filesIndex, actionsIndex, specsIndex, lotsIndex, documentsIndex, descriptionGridIndex, contentIndex, mapIndex };
 
   for (const [name, index] of Object.entries(positions)) {
     assert.notEqual(index, -1, `${name} should exist`);
@@ -179,24 +179,31 @@ test('object detail follows variant C: a 16:9 photo with everything else under i
   assert.deepEqual([...order].sort((left, right) => left - right), order);
   assert.doesNotMatch(objectDetailSource, /className="object-detail-hero"/);
   assert.doesNotMatch(objectDetailSource, /className="page-header object-detail-header"/);
+  assert.doesNotMatch(objectDetailSource, /object-mobile-dock/);
 
   assert.match(objectDetailSource, /<p className="sr-only" id="object-parameters-title">\s*Стоимость\s*<\/p>/);
   assert.match(objectDetailSource, /const priceLabel = formatPriceFrom\(priceValue\);/);
   assert.match(objectDetailSource, /const priceValue = object\.feedPriceFrom \?\? object\.priceFrom;/);
   assert.match(objectDetailSource, /function getObjectSummaryFacts\(object: RealEstateObjectDetail, rows: Array<\{ label: string; value: string \}>\)/);
   assert.match(objectDetailSource, /\{ label: 'Лотов в продаже', value: formatNumber\(lotsCount\) \}/);
-  assert.equal((objectDetailSource.match(/onClick=\{\(\) => scrollToSection\('object-lots'\)\}/g) ?? []).length, 2);
+  assert.equal((objectDetailSource.match(/onClick=\{\(\) => scrollToSection\('object-lots'\)\}/g) ?? []).length, 1);
   assert.match(objectDetailSource, /onClick=\{\(\) => scrollToSection\('object-map'\)\}/);
 
   assert.match(styles, /\.object-detail-page \.object-image-carousel \{[\s\S]*?aspect-ratio: 16 \/ 9;[\s\S]*?padding: 0;/);
   assert.match(styles, /\.object-detail-page \.object-image-carousel \.object-carousel-filmstrip \{[\s\S]*?position: absolute;[\s\S]*?bottom: 16px;/);
   assert.match(styles, /\.object-passport \{[\s\S]*?position: sticky;[\s\S]*?top: 12px;[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
-  assert.match(styles, /\.object-mobile-dock \{\s*display: none;\s*\}/);
+  assert.match(styles, /\.object-specs-grid--split > \.object-specs-section \{\s*grid-column: 1;\s*grid-row: 1;/);
+  assert.match(styles, /\.object-specs-grid--split > \.object-documents-section \{\s*grid-column: 2;\s*grid-row: 1;/);
   assert.match(
     styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.object-passport \{\s*position: static;[\s\S]*?\.object-mobile-dock \{\s*position: sticky;[\s\S]*?bottom: 12px;[\s\S]*?display: flex;/,
+    /@media \(max-width: 1100px\) \{[\s\S]*?\.object-specs-grid--split > :is\(\.object-specs-section, \.object-documents-section\) \{\s*grid-column: 1 \/ -1;\s*grid-row: auto;/,
   );
-  assert.match(styles, /body:has\(\.assistant-launcher\) \.object-mobile-dock \{\s*bottom: 94px;/);
+  assert.match(
+    styles,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.object-detail-page \.object-image-carousel \{\s*aspect-ratio: 4 \/ 3;[\s\S]*?\.object-passport \{\s*position: static;[\s\S]*?\.object-passport \.object-passport-actions \.object-detail-summary-cta \{\s*order: 1;\s*grid-column: 1 \/ -1;/,
+  );
+  assert.doesNotMatch(styles, /object-mobile-dock/);
+  assert.doesNotMatch(fluffyThemeStyles, /object-mobile-dock|--fw-dock-/);
   assert.match(fluffyThemeStyles, /:root\[data-app-theme\] body \.object-passport \{[\s\S]*?background: var\(--fw-passport-bg\);/);
   assert.match(fluffyThemeStyles, /--fw-passport-bg: rgb\(250 248 245 \/ 86%\);/);
   assert.match(fluffyThemeStyles, /--fw-passport-bg: rgb\(26 27 29 \/ 84%\);/);

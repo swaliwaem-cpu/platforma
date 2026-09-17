@@ -8,6 +8,7 @@ import {
   type TouchEvent as ReactTouchEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowDownIcon,
   ArrowUpDownIcon,
@@ -801,31 +802,40 @@ function ObjectDetail({
         </section>
       </header>
 
-      {specRows.length > 0 || listedFiles.length > 0 ? (
-        <div className="object-specs-grid">
-          {specRows.length > 0 ? (
-            <section className="detail-section object-specs-section" aria-labelledby="object-specs-title">
-              <p className="eyebrow" id="object-specs-title">
-                Характеристики
-              </p>
-              <dl className="object-specs-list">
-                {specRows.map((row) => (
-                  <div key={row.label}>
-                    <dt>{row.label}</dt>
-                    <dd>{row.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-          ) : null}
+      {/*
+        Lots come right after the specs. On wide screens the documents sit next to the specs
+        (grid placement); on phones the grid is one column, so documents follow the lots.
+      */}
+      <div
+        className={
+          specRows.length > 0 && listedFiles.length > 0 ? 'object-specs-grid object-specs-grid--split' : 'object-specs-grid'
+        }
+      >
+        {specRows.length > 0 ? (
+          <section className="detail-section object-specs-section" aria-labelledby="object-specs-title">
+            <p className="eyebrow" id="object-specs-title">
+              Характеристики
+            </p>
+            <dl className="object-specs-list">
+              {specRows.map((row) => (
+                <div key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ) : null}
 
-          {listedFiles.length > 0 ? (
-            <section className="detail-section object-documents-section" aria-label="Документы">
-              <FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />
-            </section>
-          ) : null}
-        </div>
-      ) : null}
+        <ObjectFeedUnitsSection accessToken={accessToken} navigate={navigate} object={object} />
+
+        {listedFiles.length > 0 ? (
+          <section className="detail-section object-documents-section" aria-label="Документы">
+            <FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />
+          </section>
+        ) : null}
+      </div>
+
       <div className="object-description-location-grid">
         <section className="detail-section object-description-section" aria-labelledby="object-description-title">
           <div>
@@ -919,8 +929,6 @@ function ObjectDetail({
         </section>
       </div>
 
-      <ObjectFeedUnitsSection accessToken={accessToken} navigate={navigate} object={object} />
-
       <section className="detail-section object-content-detail-section" aria-labelledby="object-content-sections-title">
         <div>
           <p className="eyebrow">Детали</p>
@@ -964,16 +972,6 @@ function ObjectDetail({
         />
       </section>
 
-      {/* Phones: the price and the lots shortcut stay pinned to the bottom edge. */}
-      <div className="object-mobile-dock">
-        <div>
-          <strong title={priceLabel}>{priceValue ? `от ${formatCompactMoney(priceValue)} ₽` : priceLabel}</strong>
-          {pricePerMeter ? <small>{formatPricePerMeterFrom(pricePerMeter)}</small> : null}
-        </div>
-        <button className="object-detail-summary-cta" type="button" onClick={() => scrollToSection('object-lots')}>
-          Подобрать лот
-        </button>
-      </div>
     </div>
   );
 }
@@ -1021,7 +1019,12 @@ function ObjectImageCarousel({
   const activeImage = filteredImages[activeIndex] ?? null;
   const lightboxImage = lightboxIndex === null ? null : filteredImages[lightboxIndex] ?? null;
   const hasManyImages = filteredImages.length > 1;
-  const hasSectionFilters = images.some((image) => image.section !== null);
+  // Only sections that have photos get a tab; «Все» always leads back to the whole gallery.
+  const sectionTabs = useMemo(
+    () => sectionOptions.filter((option) => images.some((image) => image.section === option.value)),
+    [images],
+  );
+  const hasSectionFilters = sectionTabs.length > 0;
 
   useEffect(() => {
     if (activeIndex > Math.max(filteredImages.length - 1, 0)) {
@@ -1072,8 +1075,8 @@ function ObjectImageCarousel({
     setActiveIndex((currentIndex) => (currentIndex + 1) % filteredImages.length);
   }
 
-  function toggleSectionFilter(section: ObjectImageSection) {
-    setActiveSection((currentSection) => (currentSection === section ? null : section));
+  function selectSection(section: ObjectImageSection | null) {
+    setActiveSection(section);
     setActiveIndex(0);
     setLightboxIndex(null);
   }
@@ -1189,25 +1192,21 @@ function ObjectImageCarousel({
       <div className="object-carousel-topbar">
         {hasSectionFilters ? (
           <div className="carousel-section-filters" aria-label="Разделы галереи">
-            {sectionOptions.map((option) => {
-              const sectionImageCount = images.filter((image) => image.section === option.value).length;
-              const sectionButtonClassName =
-                activeSection === option.value
-                  ? 'carousel-section-filter carousel-section-filter--active'
-                  : 'carousel-section-filter';
-
-              return (
-                <button
-                  key={option.value}
-                  className={sectionButtonClassName}
-                  disabled={sectionImageCount === 0}
-                  type="button"
-                  onClick={() => toggleSectionFilter(option.value)}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
+            {[{ value: null, label: 'Все' }, ...sectionTabs].map((option) => (
+              <button
+                key={option.value ?? 'all'}
+                aria-pressed={activeSection === option.value}
+                className={
+                  activeSection === option.value
+                    ? 'carousel-section-filter carousel-section-filter--active'
+                    : 'carousel-section-filter'
+                }
+                type="button"
+                onClick={() => selectSection(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         ) : null}
 
@@ -1248,7 +1247,8 @@ function ObjectImageCarousel({
         </div>
       ) : null}
 
-      {lightboxImage ? (
+      {/* Portal: the carousel is its own stacking context, so an in-place overlay would sit under the passport and the menu. */}
+      {lightboxImage ? createPortal(
         <div className="carousel-modal-backdrop" onClick={closeLightbox}>
           <section
             aria-label="Полноразмерное фото объекта"
@@ -1311,7 +1311,8 @@ function ObjectImageCarousel({
               </>
             ) : null}
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </section>
   );
