@@ -15,6 +15,7 @@
 ### Подборка ЖК: ссылки последней страницы из каталога FluffyWhite
 
 - `PROJECT_PRESENTATION_LINKS` (`packages/shared/src/project-presentation-template.mjs`) теперь хранит ссылки с 14-й страницы `~/Downloads/Catalog_feb_2026.pdf`: Instagram `fluffywhite.estate`, Telegram-канал `t.me/+OacAOVxTqWM0Y2Ji`, YouTube `@fluffywhite.moscow`, «Начать подбор» `clck.ru/3QmQoS` (ведёт в `t.me/fluffywhite` с заготовленным текстом). Заглушек-`span` больше нет, все три плашки — ссылки.
+- Выкачено на прод как `links-20260917T0751Z` (`3645ee6`): пересозданы только api и web, миграций нет, бэкап и `deploy-result.txt` в `/opt/platforma-deploy-backups/links-20260917T0751Z/`.
 - «Узнать подробности» на страницах ЖК по-прежнему ведёт на `snapshot.cta.url` (`t.me/FluffyWhite`), в превью — `PROJECT_PRESENTATION_LINKS.chat`. Снапшот и его версия не менялись: ссылки финальной страницы берутся из шаблона в момент печати.
 
 ## 2026-09-16
