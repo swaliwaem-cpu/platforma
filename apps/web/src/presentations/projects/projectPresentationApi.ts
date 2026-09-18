@@ -1,5 +1,6 @@
 import { apiRequest, apiUrl } from '../../admin/api';
 import type {
+  ProjectPresentationCoverFeatureInput,
   ProjectPresentationDocument,
   ProjectPresentationDocumentResponse,
   ProjectPresentationDocumentsResponse,
@@ -35,9 +36,9 @@ export function updateProjectPresentationDraft(
     title: string;
     coverTitle: string | null;
     coverSubtitle: string | null;
-    clientName: string | null;
     issueLabel: string | null;
     mapTitle: string | null;
+    coverFeatures: ProjectPresentationCoverFeatureInput[];
     coverImageId: string | null;
   },
 ) {

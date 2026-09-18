@@ -1749,6 +1749,7 @@ model ProjectPresentationDraft {
   clientName      String?  @map("client_name") @db.VarChar(180)
   issueLabel      String?  @map("issue_label") @db.VarChar(180)
   mapTitle        String?  @map("map_title") @db.VarChar(180)
+  coverFeatures   Json?    @map("cover_features")
   coverImageId    String?  @map("cover_image_id") @db.Uuid
   coverFileId     String?  @map("cover_file_id") @db.Uuid
   templateVersion String   @default("project-catalog-4x5-v1") @map("template_version") @db.VarChar(64)

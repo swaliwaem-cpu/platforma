@@ -1,9 +1,11 @@
 import {
+  PROJECT_PRESENTATION_DEFAULT_COVER_FEATURES,
   PROJECT_PRESENTATION_LIMITS,
   truncateProjectPresentationDescription,
 } from '@platforma/shared/project-presentation-template';
 
 import type {
+  ProjectPresentationCoverFeatureInput,
   ProjectPresentationDraft,
   ProjectPresentationDraftForm,
   ProjectPresentationDraftObject,
@@ -12,22 +14,40 @@ import type {
   ProjectPresentationValidationIssue,
 } from './projectPresentationTypes';
 import {
+  projectPresentationCoverFeatures,
   projectPresentationMaxAdvantages,
   projectPresentationMaxImages,
   projectPresentationMaxObjects,
 } from './projectPresentationTypes';
 
 export const projectPresentationLimits = PROJECT_PRESENTATION_LIMITS;
-export const projectPresentationCoverIssuePaths = new Set(['title', 'coverTitle', 'coverSubtitle', 'clientName', 'mapTitle', 'coverImageId']);
+export const projectPresentationCoverIssuePaths = new Set([
+  'title',
+  'coverTitle',
+  'coverSubtitle',
+  'mapTitle',
+  'coverImageId',
+  ...PROJECT_PRESENTATION_DEFAULT_COVER_FEATURES.map((_, index) => `coverFeatures.${index}`),
+]);
+
+// The four cover tiles start from the approved catalog wording and can be reworded per presentation.
+export function createProjectPresentationCoverFeatures(
+  stored: ProjectPresentationCoverFeatureInput[] | null,
+): ProjectPresentationCoverFeatureInput[] {
+  return PROJECT_PRESENTATION_DEFAULT_COVER_FEATURES.slice(0, projectPresentationCoverFeatures).map((preset, index) => ({
+    title: stored?.[index]?.title?.trim() || preset.title,
+    caption: stored?.[index]?.caption ?? preset.caption,
+  }));
+}
 
 export function createProjectPresentationForm(draft: ProjectPresentationDraft): ProjectPresentationDraftForm {
   return {
     title: draft.title,
     coverTitle: draft.coverTitle ?? '',
     coverSubtitle: draft.coverSubtitle ?? '',
-    clientName: draft.clientName ?? '',
     issueLabel: draft.issueLabel ?? '',
     mapTitle: draft.mapTitle ?? '',
+    coverFeatures: createProjectPresentationCoverFeatures(draft.coverFeatures),
     coverImageId: draft.coverImageId,
     coverFile: draft.coverFile,
     objects: [...draft.objects].sort((left, right) => left.sortOrder - right.sortOrder),
@@ -130,8 +150,16 @@ export function validateProjectPresentationForm(form: ProjectPresentationDraftFo
     issues.push({ path: 'coverSubtitle', message: `Подзаголовок — не длиннее ${limits.coverSubtitle} символов` });
   }
 
-  requireText(issues, 'clientName', form.clientName, 'Укажите имя клиента', limits.clientName, 'Имя клиента');
   requireText(issues, 'mapTitle', form.mapTitle, 'Заполните заголовок страницы с картой', limits.mapTitle, 'Заголовок страницы с картой');
+
+  form.coverFeatures.forEach((feature, index) => {
+    const label = `Плашка ${index + 1} на обложке`;
+    requireText(issues, `coverFeatures.${index}`, feature.title, `${label}: заполните заголовок`, limits.coverFeatureTitle, `${label}: заголовок`);
+
+    if (feature.caption.trim().length > limits.coverFeatureCaption) {
+      issues.push({ path: `coverFeatures.${index}`, message: `${label}: подпись — не длиннее ${limits.coverFeatureCaption} символов` });
+    }
+  });
 
   if (form.objects.length === 0) {
     issues.push({ path: 'objects', message: 'Добавьте хотя бы один жилой комплекс' });

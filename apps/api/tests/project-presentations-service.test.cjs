@@ -87,6 +87,7 @@ function createSnapshotDraft() {
     clientName: 'Анна',
     issueLabel: 'Персональная подборка',
     mapTitle: 'Москва рядом с парком',
+    coverFeatures: null,
     coverImageId: secondImage.id,
     coverFileId: null,
     coverFile: null,
@@ -252,10 +253,15 @@ test('snapshot freezes chosen order, manual content, image order, generating bro
 
   const snapshot = service.createSnapshot(draft, 'PDF для Анны', actor, await loadTemplate());
 
-  assert.equal(snapshot.schemaVersion, 2);
-  assert.equal(snapshot.templateVersion, 'project-catalog-fw-html-3x4-v3');
+  assert.equal(snapshot.schemaVersion, 3);
+  assert.equal(snapshot.templateVersion, 'project-catalog-fw-html-3x4-v4');
   assert.deepEqual(snapshot.map, { title: 'Москва рядом с парком' });
-  assert.equal(snapshot.cover.clientName, 'Анна');
+  assert.deepEqual(snapshot.cover.features, [
+    { title: 'Локация и факты', caption: 'Район, метро и класс' },
+    { title: 'Преимущества', caption: 'Главное о каждом ЖК' },
+    { title: 'Старты продаж', caption: 'Новые предложения' },
+    { title: 'Условия покупки', caption: 'Стоимость и рассрочка' },
+  ]);
   assert.equal(snapshot.page.width / snapshot.page.height, 3 / 4);
   assert.equal(snapshot.title, 'PDF для Анны');
   assert.equal(snapshot.cover.title, 'Три проекта для жизни');
@@ -313,11 +319,35 @@ test('custom cover file takes priority and is marked for safe lifecycle cleanup'
   assert.equal(assets.find((asset) => asset.fileId === uuid(299)).role, 'CUSTOM_COVER');
 });
 
-test('generation requires client, map title, four advantages and three gallery photos per project', async () => {
+test('the cover tiles keep their four slots and fall back to the catalog wording', async () => {
+  const service = new ProjectPresentationsService({}, {});
+  const template = await loadTemplate();
+  const draft = createSnapshotDraft();
+  draft.coverFeatures = [{ title: 'Локации', caption: '' }, { title: '  ', caption: 'Что важно' }];
+
+  const snapshot = service.createSnapshot(draft, 'PDF', actor, template);
+
+  assert.deepEqual(snapshot.cover.features, [
+    { title: 'Локации', caption: '' },
+    { title: 'Преимущества', caption: 'Что важно' },
+    { title: 'Старты продаж', caption: 'Новые предложения' },
+    { title: 'Условия покупки', caption: 'Стоимость и рассрочка' },
+  ]);
+  assert.deepEqual(
+    service.parseCoverFeatures([{ title: ' Локации ', caption: ' Район ' }]),
+    [{ title: 'Локации', caption: 'Район' }],
+  );
+  assert.equal(service.parseCoverFeatures(null), null);
+  assert.throws(
+    () => service.parseCoverFeatures([{}, {}, {}, {}, {}]),
+    (error) => error instanceof BadRequestException && /Cover features are invalid/.test(error.message),
+  );
+});
+
+test('generation requires the map title, four advantages and three gallery photos per project', async () => {
   const service = new ProjectPresentationsService({}, {});
   const template = await loadTemplate();
   const cases = [
-    [(draft) => { draft.clientName = '  '; }, /Client name is required/],
     [(draft) => { draft.mapTitle = null; }, /Map title is required/],
     [(draft) => { draft.mapTitle = 'М'.repeat(61); }, /Map title is longer than 60/],
     [(draft) => { draft.coverSubtitle = 'П'.repeat(121); }, /Cover subtitle is longer than 120/],
@@ -327,6 +357,8 @@ test('generation requires client, map title, four advantages and three gallery p
     [(draft) => { draft.objects[1].imageIds = [uuid(103), uuid(105), uuid(199)]; }, /Второй ЖК needs 3 photos/],
     [(draft) => { draft.objects[0].manualDescription = 'О'.repeat(431); }, /Description of Первый ЖК is longer than 430/],
     [(draft) => { draft.objects[1].object.shortDescription = '<p> </p>'; }, /Description of Второй ЖК is required/],
+    [(draft) => { draft.coverFeatures = [{ title: 'Л'.repeat(25), caption: '' }]; }, /Cover feature title is longer than 24/],
+    [(draft) => { draft.coverFeatures = [{ title: 'Локация', caption: 'П'.repeat(33) }]; }, /Cover feature caption is longer than 32/],
   ];
 
   assert.doesNotThrow(() => service.ensureDraftIsComplete(createSnapshotDraft(), template));
@@ -466,7 +498,7 @@ test('document snapshot locks the draft until the custom cover asset is linked',
     'CUSTOM_COVER',
   );
   assert.equal(calls[2][1].data.ownerUserId, actor.id);
-  assert.equal(calls[2][1].data.snapshotVersion, 2);
+  assert.equal(calls[2][1].data.snapshotVersion, 3);
   assert.equal(calls[2][1].data.snapshotJson.broker.phone, actor.brokerPhone);
 });
 

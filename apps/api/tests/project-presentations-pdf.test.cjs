@@ -26,8 +26,8 @@ const loadTemplate = () => import('@platforma/shared/project-presentation-templa
 
 function createSnapshot(objectsCount) {
   return {
-    schemaVersion: 2,
-    templateVersion: 'project-catalog-fw-html-3x4-v3',
+    schemaVersion: 3,
+    templateVersion: 'project-catalog-fw-html-3x4-v4',
     page: {
       width: PROJECT_PRESENTATION_PAGE_WIDTH,
       height: PROJECT_PRESENTATION_PAGE_HEIGHT,
@@ -40,6 +40,12 @@ function createSnapshot(objectsCount) {
       clientName: 'Анны',
       issueLabel: 'Каталог 2026',
       image: { fileId: 'cover', checksum: null, role: 'COVER', sortOrder: 0 },
+      features: [
+        { title: 'Локация и факты', caption: 'Район, метро и класс' },
+        { title: 'Наши условия', caption: '' },
+        { title: 'Старты продаж', caption: 'Новые предложения' },
+        { title: 'Условия покупки', caption: 'Стоимость и рассрочка' },
+      ],
     },
     map: { title: 'Москва рядом с парком' },
     cta: {
@@ -109,7 +115,7 @@ test('project PDF is printed by Chromium on a 3:4 canvas with exactly N + 4 page
   }
 });
 
-test('project PDF links every project, the catalog contacts and dials the generating broker', async () => {
+test('project PDF links every project, the catalog contacts and always dials the catalog number', async () => {
   const buffer = await new ProjectPresentationsPdfService(await createFilesService()).generate(createSnapshot(2));
   const source = buffer.toString('latin1');
 
@@ -120,21 +126,47 @@ test('project PDF links every project, the catalog contacts and dials the genera
     'https://t.me/+OacAOVxTqWM0Y2Ji',
     'https://www.youtube.com/@fluffywhite.moscow',
   ]) assert.ok(source.includes(`/URI (${url})`), url);
-  assert.match(source, /tel:\+79991112233/);
+  // The presentation is published by the company, so the broker phone of the snapshot is never printed.
+  assert.match(source, /tel:\+74954924858/);
+  assert.doesNotMatch(source, /tel:\+79991112233/);
 });
 
-test('template formats Russian broker phones and keeps other numbers as entered', async () => {
+test('the final page always shows the catalog phone number', async () => {
   const template = await loadTemplate();
   const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
-  const render = (phone) => template.renderProjectPresentationHtml(
-    { cover: { title: 'T', subtitle: '', clientName: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [], contacts: { phone, ctaUrl: 'https://t.me/FluffyWhite' } },
+  const html = template.renderProjectPresentationHtml(
+    { cover: { title: 'T', subtitle: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [], contacts: { ctaUrl: 'https://t.me/FluffyWhite' } },
     { fontUrls, pageKeys: ['final'] },
   );
 
-  assert.match(render('89087040688'), /href="tel:\+79087040688"[^>]*>\+7 \(908\) 704-06-88</);
-  assert.match(render('+7 999 111-22-33'), />\+7 \(999\) 111-22-33</);
-  assert.match(render('+44 20 7946 0958'), />\+44 20 7946 0958</);
-  assert.match(render('   '), />\+7 \(495\) 492-48-58</);
+  assert.equal(template.PROJECT_PRESENTATION_DEFAULT_PHONE, '+7 (495) 492-48-58');
+  assert.match(html, /href="tel:\+74954924858"[^>]*>\+7 \(495\) 492-48-58</);
+});
+
+test('every value of the project card keeps one font size instead of shrinking to its length', async () => {
+  const template = await loadTemplate();
+  const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
+  const project = {
+    key: 'p1',
+    title: 'ЖК',
+    description: 'Описание',
+    price: 'от 421 200 300 ₽',
+    propertyClass: 'Премиум-класс',
+    metro: 'Улица Академика Янгеля',
+    advantages: ['Р'.repeat(40), 'Два', 'Три', 'Четыре'],
+    imageSrcs: [null, null, null],
+  };
+  const html = template.renderProjectPresentationHtml(
+    { cover: { title: 'T', subtitle: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [project], contacts: { ctaUrl: 'https://t.me/FluffyWhite' } },
+    { fontUrls, pageKeys: ['p1'] },
+  );
+
+  // The price, both rows and the advantages are printed at their reference size whatever their length.
+  for (const marker of ['fw-facts__price', 'fw-facts__advantage', '<dd>']) {
+    assert.doesNotMatch(html.slice(html.indexOf(marker) - 120, html.indexOf(marker) + 40), /data-fit/, marker);
+  }
+  assert.match(html, /<dd>Премиум-класс<\/dd>/);
+  assert.match(html, /<dd>Улица Академика Янгеля<\/dd>/);
 });
 
 test('legacy v1 snapshots without coordinates, map title or photos stay renderable', async () => {
@@ -157,8 +189,8 @@ test('template renders the approved page order, escapes user text and links the 
   const template = await loadTemplate();
   const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
   const model = {
-    cover: { title: '<script>alert(1)</script>', subtitle: 'Подзаголовок', clientName: 'Анны', issueLabel: 'Каталог 2026', imageSrc: null },
-    map: { title: 'Москва рядом с парком', imageSrc: 'https://example.test/map.jpg', markers: [{ x: 10, y: 20 }] },
+    cover: { title: '<script>alert(1)</script>', subtitle: 'Подзаголовок', issueLabel: 'Каталог 2026', imageSrc: null, features: [{ title: 'Локации рядом', caption: 'Метро и парки' }] },
+    map: { title: 'Москва рядом с парком', imageSrc: 'https://example.test/map.jpg', markers: [{ x: 10, y: 20, label: 'КОД Сокольники' }, { x: 600, y: 40, label: 'Дом Дау' }] },
     projects: [{
       key: 'p1',
       title: 'КОД Сокольники',
@@ -169,7 +201,7 @@ test('template renders the approved page order, escapes user text and links the 
       advantages: ['Один', 'Два', 'Три', 'Четыре', 'Лишнее'],
       imageSrcs: [null, null, null],
     }],
-    contacts: { phone: '', ctaUrl: 'https://t.me/FluffyWhite' },
+    contacts: { ctaUrl: 'https://t.me/FluffyWhite' },
   };
 
   const html = template.renderProjectPresentationHtml(model, { fontUrls });
@@ -179,11 +211,19 @@ test('template renders the approved page order, escapes user text and links the 
   assert.deepEqual(pages, ['cover', 'map', 'p1', 'company', 'final']);
   assert.doesNotMatch(html, /<script>alert/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-  assert.match(html, /Подготовлено для <b>Анны<\/b>/);
+  // The client name and the "prepared for" line were dropped from the cover.
+  assert.doesNotMatch(html, /Подготовлено для/);
+  assert.doesNotMatch(html, /Локации проектов/);
+  // The four cover tiles keep their slots: the first one is reworded, the rest fall back to the catalog wording.
+  assert.match(html, /<strong>Локации рядом<\/strong><span>Метро и парки<\/span>/);
+  assert.match(html, /<strong>Условия покупки<\/strong><span>Стоимость и рассрочка<\/span>/);
+  assert.equal((html.match(/class="fw-feature"/g) ?? []).length, 4);
   assert.match(html, /<span class="fw-facts__from">от<\/span><strong> 421 200 300 ₽<\/strong>/);
   assert.equal((html.match(/class="fw-facts__number"/g) ?? []).length, 4);
   assert.doesNotMatch(html, /OpenStreetMap/);
-  assert.match(html, /class="fw-map__marker" style="left:10px;top:20px"/);
+  // Markers carry the project titles and flip to the left when they sit near the right edge of the frame.
+  assert.match(html, /class="fw-map__marker" style="left:10px;top:20px"><span class="fw-map__label">КОД Сокольники<\/span>/);
+  assert.match(html, /class="fw-map__marker is-flipped" style="left:600px;top:40px"><span class="fw-map__label">Дом Дау<\/span>/);
   assert.match(html, /class="fw-button fw-button--details" href="https:\/\/t\.me\/FluffyWhite"/);
   assert.match(html, /class="fw-button fw-button--start" href="https:\/\/clck\.ru\/3QmQoS"/);
   assert.match(html, /<a href="https:\/\/www\.instagram\.com\/fluffywhite\.estate\/" class="fw-social"><span>Instagram<\/span>/);
@@ -211,11 +251,12 @@ test('description is cut to 430 characters on a word boundary and markers fit th
   assert.equal(template.truncateProjectPresentationDescription('  Коротко   и ясно '), 'Коротко и ясно');
 
   const markers = template.getProjectPresentationFallbackMarkers([
-    { latitude: 55.79, longitude: 37.68 },
-    { latitude: null, longitude: 37.6 },
-    { latitude: 55.7, longitude: 37.5 },
+    { latitude: 55.79, longitude: 37.68, label: 'Первый' },
+    { latitude: null, longitude: 37.6, label: 'Без координат' },
+    { latitude: 55.7, longitude: 37.5, label: 'Второй' },
   ]);
   assert.equal(markers.length, 2);
+  assert.deepEqual(markers.map((marker) => marker.label), ['Первый', 'Второй']);
   for (const { x, y } of markers) {
     assert.ok(x >= 0 && x <= template.PROJECT_PRESENTATION_MAP_SIZE.width);
     assert.ok(y >= 0 && y <= template.PROJECT_PRESENTATION_MAP_SIZE.height);

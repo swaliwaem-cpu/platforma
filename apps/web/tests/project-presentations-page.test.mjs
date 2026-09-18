@@ -67,15 +67,35 @@ test('project generation validates cover, project count and resolved description
   assert.match(editorSource, /openValidationIssue\(issues\[0\]\)/u);
 });
 
-test('generator requires client, map title, four advantages and three hand-picked photos', () => {
-  assert.match(stateSource, /'clientName', form\.clientName, 'Укажите имя клиента'/u);
+test('generator requires the map title, cover tiles, four advantages and three hand-picked photos', () => {
   assert.match(stateSource, /'mapTitle', form\.mapTitle, 'Заполните заголовок страницы с картой'/u);
+  assert.match(stateSource, /form\.coverFeatures\.forEach\(\(feature, index\)/u);
+  assert.match(stateSource, /limits\.coverFeatureTitle/u);
+  assert.match(stateSource, /limits\.coverFeatureCaption/u);
   assert.match(stateSource, /Заполните все \$\{limits\.advantages\} преимущества/u);
   assert.match(stateSource, /item\.imageIds\.length !== limits\.images/u);
   assert.match(stateSource, /createDraftObject[\s\S]*imageIds: \[\],/u);
   assert.match(editorSource, /id="project-map-title"/u);
   assert.match(editorSource, /label="Заголовок страницы с картой"/u);
   assert.match(editorSource, /projectPresentationCoverIssuePaths\.has\(issue\.path\)/u);
+});
+
+test('the photo picker shows whole photos next to a live preview of the page', () => {
+  assert.match(editorSource, /className="project-presentation-image-picker"/u);
+  assert.match(editorSource, /preferredPageKey=\{imagePickerPageKey\}/u);
+  assert.match(editorSource, /imagePickerTarget\.kind === 'cover' \? 'cover' : imagePickerTarget\.objectId/u);
+  assert.match(stylesSource, /\.project-presentation-image-grid \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/u);
+  assert.match(stylesSource, /\.project-presentation-image-grid button img \{[\s\S]*object-fit: contain/u);
+});
+
+test('the four cover tiles are editable and start from the catalog wording', () => {
+  assert.match(editorSource, /project-presentation-field-wide project-presentation-cover-features/u);
+  assert.match(editorSource, /id=\{`project-cover-feature-\$\{index\}-title`\}/u);
+  assert.match(editorSource, /id=\{`project-cover-feature-\$\{index\}-caption`\}/u);
+  assert.match(editorSource, /Вернуть стандартные/u);
+  assert.doesNotMatch(editorSource, /Имя клиента/u);
+  assert.match(stateSource, /export function createProjectPresentationCoverFeatures/u);
+  assert.match(stateSource, /PROJECT_PRESENTATION_DEFAULT_COVER_FEATURES/u);
 });
 
 test('generation runs one PDF at a time instead of queueing duplicates', () => {
@@ -112,7 +132,7 @@ test('project preview renders the shared PDF template with the reference fonts a
   assert.match(previewSource, /renderProjectPresentationHtml\(/u);
   assert.match(previewSource, /pageKeys: \[activePageKey\]/u);
   assert.match(previewSource, /<iframe[\s\S]*srcDoc=\{html\}/u);
-  assert.match(previewSource, /brokerPhone/u);
+  assert.match(previewSource, /features: form\.coverFeatures/u);
   for (const font of ['Involve-Regular', 'Involve-Medium', 'Inter-Regular', 'Inter-Medium', 'Lora-Italic']) {
     assert.ok(previewSource.includes(`@platforma/shared/project-presentation-fonts/${font}.woff2?url`), font);
   }
@@ -121,7 +141,9 @@ test('project preview renders the shared PDF template with the reference fonts a
   assert.match(mapSnapshotSource, /PROJECT_PRESENTATION_MAP_VIEW/u);
   assert.match(mapSnapshotSource, /localizeOpenMapTilesLabels\(map\)/u);
   assert.match(mapSnapshotSource, /preserveDrawingBuffer: true/u);
-  assert.match(templateSource, /Подготовлено для/u);
+  // The boss dropped the client line from the cover and the note from the map page.
+  assert.doesNotMatch(templateSource, /Подготовлено для/u);
+  assert.doesNotMatch(templateSource, /Локации проектов/u);
   assert.doesNotMatch(templateSource, /OpenStreetMap/u);
   assert.match(stylesSource, /\.project-preview-document\s*\{[\s\S]*transform: scale\(var\(--project-preview-scale/u);
   assert.match(stylesSource, /aspect-ratio: 3 \/ 4/u);

@@ -1,10 +1,16 @@
-export const PROJECT_PRESENTATION_TEMPLATE_VERSION = 'project-catalog-fw-html-3x4-v3';
-export const PROJECT_PRESENTATION_SNAPSHOT_VERSION = 2;
+export const PROJECT_PRESENTATION_TEMPLATE_VERSION = 'project-catalog-fw-html-3x4-v4';
+export const PROJECT_PRESENTATION_SNAPSHOT_VERSION = 3;
 export const PROJECT_PRESENTATION_PAGE_WIDTH = 540;
 export const PROJECT_PRESENTATION_PAGE_HEIGHT = 720;
 export const PROJECT_PRESENTATION_MAX_OBJECTS = 12;
 export const PROJECT_PRESENTATION_MAX_IMAGES = 3;
 export const PROJECT_PRESENTATION_MAX_ADVANTAGES = 4;
+export const PROJECT_PRESENTATION_COVER_FEATURES = 4;
+
+export type ProjectPresentationSnapshotCoverFeature = {
+  title: string;
+  caption: string;
+};
 
 export type ProjectPresentationSnapshotImage = {
   fileId: string;
@@ -62,12 +68,21 @@ export type ProjectPresentationSnapshotV2 = Omit<ProjectPresentationSnapshotV1, 
   map: { title: string };
 };
 
-export type ProjectPresentationSnapshot = ProjectPresentationSnapshotV1 | ProjectPresentationSnapshotV2;
+// v3 carries the wording of the four cover tiles; the client name is no longer printed.
+export type ProjectPresentationSnapshotV3 = Omit<ProjectPresentationSnapshotV2, 'schemaVersion' | 'cover'> & {
+  schemaVersion: 3;
+  cover: ProjectPresentationSnapshotV2['cover'] & { features: ProjectPresentationSnapshotCoverFeature[] };
+};
+
+export type ProjectPresentationSnapshot =
+  | ProjectPresentationSnapshotV1
+  | ProjectPresentationSnapshotV2
+  | ProjectPresentationSnapshotV3;
 
 export function isProjectPresentationSnapshot(value: unknown): value is ProjectPresentationSnapshot {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const snapshot = value as Partial<ProjectPresentationSnapshot>;
-  return (snapshot.schemaVersion === 1 || snapshot.schemaVersion === 2)
+  return (snapshot.schemaVersion === 1 || snapshot.schemaVersion === 2 || snapshot.schemaVersion === 3)
     && Array.isArray(snapshot.objects)
     && typeof snapshot.title === 'string';
 }

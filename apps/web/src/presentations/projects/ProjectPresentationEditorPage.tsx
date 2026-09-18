@@ -56,6 +56,7 @@ import {
 import { ProjectPresentationPreview } from './ProjectPresentationPreview';
 import {
   createDraftObject,
+  createProjectPresentationCoverFeatures,
   createProjectPresentationForm,
   findProjectImage,
   getProjectObjectValidationIssues,
@@ -67,6 +68,7 @@ import {
   validateProjectPresentationForm,
 } from './projectPresentationState';
 import type {
+  ProjectPresentationCoverFeatureInput,
   ProjectPresentationDocument,
   ProjectPresentationDraft,
   ProjectPresentationDraftForm,
@@ -97,6 +99,7 @@ const editorSteps: Array<{ id: EditorStepId; label: string }> = [
 ];
 
 const activeDocumentStatuses = new Set<ProjectPresentationDocument['status']>(['PENDING', 'RUNNING']);
+const defaultCoverFeatures = createProjectPresentationCoverFeatures(null);
 const acceptedCoverImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const coverImageAccept = [...acceptedCoverImageMimeTypes].join(',');
 
@@ -399,9 +402,12 @@ function ExistingProjectPresentationEditor({
           title: snapshot.title,
           coverTitle: normalizeOptionalText(snapshot.coverTitle),
           coverSubtitle: normalizeOptionalText(snapshot.coverSubtitle),
-          clientName: normalizeOptionalText(snapshot.clientName),
           issueLabel: normalizeOptionalText(snapshot.issueLabel),
           mapTitle: normalizeOptionalText(snapshot.mapTitle),
+          coverFeatures: snapshot.coverFeatures.map((feature) => ({
+            title: feature.title.trim(),
+            caption: feature.caption.trim(),
+          })),
           coverImageId: snapshot.coverImageId,
         });
         draftRef.current = headerResponse.draft;
@@ -711,6 +717,9 @@ function ExistingProjectPresentationEditor({
   const imagePickerImages = imagePickerTarget?.kind === 'cover'
     ? form.objects.flatMap((item) => item.object.images)
     : imagePickerItem?.object.images ?? [];
+  const imagePickerPageKey = imagePickerTarget
+    ? (imagePickerTarget.kind === 'cover' ? 'cover' : imagePickerTarget.objectId)
+    : null;
   const allValidationIssues = validateProjectPresentationForm(form);
   const cardValidationIssues = allValidationIssues.filter((issue) => issue.path.startsWith('objects.'));
   const coverValidationIssues = allValidationIssues.filter((issue) => projectPresentationCoverIssuePaths.has(issue.path));
@@ -934,43 +943,57 @@ function ExistingProjectPresentationEditor({
             <DialogTitle>{imagePickerTarget?.kind === 'cover' ? 'Фото обложки' : 'Фото жилого комплекса'}</DialogTitle>
             <DialogDescription>
               {imagePickerTarget?.kind === 'cover'
-                ? 'Выберите одно фото из добавленных в презентацию ЖК.'
-                : `Выберите ${projectPresentationMaxImages} фото. Первое станет большим фото страницы, второе и третье — нижними.`}
+                ? 'Выберите одно фото из добавленных в презентацию ЖК — страница обновится справа.'
+                : `Выберите ${projectPresentationMaxImages} фото. Первое станет большим фото страницы, второе и третье — нижними. Справа видно, как это выглядит в PDF.`}
             </DialogDescription>
           </DialogHeader>
-          {imagePickerImages.length ? (
-            <div className="project-presentation-image-grid">
-              {imagePickerImages.map((image) => {
-                const isSelected = imagePickerTarget?.kind === 'cover'
-                  ? form.coverImageId === image.id
-                  : Boolean(imagePickerItem?.imageIds.includes(image.id));
-                const selectionOrder = imagePickerTarget?.kind === 'project'
-                  ? (imagePickerItem?.imageIds.indexOf(image.id) ?? -1) + 1
-                  : 0;
+          <div className="project-presentation-image-picker">
+            {imagePickerImages.length ? (
+              <div className="project-presentation-image-grid">
+                {imagePickerImages.map((image) => {
+                  const isSelected = imagePickerTarget?.kind === 'cover'
+                    ? form.coverImageId === image.id
+                    : Boolean(imagePickerItem?.imageIds.includes(image.id));
+                  const selectionOrder = imagePickerTarget?.kind === 'project'
+                    ? (imagePickerItem?.imageIds.indexOf(image.id) ?? -1) + 1
+                    : 0;
 
-                return (
-                  <button
-                    aria-pressed={isSelected}
-                    className={isSelected ? 'is-selected' : ''}
-                    key={image.id}
-                    type="button"
-                    onClick={() => {
-                      if (imagePickerTarget?.kind === 'cover') {
-                        setCoverUploadError(null);
-                        changeForm((current) => ({ ...current, coverImageId: image.id, coverFile: null }));
-                      } else if (imagePickerItem) {
-                        toggleProjectImage(imagePickerItem.objectId, image.id);
-                      }
-                    }}
-                  >
-                    <SecureImage accessToken={accessToken || ''} alt={image.alt || 'Фото ЖК'} fileId={image.file.id} lazy variant="detail" />
-                    {selectionOrder ? <span className="project-presentation-image-order">{selectionOrder}</span> : null}
-                    {isSelected && !selectionOrder ? <CheckCircle2Icon aria-hidden="true" /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          ) : <p className="muted-text">У выбранных объектов нет доступных изображений.</p>}
+                  return (
+                    <button
+                      aria-pressed={isSelected}
+                      className={isSelected ? 'is-selected' : ''}
+                      key={image.id}
+                      type="button"
+                      onClick={() => {
+                        if (imagePickerTarget?.kind === 'cover') {
+                          setCoverUploadError(null);
+                          changeForm((current) => ({ ...current, coverImageId: image.id, coverFile: null }));
+                        } else if (imagePickerItem) {
+                          toggleProjectImage(imagePickerItem.objectId, image.id);
+                        }
+                      }}
+                    >
+                      <SecureImage accessToken={accessToken || ''} alt={image.alt || 'Фото ЖК'} fileId={image.file.id} lazy variant="detail" />
+                      {selectionOrder ? <span className="project-presentation-image-order">{selectionOrder}</span> : null}
+                      {isSelected && !selectionOrder ? <CheckCircle2Icon aria-hidden="true" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : <p className="muted-text">У выбранных объектов нет доступных изображений.</p>}
+            {/* The page under the dialog is dimmed, so the picker keeps its own live preview. */}
+            <aside className="project-presentation-image-preview" aria-label="Страница с выбранными фото">
+              {user && imagePickerPageKey ? (
+                <ProjectPresentationPreview
+                  accessToken={accessToken || ''}
+                  form={form}
+                  preferredPageKey={imagePickerPageKey}
+                  user={user}
+                  compact
+                />
+              ) : null}
+            </aside>
+          </div>
           <DialogFooter>
             {imagePickerTarget?.kind === 'cover' && form.coverImageId ? (
               <Button type="button" variant="outline" onClick={() => changeForm((current) => ({ ...current, coverImageId: null }))}>
@@ -1296,11 +1319,20 @@ function ProjectCoverStep({
     onChooseCover();
   }
 
+  function updateCoverFeature(index: number, updates: Partial<ProjectPresentationCoverFeatureInput>) {
+    onChange((current) => ({
+      ...current,
+      coverFeatures: current.coverFeatures.map((feature, featureIndex) => (
+        featureIndex === index ? { ...feature, ...updates } : feature
+      )),
+    }));
+  }
+
   return (
     <section className="project-presentation-step-panel project-presentation-cover-step">
       <div className="project-presentation-step-heading">
         <div className="project-presentation-step-number">03</div>
-        <div><p className="eyebrow">Персонализация</p><h3>Соберите обложку</h3><p>Заголовок, клиент, фото обложки и заголовок страницы с картой.</p></div>
+        <div><p className="eyebrow">Персонализация</p><h3>Соберите обложку</h3><p>Заголовок, плашки, фото обложки и заголовок страницы с картой.</p></div>
       </div>
 
       <Card className="project-presentation-section-card">
@@ -1322,16 +1354,6 @@ function ProjectCoverStep({
             placeholder="ТОП 12 ЖК у парков"
             value={form.coverTitle}
             onChange={(value) => onChange((current) => ({ ...current, coverTitle: value }))}
-          />
-          <ProjectTextField
-            description="На обложке: «Подготовлено для …» — укажите в родительном падеже."
-            error={issueFor('clientName')}
-            id="project-client-name"
-            label="Имя клиента"
-            maxLength={projectPresentationLimits.clientName}
-            placeholder="Александры"
-            value={form.clientName}
-            onChange={(value) => onChange((current) => ({ ...current, clientName: value }))}
           />
           <ProjectTextField
             description="Плашка в правом верхнем углу обложки."
@@ -1369,6 +1391,54 @@ function ProjectCoverStep({
             <FieldDescription>Короткий текст справа от заголовка · {form.coverSubtitle.length} / {projectPresentationLimits.coverSubtitle}</FieldDescription>
             {issueFor('coverSubtitle') ? <FieldError>{issueFor('coverSubtitle')}</FieldError> : null}
           </Field>
+
+          <div className="project-presentation-field-wide project-presentation-cover-features">
+            <div className="project-presentation-cover-features-heading">
+              <div>
+                <strong>Плашки на обложке</strong>
+                <span>
+                  Четыре подписи поверх фото. Стандартный текст уже подставлен — меняйте только то,
+                  что нужно для этой подборки.
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onChange((current) => ({ ...current, coverFeatures: createProjectPresentationCoverFeatures(null) }))}
+              >
+                <RefreshCwIcon data-icon="inline-start" aria-hidden="true" /> Вернуть стандартные
+              </Button>
+            </div>
+            <div className="project-presentation-cover-features-grid">
+              {form.coverFeatures.map((feature, index) => {
+                const featureError = issueFor(`coverFeatures.${index}`);
+
+                return (
+                  <div className={`project-presentation-cover-feature${featureError ? ' has-issue' : ''}`} key={index}>
+                    <span className="project-presentation-cover-feature-index">{String(index + 1).padStart(2, '0')}</span>
+                    <Input
+                      aria-invalid={Boolean(featureError)}
+                      aria-label={`Заголовок плашки ${index + 1}`}
+                      id={`project-cover-feature-${index}-title`}
+                      maxLength={projectPresentationLimits.coverFeatureTitle}
+                      placeholder={defaultCoverFeatures[index]?.title}
+                      value={feature.title}
+                      onChange={(event) => updateCoverFeature(index, { title: event.currentTarget.value })}
+                    />
+                    <Input
+                      aria-label={`Подпись плашки ${index + 1}`}
+                      id={`project-cover-feature-${index}-caption`}
+                      maxLength={projectPresentationLimits.coverFeatureCaption}
+                      placeholder={defaultCoverFeatures[index]?.caption}
+                      value={feature.caption}
+                      onChange={(event) => updateCoverFeature(index, { caption: event.currentTarget.value })}
+                    />
+                    {featureError ? <FieldError>{featureError}</FieldError> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
           <Field
             className="project-presentation-cover-field"
@@ -1477,7 +1547,7 @@ function ProjectReviewStep({
       <div className="project-presentation-review-grid">
         <article><span>ЖИЛЫЕ КОМПЛЕКСЫ</span><strong>{form.objects.length}</strong><small>до {projectPresentationMaxObjects} объектов</small></article>
         <article><span>СТРАНИЦЫ PDF</span><strong>{form.objects.length + 4}</strong><small>формат 3:4</small></article>
-        <article><span>ПЕРСОНАЛИЗАЦИЯ</span><strong>{form.clientName || 'Имя не указано'}</strong><small>{form.issueLabel || 'Без метки выпуска'}</small></article>
+        <article><span>ОБЛОЖКА</span><strong>{form.coverTitle || 'Заголовок не заполнен'}</strong><small>{form.issueLabel || 'Без метки выпуска'}</small></article>
       </div>
 
       <Card className="project-presentation-structure-card">
@@ -1797,11 +1867,11 @@ function focusValidationIssue(issue: ProjectPresentationValidationIssue | undefi
   }
 
   const objectMatch = issue.path.match(/^objects\.([^.]+)\.([^.]+)$/u);
+  const coverFeatureMatch = issue.path.match(/^coverFeatures\.(\d+)$/u);
   const coverFieldIds: Record<string, string> = {
     coverImageId: 'project-cover-image',
     coverTitle: 'project-cover-title',
     coverSubtitle: 'project-cover-subtitle',
-    clientName: 'project-client-name',
     mapTitle: 'project-map-title',
     title: 'project-draft-title',
   };
@@ -1812,6 +1882,7 @@ function focusValidationIssue(issue: ProjectPresentationValidationIssue | undefi
     imageIds: 'images',
   };
   const fieldId = coverFieldIds[issue.path]
+    ?? (coverFeatureMatch ? `project-cover-feature-${coverFeatureMatch[1]}-title` : null)
     ?? (objectMatch ? `project-${objectMatch[1]}-${objectFieldIds[objectMatch[2] ?? ''] ?? 'title'}` : 'project-presentation-validation');
   const element = window.document.getElementById(fieldId);
 

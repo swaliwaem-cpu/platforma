@@ -19,6 +19,9 @@ const customCoverMigration = readProjectFile(
 const mapTitleMigration = readProjectFile(
   'apps/api/prisma/migrations/20260916180000_add_project_presentation_map_title/migration.sql',
 );
+const coverFeaturesMigration = readProjectFile(
+  'apps/api/prisma/migrations/20260918120000_add_project_presentation_cover_features/migration.sql',
+);
 const appModule = readProjectFile('apps/api/src/app.module.ts');
 const moduleSource = readProjectFile(
   'apps/api/src/project-presentations/project-presentations.module.ts',
@@ -236,7 +239,18 @@ test('drafts store the map page title through an additive migration', () => {
   );
   assert.match(service, /if \('mapTitle' in body\) data\.mapTitle = this\.parseNullableString\(body\.mapTitle, 'Map title', 180\)/);
   assert.match(service, /mapTitle: draft\.mapTitle,/);
-  assert.match(types, /isProjectPresentationSnapshot[\s\S]*schemaVersion === 1 \|\| snapshot\.schemaVersion === 2/);
+  assert.match(types, /isProjectPresentationSnapshot[\s\S]*schemaVersion === 1 \|\| snapshot\.schemaVersion === 2 \|\| snapshot\.schemaVersion === 3/);
+});
+
+test('drafts store the editable cover tiles through an additive migration', () => {
+  assert.match(schema, /coverFeatures\s+Json\?\s+@map\("cover_features"\)/);
+  assert.equal(
+    coverFeaturesMigration.trim(),
+    '-- AlterTable\nALTER TABLE "project_presentation_drafts" ADD COLUMN "cover_features" JSONB;',
+  );
+  assert.match(service, /if \('coverFeatures' in body\) data\.coverFeatures = this\.parseCoverFeatures\(body\.coverFeatures\)/);
+  assert.match(service, /coverFeatures: this\.readCoverFeatures\(draft\.coverFeatures\),/);
+  assert.match(types, /PROJECT_PRESENTATION_SNAPSHOT_VERSION = 3/);
 });
 
 test('worker has recoverable status transitions and bounded retries', () => {

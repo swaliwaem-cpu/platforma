@@ -59,23 +59,31 @@ export function ProjectPresentationPreview({
   const [activePageIndex, setActivePageIndex] = useState(0);
   const safePageIndex = Math.min(activePageIndex, Math.max(pages.length - 1, 0));
   const activePage = pages[safePageIndex];
-  const mapPoints = useMemo(
-    () => form.objects.flatMap(({ object }) => (
-      object.latitude !== null && object.longitude !== null
-        ? [{ latitude: object.latitude, longitude: object.longitude }]
+  const locatedProjects = useMemo(
+    () => form.objects.flatMap((item) => (
+      item.object.latitude !== null && item.object.longitude !== null
+        ? [{
+          latitude: item.object.latitude,
+          longitude: item.object.longitude,
+          label: item.manualTitle || item.object.title,
+        }]
         : []
     )),
     [form.objects],
+  );
+  const mapPoints = useMemo(
+    () => locatedProjects.map(({ latitude, longitude }) => ({ latitude, longitude })),
+    [locatedProjects],
   );
   const mapSnapshot = useProjectPresentationMapSnapshot(mapPoints);
   const deferredForm = useDeferredValue(form);
   const activePageKey = activePage?.key ?? 'cover';
   const html = useMemo(
     () => renderProjectPresentationHtml(
-      createPreviewModel(deferredForm, user.brokerPhone ?? '', mapSnapshot),
+      createPreviewModel(deferredForm, mapSnapshot, locatedProjects),
       { fontUrls, pageKeys: [activePageKey] },
     ),
-    [activePageKey, deferredForm, mapSnapshot, user.brokerPhone],
+    [activePageKey, deferredForm, locatedProjects, mapSnapshot],
   );
   const { frameRef, scale } = usePageScale();
 
@@ -165,22 +173,23 @@ export function ProjectPresentationPreview({
 
 function createPreviewModel(
   form: ProjectPresentationDraftForm,
-  brokerPhone: string,
   mapSnapshot: ReturnType<typeof useProjectPresentationMapSnapshot>,
+  locatedProjects: Array<{ latitude: number; longitude: number; label: string }>,
 ): ProjectPresentationTemplateModel {
   const coverImage = findProjectImage(form.objects, form.coverImageId);
   const coverFileId = form.coverFile?.id ?? coverImage?.file.id ?? null;
-  const markers = mapSnapshot?.markers ?? getProjectPresentationFallbackMarkers(
-    form.objects.map(({ object }) => ({ latitude: object.latitude, longitude: object.longitude })),
-  );
+  // Snapshot markers come back in the order the points were projected, so the titles line up one by one.
+  const markers = mapSnapshot
+    ? mapSnapshot.markers.map((marker, index) => ({ ...marker, label: locatedProjects[index]?.label ?? '' }))
+    : getProjectPresentationFallbackMarkers(locatedProjects);
 
   return {
     cover: {
       title: form.coverTitle || 'Заголовок обложки',
       subtitle: form.coverSubtitle,
-      clientName: form.clientName,
       issueLabel: form.issueLabel,
       imageSrc: coverFileId ? buildMediaFileContentUrl(coverFileId, 'detail') : null,
+      features: form.coverFeatures,
     },
     map: {
       title: form.mapTitle || 'Заголовок страницы с картой',
@@ -200,10 +209,7 @@ function createPreviewModel(
         return image ? buildMediaFileContentUrl(image.file.id, 'detail') : null;
       }),
     })),
-    contacts: {
-      phone: brokerPhone,
-      ctaUrl: PROJECT_PRESENTATION_LINKS.chat,
-    },
+    contacts: { ctaUrl: PROJECT_PRESENTATION_LINKS.chat },
   };
 }
 

@@ -21,6 +21,7 @@ import {
   type ProjectPresentationTemplateModule,
 } from './project-presentation-template';
 import {
+  PROJECT_PRESENTATION_COVER_FEATURES,
   PROJECT_PRESENTATION_MAX_ADVANTAGES,
   PROJECT_PRESENTATION_MAX_IMAGES,
   PROJECT_PRESENTATION_MAX_OBJECTS,
@@ -28,8 +29,9 @@ import {
   PROJECT_PRESENTATION_PAGE_WIDTH,
   PROJECT_PRESENTATION_SNAPSHOT_VERSION,
   PROJECT_PRESENTATION_TEMPLATE_VERSION,
+  ProjectPresentationSnapshotCoverFeature,
   ProjectPresentationSnapshotImage,
-  ProjectPresentationSnapshotV2,
+  ProjectPresentationSnapshotV3,
 } from './project-presentations.types';
 
 const objectInclude = {
@@ -138,6 +140,7 @@ export class ProjectPresentationsService {
         clientName: this.parseNullableString(body.clientName, 'Client name', 180),
         issueLabel: this.parseNullableString(body.issueLabel, 'Issue label', 180),
         mapTitle: this.parseNullableString(body.mapTitle, 'Map title', 180),
+        coverFeatures: this.parseCoverFeatures(body.coverFeatures) ?? Prisma.DbNull,
         coverImageId: this.parseNullableUuid(body.coverImageId, 'Cover image is invalid'),
         templateVersion: PROJECT_PRESENTATION_TEMPLATE_VERSION,
       },
@@ -158,6 +161,7 @@ export class ProjectPresentationsService {
     if ('clientName' in body) data.clientName = this.parseNullableString(body.clientName, 'Client name', 180);
     if ('issueLabel' in body) data.issueLabel = this.parseNullableString(body.issueLabel, 'Issue label', 180);
     if ('mapTitle' in body) data.mapTitle = this.parseNullableString(body.mapTitle, 'Map title', 180);
+    if ('coverFeatures' in body) data.coverFeatures = this.parseCoverFeatures(body.coverFeatures) ?? Prisma.DbNull;
     let previousCustomCoverFileId: string | null = null;
     if ('coverImageId' in body) {
       const coverImageId = this.parseNullableUuid(body.coverImageId, 'Cover image is invalid');
@@ -440,8 +444,15 @@ export class ProjectPresentationsService {
       if (text.length > max) throw new BadRequestException(`${label} is longer than ${max} characters`);
     };
     requireText(draft.coverTitle ?? draft.title, 'Cover title', limits.coverTitle);
-    requireText(draft.clientName, 'Client name', limits.clientName);
     requireText(draft.mapTitle, 'Map title', limits.mapTitle);
+    for (const feature of this.readCoverFeatures(draft.coverFeatures) ?? []) {
+      if (feature.title.length > limits.coverFeatureTitle) {
+        throw new BadRequestException(`Cover feature title is longer than ${limits.coverFeatureTitle} characters`);
+      }
+      if (feature.caption.length > limits.coverFeatureCaption) {
+        throw new BadRequestException(`Cover feature caption is longer than ${limits.coverFeatureCaption} characters`);
+      }
+    }
     if ((draft.coverSubtitle?.trim().length ?? 0) > limits.coverSubtitle) {
       throw new BadRequestException(`Cover subtitle is longer than ${limits.coverSubtitle} characters`);
     }
@@ -470,7 +481,7 @@ export class ProjectPresentationsService {
     title: string,
     broker: AuthenticatedUser,
     template: ProjectPresentationTemplateModule,
-  ): ProjectPresentationSnapshotV2 {
+  ): ProjectPresentationSnapshotV3 {
     const objects = draft.objects.map((item) => {
       const selectedImages = this.readStringArray(item.imageIds)
         .slice(0, PROJECT_PRESENTATION_MAX_IMAGES)
@@ -509,7 +520,7 @@ export class ProjectPresentationsService {
         ? { fileId: coverImage.fileId, checksum: coverImage.file.checksum, role: 'COVER', sortOrder: 0 }
         : null;
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       templateVersion: PROJECT_PRESENTATION_TEMPLATE_VERSION,
       page: { width: PROJECT_PRESENTATION_PAGE_WIDTH, height: PROJECT_PRESENTATION_PAGE_HEIGHT },
       requestedAt: new Date().toISOString(),
@@ -520,6 +531,8 @@ export class ProjectPresentationsService {
         clientName: draft.clientName ?? '',
         issueLabel: draft.issueLabel ?? '',
         image: coverSnapshotImage,
+        features: template.resolveProjectPresentationCoverFeatures(this.readCoverFeatures(draft.coverFeatures))
+          .map(({ title: featureTitle, caption }) => ({ title: featureTitle, caption })),
       },
       map: { title: draft.mapTitle ?? '' },
       cta: { label: '@FluffyWhite', url: 'https://t.me/FluffyWhite' },
@@ -534,7 +547,7 @@ export class ProjectPresentationsService {
     };
   }
 
-  private collectSnapshotAssets(snapshot: ProjectPresentationSnapshotV2, customCoverFileId: string | null) {
+  private collectSnapshotAssets(snapshot: ProjectPresentationSnapshotV3, customCoverFileId: string | null) {
     const assets: Array<Omit<ProjectPresentationSnapshotImage, 'role'> & { sourceObjectId: string | null; role: string }> = [];
     if (snapshot.cover.image) {
       assets.push({
@@ -575,6 +588,33 @@ export class ProjectPresentationsService {
     return items;
   }
 
+  // The cover tiles always travel as four {title, caption} slots; icons and defaults live in the template.
+  private parseCoverFeatures(value: unknown): ProjectPresentationSnapshotCoverFeature[] | null {
+    if (value === undefined || value === null) return null;
+    if (!Array.isArray(value) || value.length > PROJECT_PRESENTATION_COVER_FEATURES) {
+      throw new BadRequestException('Cover features are invalid');
+    }
+    return value.map((raw) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequestException('Cover feature is invalid');
+      const feature = raw as Record<string, unknown>;
+      return {
+        title: this.parseNullableString(feature.title, 'Cover feature title', 180) ?? '',
+        caption: this.parseNullableString(feature.caption, 'Cover feature caption', 180) ?? '',
+      };
+    });
+  }
+
+  private readCoverFeatures(value: Prisma.JsonValue | null): ProjectPresentationSnapshotCoverFeature[] | null {
+    if (!Array.isArray(value)) return null;
+    return value.slice(0, PROJECT_PRESENTATION_COVER_FEATURES).map((item) => {
+      const feature = (item && typeof item === 'object' && !Array.isArray(item) ? item : {}) as Record<string, unknown>;
+      return {
+        title: typeof feature.title === 'string' ? feature.title : '',
+        caption: typeof feature.caption === 'string' ? feature.caption : '',
+      };
+    });
+  }
+
   private serializeDraft(draft: DraftRecord) {
     return {
       id: draft.id,
@@ -586,6 +626,7 @@ export class ProjectPresentationsService {
       clientName: draft.clientName,
       issueLabel: draft.issueLabel,
       mapTitle: draft.mapTitle,
+      coverFeatures: this.readCoverFeatures(draft.coverFeatures),
       coverImageId: draft.coverImageId,
       coverFileId: draft.coverFileId,
       coverFile: draft.coverFile ? this.filesService.serializeFile(draft.coverFile) : null,

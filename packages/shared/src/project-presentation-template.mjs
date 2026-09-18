@@ -14,12 +14,13 @@ export const PROJECT_PRESENTATION_MAP_VIEW = Object.freeze({
 export const PROJECT_PRESENTATION_LIMITS = Object.freeze({
   coverTitle: 60,
   coverSubtitle: 120,
-  clientName: 60,
   mapTitle: 60,
   description: 430,
   advantage: 40,
   advantages: 4,
   images: 3,
+  coverFeatureTitle: 24,
+  coverFeatureCaption: 32,
 });
 export const PROJECT_PRESENTATION_FONT_FILES = Object.freeze([
   'Involve-Regular.woff2',
@@ -36,8 +37,31 @@ export const PROJECT_PRESENTATION_LINKS = Object.freeze({
   telegram: 'https://t.me/+OacAOVxTqWM0Y2Ji',
   youtube: 'https://www.youtube.com/@fluffywhite.moscow',
 });
+// The presentation is published by the company, so the final page always dials the catalog number.
 export const PROJECT_PRESENTATION_DEFAULT_PHONE = '+7 (495) 492-48-58';
 export const PROJECT_PRESENTATION_DEFAULT_MAP_TITLE = 'Москва, в которой хочется жить';
+// The four cover tiles: the icon of every slot is fixed, the wording can be edited per presentation.
+export const PROJECT_PRESENTATION_DEFAULT_COVER_FEATURES = Object.freeze([
+  Object.freeze({ icon: 'building', title: 'Локация и факты', caption: 'Район, метро и класс' }),
+  Object.freeze({ icon: 'heart', title: 'Преимущества', caption: 'Главное о каждом ЖК' }),
+  Object.freeze({ icon: 'layers', title: 'Старты продаж', caption: 'Новые предложения' }),
+  Object.freeze({ icon: 'fileText', title: 'Условия покупки', caption: 'Стоимость и рассрочка' }),
+]);
+
+// Keeps the four slots and their icons, falling back to the default wording of a slot left empty.
+export function resolveProjectPresentationCoverFeatures(features) {
+  const custom = Array.isArray(features) ? features : [];
+  return PROJECT_PRESENTATION_DEFAULT_COVER_FEATURES.map((preset, index) => {
+    const entry = custom[index];
+    const title = String(entry?.title ?? '').trim();
+    const caption = entry && typeof entry.caption === 'string' ? entry.caption.trim() : null;
+    return {
+      icon: preset.icon,
+      title: title || preset.title,
+      caption: caption === null ? preset.caption : caption,
+    };
+  });
+}
 
 export function truncateProjectPresentationDescription(value, limit = PROJECT_PRESENTATION_LIMITS.description) {
   const text = String(value ?? '').replace(/\s+/gu, ' ').trim();
@@ -68,6 +92,7 @@ export function getProjectPresentationFallbackMarkers(points) {
   return valid.map((point) => ({
     x: width / 2 + (point.longitude - centerLongitude) * longitudeScale * scale,
     y: height / 2 - (point.latitude - centerLatitude) * scale,
+    label: point.label ?? '',
   }));
 }
 
@@ -89,30 +114,28 @@ export function renderProjectPresentationHtml(model, options) {
 }
 
 function renderCover(cover) {
-  const features = [
-    ['building', 'Локация и факты', 'Район, метро и класс'],
-    ['heart', 'Преимущества', 'Главное о каждом ЖК'],
-    ['layers', 'Старты продаж', 'Новые предложения'],
-    ['fileText', 'Условия покупки', 'Стоимость и рассрочка'],
-  ];
+  const features = resolveProjectPresentationCoverFeatures(cover.features);
   return `<section class="fw-page fw-cover" data-page="cover">
 <header class="fw-cover__top"><span class="fw-wordmark">FluffyWhite</span>${cover.issueLabel ? `<span class="fw-pill">${text(cover.issueLabel)}</span>` : ''}</header>
 <div class="fw-cover__head">
-<h1 class="fw-cover__title" data-fit data-fit-lines="2" data-fit-min="40">${text(cover.title)}</h1>
-<div class="fw-cover__aside" data-fit data-fit-height="174" data-fit-min="10">${cover.subtitle ? `<p class="fw-cover__subtitle">${text(cover.subtitle)}</p>` : ''}${cover.clientName ? `<p class="fw-cover__client">Подготовлено для <b>${text(cover.clientName)}</b></p>` : ''}</div>
+<h1 class="fw-cover__title" data-fit data-fit-lines="3" data-fit-height="220" data-fit-min="40">${text(cover.title)}</h1>
+<div class="fw-cover__aside" data-fit data-fit-height="174" data-fit-min="10">${cover.subtitle ? `<p class="fw-cover__subtitle">${text(cover.subtitle)}</p>` : ''}</div>
 </div>
 <div class="fw-cover__photo">${image(cover.imageSrc)}</div>
-<div class="fw-cover__features">${features.map(([name, title, caption]) => `<div class="fw-feature"><span class="fw-icon-tile">${icon(name, 22)}</span><div><strong>${title}</strong><span>${caption}</span></div></div>`).join('')}</div>
+<div class="fw-cover__features">${features.map((feature) => `<div class="fw-feature"><span class="fw-icon-tile">${icon(feature.icon, 22)}</span><div><strong>${text(feature.title)}</strong>${feature.caption ? `<span>${text(feature.caption)}</span>` : ''}</div></div>`).join('')}</div>
 </section>`;
 }
 
 function renderMap(map) {
+  // Labels sit to the right of their dot, and flip to the left half of the frame so they stay inside it.
+  const flipFrom = PROJECT_PRESENTATION_MAP_SIZE.width * 0.6;
   const markers = map.markers
     .filter((marker) => Number.isFinite(marker.x) && Number.isFinite(marker.y))
-    .map((marker) => `<span class="fw-map__marker" style="left:${round(marker.x)}px;top:${round(marker.y)}px"></span>`)
+    .map((marker) => `<span class="fw-map__marker${marker.x > flipFrom ? ' is-flipped' : ''}" style="left:${round(marker.x)}px;top:${round(marker.y)}px">`
+      + `${marker.label ? `<span class="fw-map__label">${text(marker.label)}</span>` : ''}</span>`)
     .join('');
   return `<section class="fw-page fw-map" data-page="map">
-<header class="fw-map__head"><h2 class="fw-map__title" data-fit data-fit-lines="2" data-fit-min="36">${text(map.title)}</h2><p class="fw-map__note">Локации проектов<br>вашей подборки.</p></header>
+<header class="fw-map__head"><h2 class="fw-map__title" data-fit data-fit-lines="3" data-fit-height="152" data-fit-min="32">${text(map.title)}</h2></header>
 <div class="fw-map__frame${map.imageSrc ? '' : ' is-empty'}">${map.imageSrc ? `<img src="${escapeHtml(map.imageSrc)}" alt="">` : ''}${markers}</div>
 </section>`;
 }
@@ -131,13 +154,13 @@ ${project.description ? `<p class="fw-project__description" data-fit data-fit-mi
 <div class="fw-facts">
 ${ringsSvg('fw-facts__rings', 150, 150, '#59222b', [78, 116, 154, 192])}
 <p class="fw-facts__label">Стоимость</p>
-<p class="fw-facts__price" data-fit data-fit-lines="1" data-fit-min="14">${prefix ? `<span class="fw-facts__from">${prefix}</span>` : ''}<strong>${prefix ? ' ' : ''}${escapeHtml(price)}</strong></p>
+<p class="fw-facts__price">${prefix ? `<span class="fw-facts__from">${prefix}</span>` : ''}<strong>${prefix ? ' ' : ''}${escapeHtml(price)}</strong></p>
 <dl class="fw-facts__rows">
-<div class="fw-facts__row"><dt>Класс</dt><dd data-fit data-fit-lines="1" data-fit-min="12">${text(project.propertyClass)}</dd></div>
-<div class="fw-facts__row"><dt>Метро</dt><dd data-fit data-fit-lines="1" data-fit-min="12">${text(project.metro)}</dd></div>
+<div class="fw-facts__row"><dt>Класс</dt><dd>${text(project.propertyClass)}</dd></div>
+<div class="fw-facts__row"><dt>Метро</dt><dd>${text(project.metro)}</dd></div>
 </dl>
 <p class="fw-facts__label fw-facts__label--list">Основные преимущества</p>
-<ol class="fw-facts__list">${advantages.map((advantage, index) => `<li><span class="fw-facts__number">${String(index + 1).padStart(2, '0')}</span><span class="fw-facts__advantage" data-fit data-fit-lines="1" data-fit-min="12">${text(advantage)}</span></li>`).join('')}</ol>
+<ol class="fw-facts__list">${advantages.map((advantage, index) => `<li><span class="fw-facts__number">${String(index + 1).padStart(2, '0')}</span><span class="fw-facts__advantage">${text(advantage)}</span></li>`).join('')}</ol>
 <a class="fw-button fw-button--details" href="${escapeHtml(ctaUrl)}"><span>Узнать подробности</span><span class="fw-button__arrow">${icon('arrowRight', 16)}</span></a>
 </div>
 </div>
@@ -173,7 +196,7 @@ function renderFinal(contacts) {
     'Бронирование и<br>заключение<br>договора с<br>застройщиком',
     'Регистрация<br>прав на вашу<br>квартиру',
   ];
-  const phone = formatPhone(contacts.phone) || PROJECT_PRESENTATION_DEFAULT_PHONE;
+  const phone = PROJECT_PRESENTATION_DEFAULT_PHONE;
   const phoneHref = `tel:${phone.replace(/[^\d+]/gu, '')}`;
   const socials = [
     ['Instagram', PROJECT_PRESENTATION_LINKS.instagram],
@@ -192,18 +215,10 @@ ${ringsSvg('fw-start__rings', 230, 190, '#622b34', [40, 78, 116, 154, 192])}
 <h2 class="fw-contacts__title">Наши контакты</h2>
 <p class="fw-contacts__note">Свяжитесь с нами удобным<br>способом.</p>
 <span class="fw-contacts__label">Номер телефона</span>
-<a class="fw-contacts__phone" href="${escapeHtml(phoneHref)}" data-fit data-fit-lines="1" data-fit-min="24">${escapeHtml(phone)}</a>
+<a class="fw-contacts__phone" href="${escapeHtml(phoneHref)}">${escapeHtml(phone)}</a>
 <div class="fw-socials">${socials.map(([label, href]) => `<a href="${escapeHtml(href)}" class="fw-social"><span>${label}</span><span class="fw-social__arrow">${icon('arrowUpRight', 14)}</span></a>`).join('')}</div>
 </div>
 </section>`;
-}
-
-// Russian numbers are shown like the reference: +7 (495) 492-48-58; anything else stays as entered.
-function formatPhone(value) {
-  const raw = String(value ?? '').trim();
-  const digits = raw.replace(/\D/gu, '');
-  if (digits.length !== 11 || !/^[78]/u.test(digits)) return raw;
-  return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9)}`;
 }
 
 function splitPrice(value) {
@@ -269,8 +284,8 @@ function isCoordinate(latitude, longitude) {
     && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180;
 }
 
-// Shrinks marked text until it fits: data-fit-lines caps the line count, data-fit-height caps the height,
-// otherwise the text may use the space left in its parent. Whatever still overflows is clamped.
+// Shrinks marked text until it fits: data-fit-lines caps the line count, data-fit-height caps the height
+// (both may be set), otherwise the text may use the space left in its parent. Whatever still overflows is clamped.
 const fitScript = `(() => {
   const fit = (element) => {
     const minimum = Number(element.dataset.fitMin || 10);
@@ -286,7 +301,9 @@ const fitScript = `(() => {
     const tooBig = () => {
       const height = element.getBoundingClientRect().height;
       if (element.scrollWidth > element.clientWidth + 1) return true;
-      if (element.dataset.fitHeight) return height > Number(element.dataset.fitHeight) + 0.5;
+      if (element.dataset.fitHeight && height > Number(element.dataset.fitHeight) + 0.5) return true;
+      if (element.dataset.fitLines) return Math.round(height / lineHeight()) > Number(element.dataset.fitLines);
+      if (element.dataset.fitHeight) return false;
       return Math.round(height / lineHeight()) > maxLines();
     };
     while (tooBig() && size > minimum) {
@@ -294,7 +311,7 @@ const fitScript = `(() => {
       element.style.fontSize = size + 'px';
       element.style.lineHeight = lineHeight() + 'px';
     }
-    if (tooBig() && !element.dataset.fitHeight) {
+    if (tooBig() && (element.dataset.fitLines || !element.dataset.fitHeight)) {
       element.style.display = '-webkit-box';
       element.style.webkitBoxOrient = 'vertical';
       element.style.webkitLineClamp = String(maxLines());
@@ -335,14 +352,16 @@ img{display:block;width:100%;height:100%;object-fit:cover}
 .fw-cover__client b{color:#141713}
 .fw-cover__photo{position:absolute;top:332px;left:0;width:720px;height:470px;background:#ddd9d0}
 .fw-cover__features{position:absolute;top:724px;right:36px;left:36px;display:grid;gap:10px;grid-template-columns:1fr 1fr}
-.fw-feature{display:flex;height:84px;align-items:center;gap:16px;padding-left:20px;border-radius:22px;background:#fff}
-.fw-feature strong{display:block;font:500 19px/19px "FW Display";letter-spacing:-.01em}
-.fw-feature span{display:block;margin-top:8px;color:#63685f;font-size:13px;line-height:15.7px}
-.fw-map__head{position:absolute;top:30px;right:36px;left:36px;display:flex;align-items:last baseline;justify-content:space-between}
-.fw-map__title{max-width:480px;font:400 66px/64.9px "FW Display";letter-spacing:-.035em;text-wrap:balance}
-.fw-map__note{position:relative;top:-1px;flex:none;color:#63685f;font-size:14px;line-height:20px;text-align:right}
+.fw-feature{display:flex;height:84px;align-items:center;gap:16px;padding:0 20px;border-radius:22px;background:#fff}
+.fw-feature>div{min-width:0}
+.fw-feature strong{display:block;overflow:hidden;font:500 19px/19px "FW Display";letter-spacing:-.01em;text-overflow:ellipsis;white-space:nowrap}
+.fw-feature span{display:block;margin-top:8px;overflow:hidden;color:#63685f;font-size:13px;line-height:15.7px;text-overflow:ellipsis;white-space:nowrap}
+.fw-map__head{position:absolute;top:30px;right:36px;left:36px}
+.fw-map__title{font:400 66px/64.9px "FW Display";letter-spacing:-.035em;text-wrap:balance}
 .fw-map__frame{position:absolute;top:189px;left:36px;width:648px;height:735px;overflow:hidden;border-radius:28px;background:#e4e0d7}
 .fw-map__marker{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border:4px solid #f4f2eb;border-radius:50%;background:#430a13;box-shadow:0 0 0 6px rgba(67,10,19,.16),0 3px 10px rgba(20,23,19,.3)}
+.fw-map__label{position:absolute;top:50%;left:26px;max-width:200px;overflow:hidden;padding:4.5px 11px;border-radius:999px;background:#430a13;color:#f4f2eb;font-size:12.5px;font-weight:500;line-height:15px;text-overflow:ellipsis;white-space:nowrap;transform:translateY(-50%);box-shadow:0 3px 10px rgba(20,23,19,.28)}
+.fw-map__marker.is-flipped .fw-map__label{right:26px;left:auto}
 .fw-project__head{position:absolute;top:30px;left:36px;width:648px;height:273px;overflow:hidden}
 .fw-project__title{font:400 60px/60px "FW Display";letter-spacing:-.035em;text-wrap:balance}
 .fw-project__description{margin-top:13px;color:#63685f;font-size:15px;line-height:23px;text-wrap:pretty}
@@ -353,19 +372,19 @@ img{display:block;width:100%;height:100%;object-fit:cover}
 .fw-facts>*{position:relative}
 .fw-facts .fw-facts__rings{position:absolute;right:0;bottom:0}
 .fw-facts__label{color:#cfa1a8;font-size:12px;line-height:14.5px}
-.fw-facts__price{height:30px;margin-top:5px;overflow:hidden;font-size:25px;line-height:30px;white-space:nowrap}
+.fw-facts__price{height:30px;margin-top:5px;overflow:hidden;font-size:25px;line-height:30px;text-overflow:ellipsis;white-space:nowrap}
 .fw-facts__from{color:#e8d2d5;font-size:15px;line-height:15px}
 .fw-facts__price strong{letter-spacing:-.02em}
 .fw-facts__rows{margin-top:18.5px}
 .fw-facts__row{display:flex;height:38px;align-items:baseline;padding-top:10px;justify-content:space-between;gap:12px;border-top:1px solid #5c2b31}
 .fw-facts__row:last-child{height:39px;border-bottom:1px solid #5c2b31}
 .fw-facts__row dt{flex:none;color:#cfa1a8;font-size:12px;line-height:14.5px}
-.fw-facts__row dd{min-width:0;overflow:hidden;font-size:14.5px;font-weight:500;line-height:17.5px;text-align:right;white-space:nowrap}
-.fw-facts__label--list{margin-top:21px}
+.fw-facts__row dd{min-width:0;overflow:hidden;font-size:14.5px;font-weight:500;line-height:17.5px;text-align:right;text-overflow:ellipsis;white-space:nowrap}
+.fw-facts__label--list{margin-top:17px}
 .fw-facts__list{margin-top:2.7px}
-.fw-facts__list li{display:flex;height:36.67px;align-items:baseline;padding-top:9.2px;border-bottom:1px solid #5c2b31}
+.fw-facts__list li{display:flex;height:39px;align-items:flex-start;padding-top:6px;border-bottom:1px solid #5c2b31}
 .fw-facts__number{flex:none;width:30px;color:#cfa1a8;font:400 12px/16px "FW Display"}
-.fw-facts__advantage{min-width:0;overflow:hidden;font-size:13.5px;line-height:16px;white-space:nowrap}
+.fw-facts__advantage{display:-webkit-box;min-width:0;overflow:hidden;font-size:13.5px;line-height:16px;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 .fw-button--details{margin-top:auto;padding:0 6px 0 20px}
 .fw-kicker{position:absolute;top:30px;left:40px;display:flex;align-items:center;gap:10px;color:#63685f;font-size:13px;line-height:24px}
 .fw-kicker__dot{width:8px;height:8px;border-radius:50%;background:#430a13}

@@ -108,18 +108,23 @@ export class ProjectPresentationsPdfService {
     map: ProjectPresentationMapSnapshot | null,
   ): TemplateModel {
     const src = (key: string) => (assets.has(key) ? `${assetOrigin}/assets/${encodeURIComponent(key)}` : null);
-    const markers = map?.markers
-      ?? template.getProjectPresentationFallbackMarkers(snapshot.objects.map(({ latitude, longitude }) => ({ latitude, longitude })));
+    // The basemap projects the located projects in order, so their titles label the markers one by one.
+    const located = snapshot.objects.filter(hasCoordinates);
+    const markers = map
+      ? map.markers.map((marker, index) => ({ ...marker, label: located[index]?.title ?? '' }))
+      : template.getProjectPresentationFallbackMarkers(
+        snapshot.objects.map(({ latitude, longitude, title }) => ({ latitude, longitude, label: title })),
+      );
     return {
       cover: {
         title: snapshot.cover.title || snapshot.title,
         subtitle: snapshot.cover.subtitle,
-        clientName: snapshot.cover.clientName,
         issueLabel: snapshot.cover.issueLabel,
         imageSrc: src('cover'),
+        features: snapshot.schemaVersion === 3 ? snapshot.cover.features : null,
       },
       map: {
-        title: (snapshot.schemaVersion === 2 && snapshot.map.title) || template.PROJECT_PRESENTATION_DEFAULT_MAP_TITLE,
+        title: (snapshot.schemaVersion !== 1 && snapshot.map.title) || template.PROJECT_PRESENTATION_DEFAULT_MAP_TITLE,
         imageSrc: src('map'),
         markers,
       },
@@ -133,10 +138,7 @@ export class ProjectPresentationsPdfService {
         advantages: object.advantages,
         imageSrcs: [0, 1, 2].map((slot) => src(`project-${index}-${slot}`)),
       })),
-      contacts: {
-        phone: snapshot.broker.phone,
-        ctaUrl: snapshot.cta.url,
-      },
+      contacts: { ctaUrl: snapshot.cta.url },
     };
   }
 
@@ -199,11 +201,7 @@ export class ProjectPresentationsPdfService {
       if (progress >= mapProgress.busyLimit) return;
       pendingTick = pendingTick.then(() => report(progress + 1)).catch(() => undefined);
     }, mapProgressTickMs);
-    const points = snapshot.objects.filter(
-      (object): object is typeof object & ProjectPresentationMapPoint =>
-        typeof object.latitude === 'number' && Number.isFinite(object.latitude)
-        && typeof object.longitude === 'number' && Number.isFinite(object.longitude),
-    );
+    const points = snapshot.objects.filter(hasCoordinates);
     try {
       return await renderProjectPresentationMap(
         browser,
@@ -253,6 +251,13 @@ export function resolveBrowserExecutablePath(environment: NodeJS.ProcessEnv = pr
   const configured = environment.PROJECT_PRESENTATIONS_BROWSER_EXECUTABLE_PATH?.trim();
   if (configured) return configured;
   return browserCandidates.find((candidate) => existsSync(candidate));
+}
+
+function hasCoordinates(
+  object: ProjectPresentationSnapshot['objects'][number],
+): object is ProjectPresentationSnapshot['objects'][number] & ProjectPresentationMapPoint {
+  return typeof object.latitude === 'number' && Number.isFinite(object.latitude)
+    && typeof object.longitude === 'number' && Number.isFinite(object.longitude);
 }
 
 function describeError(error: unknown) {

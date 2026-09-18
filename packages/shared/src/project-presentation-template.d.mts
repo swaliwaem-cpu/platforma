@@ -5,7 +5,9 @@ export type ProjectPresentationFontFile =
   | 'Inter-Medium.woff2'
   | 'Lora-Italic.woff2';
 
-export type ProjectPresentationMapMarker = { x: number; y: number };
+export type ProjectPresentationMapMarker = { x: number; y: number; label?: string };
+
+export type ProjectPresentationCoverFeature = { title: string; caption: string };
 
 export type ProjectPresentationTemplateProject = {
   key: string;
@@ -22,9 +24,9 @@ export type ProjectPresentationTemplateModel = {
   cover: {
     title: string;
     subtitle: string;
-    clientName: string;
     issueLabel: string;
     imageSrc: string | null;
+    features?: ProjectPresentationCoverFeature[] | null;
   };
   map: {
     title: string;
@@ -33,7 +35,6 @@ export type ProjectPresentationTemplateModel = {
   };
   projects: ProjectPresentationTemplateProject[];
   contacts: {
-    phone: string;
     ctaUrl: string;
   };
 };
@@ -55,12 +56,13 @@ export declare const PROJECT_PRESENTATION_MAP_VIEW: Readonly<{
 export declare const PROJECT_PRESENTATION_LIMITS: Readonly<{
   coverTitle: number;
   coverSubtitle: number;
-  clientName: number;
   mapTitle: number;
   description: number;
   advantage: number;
   advantages: number;
   images: number;
+  coverFeatureTitle: number;
+  coverFeatureCaption: number;
 }>;
 export declare const PROJECT_PRESENTATION_FONT_FILES: readonly ProjectPresentationFontFile[];
 export declare const PROJECT_PRESENTATION_LINKS: Readonly<{
@@ -72,11 +74,18 @@ export declare const PROJECT_PRESENTATION_LINKS: Readonly<{
 }>;
 export declare const PROJECT_PRESENTATION_DEFAULT_PHONE: string;
 export declare const PROJECT_PRESENTATION_DEFAULT_MAP_TITLE: string;
+export declare const PROJECT_PRESENTATION_DEFAULT_COVER_FEATURES: ReadonlyArray<
+  Readonly<{ icon: string; title: string; caption: string }>
+>;
+
+export declare function resolveProjectPresentationCoverFeatures(
+  features: ReadonlyArray<{ title?: string | null; caption?: string | null }> | null | undefined,
+): Array<{ icon: string; title: string; caption: string }>;
 
 export declare function truncateProjectPresentationDescription(value: string | null | undefined, limit?: number): string;
 export declare function getProjectPresentationPageKeys(projectKeys: string[]): string[];
 export declare function getProjectPresentationFallbackMarkers(
-  points: Array<{ latitude: number | null; longitude: number | null }>,
+  points: Array<{ latitude: number | null; longitude: number | null; label?: string }>,
 ): ProjectPresentationMapMarker[];
 export declare function renderProjectPresentationHtml(
   model: ProjectPresentationTemplateModel,

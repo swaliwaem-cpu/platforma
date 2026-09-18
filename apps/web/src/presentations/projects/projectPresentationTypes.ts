@@ -10,6 +10,12 @@ export const projectPresentationMaxObjects = 12;
 export const projectPresentationMaxImages = 3;
 export const projectPresentationMaxAdvantages = 4;
 export const projectPresentationMaxCoverFileSizeBytes = 10 * 1024 * 1024;
+export const projectPresentationCoverFeatures = 4;
+
+export type ProjectPresentationCoverFeatureInput = {
+  title: string;
+  caption: string;
+};
 
 export type ProjectPresentationOwner = {
   id: string;
@@ -60,9 +66,9 @@ export type ProjectPresentationDraft = {
   title: string;
   coverTitle: string | null;
   coverSubtitle: string | null;
-  clientName: string | null;
   issueLabel: string | null;
   mapTitle: string | null;
+  coverFeatures: ProjectPresentationCoverFeatureInput[] | null;
   coverImageId: string | null;
   coverFileId: string | null;
   coverFile: ObjectStoredFile | null;
@@ -142,9 +148,9 @@ export type ProjectPresentationDraftForm = {
   title: string;
   coverTitle: string;
   coverSubtitle: string;
-  clientName: string;
   issueLabel: string;
   mapTitle: string;
+  coverFeatures: ProjectPresentationCoverFeatureInput[];
   coverImageId: string | null;
   coverFile: ObjectStoredFile | null;
   objects: ProjectPresentationDraftObject[];
