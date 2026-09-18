@@ -14,6 +14,9 @@ const {
   extractAssistantLogicalPredicates,
 } = require('../dist/assistant/assistant-query-planner.js');
 const {
+  extractAssistantStrictDistrictFromText,
+} = require('../dist/assistant/geo/assistant-district-query.js');
+const {
   createObjectSlugReference,
   objectSlugContainsReference,
   objectSlugEqualsReference,
@@ -333,6 +336,34 @@ test('Assistant T02 district extraction understands the locative case without th
     rooms: [2],
     district: 'Хамовниках',
   });
+});
+
+test('Assistant T02 district extraction reads the cases and prepositions brokers actually type', () => {
+  assert.equal(extractAssistantExplicitDistrict('Найди квартиры на беговой до 40 млн'), 'беговой');
+  assert.equal(extractAssistantExplicitDistrict('в Замоскворечье двушка до 50 млн'), 'Замоскворечье');
+  assert.equal(extractAssistantExplicitDistrict('трёшка в Марьиной роще'), 'Марьиной');
+  assert.equal(extractAssistantExplicitDistrict('квартиры на севере Москвы до 25 млн'), null);
+  assert.equal(extractAssistantExplicitDistrict('что есть в продаже до 30 млн'), null);
+  assert.equal(extractAssistantExplicitDistrict('в 10 минутах от метро'), null);
+  // Only the «район X» wording and the strict locative name a district outright; everything the
+  // loose pattern adds is checked against the locations table before it becomes a filter.
+  assert.equal(extractAssistantStrictDistrictFromText('Найди квартиры на беговой до 40 млн'), null);
+  assert.equal(extractAssistantStrictDistrictFromText('двушка до 35 млн в районе Хамовники'), 'Хамовники');
+  assert.equal(extractAssistantStrictDistrictFromText('двушка до 35 млн в Хамовниках'), 'Хамовниках');
+});
+
+test('Assistant T02 metro extraction accepts station wording and stops at the next condition', () => {
+  assert.equal(extractAssistantExplicitHardFilters(['Какие ЖК есть рядом со станцией Беговая?']).metro, 'Беговая');
+  assert.equal(extractAssistantExplicitHardFilters(['у метро Беговая до 40 млн']).metro, 'Беговая');
+  assert.equal(extractAssistantExplicitHardFilters(['ст. м. Фрунзенская, двушка']).metro, 'Фрунзенская');
+  assert.equal(extractAssistantExplicitHardFilters(['метро Курская, 3 комнаты']).metro, 'Курская');
+  // «от метро X» and «от парка X» name a place, not a developer.
+  assert.equal(extractAssistantExplicitHardFilters(['в 10 минутах пешком от метро Беговая']).developer, undefined);
+  assert.equal(extractAssistantExplicitHardFilters(['в 2 км от парка Горького']).developer, undefined);
+  assert.equal(
+    extractAssistantExplicitHardFilters(['двухкомнатная до 50 млн от застройщика MR Group']).developer,
+    'MR Group',
+  );
 });
 
 test('Assistant T02 object identity matches Cyrillic and Latin project names through the slug', () => {
@@ -2158,6 +2189,194 @@ test('Assistant T02 answer service canonicalizes a DB district in a natural Russ
   });
 
   assert.equal(searchedIntent.hardFilters.district, 'Хамовники');
+});
+
+test('Assistant T02 answer service treats geocoder candidates on one spot as one place', async () => {
+  let searchedGeo;
+  const candidate = (id, latitude, longitude) => ({
+    id,
+    label: 'павелецкая плаза',
+    kind: 'POINT',
+    mode: 'NEAR',
+    distanceMeters: 2_000,
+    point: { latitude, longitude },
+    city: 'Москва',
+    countryCode: 'ru',
+    source: 'PLACE',
+  });
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search(intent, context, geo) {
+        searchedGeo = geo;
+        return { exact: [], alternatives: [] };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict() {
+        return null;
+      },
+      async resolve() {
+        return {
+          status: 'AMBIGUOUS',
+          placeQuery: 'павелецкая плаза',
+          mode: 'NEAR',
+          candidates: [
+            candidate('11111111-1111-4111-8111-111111111111', 55.730180, 37.635802),
+            candidate('22222222-2222-4222-8222-222222222222', 55.730976, 37.639935),
+            candidate('33333333-3333-4333-8333-333333333333', 55.730423, 37.634661),
+          ],
+        };
+      },
+    },
+  );
+
+  const result = await service.answer({
+    messages: ['найди мне 2к квартиру рядом с павелецкая плаза до 60млн'],
+    context: null,
+  });
+
+  assert.notEqual(result.answer.kind, 'CLARIFICATION');
+  assert.equal(searchedGeo.kind, 'POINT');
+  assert.equal(searchedGeo.landmarkId, '11111111-1111-4111-8111-111111111111');
+});
+
+test('Assistant T02 answer service still asks which place when the candidates are far apart', async () => {
+  const candidate = (id, label, latitude, longitude) => ({
+    id,
+    label,
+    kind: 'POINT',
+    mode: 'NEAR',
+    distanceMeters: 2_000,
+    point: { latitude, longitude },
+    city: 'Москва',
+    countryCode: 'ru',
+    source: 'PLACE',
+  });
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search() {
+        return { exact: [], alternatives: [] };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict() {
+        return null;
+      },
+      async resolve() {
+        return {
+          status: 'AMBIGUOUS',
+          placeQuery: '城',
+          mode: 'NEAR',
+          candidates: [
+            candidate('11111111-1111-4111-8111-111111111111', 'Москва-Сити', 55.749, 37.537),
+            candidate('22222222-2222-4222-8222-222222222222', 'Город Столиц', 55.700, 37.780),
+          ],
+        };
+      },
+    },
+  );
+
+  const result = await service.answer({
+    messages: ['найди мне 2к квартиру рядом с сити до 60млн'],
+    context: null,
+  });
+
+  assert.equal(result.answer.kind, 'CLARIFICATION');
+  assert.equal(result.answer.reason, 'AMBIGUOUS_PLACE');
+  assert.match(result.content, /Москва-Сити/u);
+  assert.match(result.content, /Город Столиц/u);
+});
+
+test('Assistant T02 answer service does not reuse the place of an earlier turn after a new location', async () => {
+  const resolvedPlaces = [];
+  let searchedGeo = 'unset';
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search(intent, context, geo) {
+        searchedGeo = geo;
+        return { exact: [], alternatives: [] };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict(name) {
+        return name === 'Замоскворечье' ? { id: 'district-zamoskvorechye', name: 'Замоскворечье' } : null;
+      },
+      async resolve(body) {
+        resolvedPlaces.push(body.content);
+        return { status: 'AMBIGUOUS', placeQuery: 'павелецкая плаза', mode: 'NEAR', candidates: [] };
+      },
+    },
+  );
+
+  const result = await service.answer({
+    messages: [
+      'найди мне 2к квартиру рядом с павелецкая плаза до 60млн',
+      'окей найди мне квартиру в Замоскворечье 3 комнаты от 30млн до 80млн',
+    ],
+    context: null,
+  });
+
+  assert.deepEqual(resolvedPlaces, []);
+  assert.equal(searchedGeo, null);
+  assert.equal(result.intent.hardFilters.district, 'Замоскворечье');
+});
+
+test('Assistant T02 answer service drops a guessed district that the locations table does not know', async () => {
+  let searchedIntent = null;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search(intent) {
+        searchedIntent = intent;
+        return { exact: [], alternatives: [] };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict() {
+        return null;
+      },
+    },
+  );
+
+  await service.answer({
+    messages: ['окей найди мне квартиру в цао 3 комнаты от 30млн до 80млн'],
+    context: null,
+  });
+
+  assert.equal(searchedIntent.hardFilters.district, null);
+});
+
+test('Assistant T02 answer service keeps an explicit «район X» the locations table does not know', async () => {
+  let searchedIntent = null;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search(intent) {
+        searchedIntent = intent;
+        return { exact: [], alternatives: [] };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict() {
+        return null;
+      },
+    },
+  );
+
+  await service.answer({
+    messages: ['двухкомнатная до 50 млн в районе Строгино'],
+    context: null,
+  });
+
+  assert.equal(searchedIntent.hardFilters.district, 'Строгино');
 });
 
 test('Assistant T02 answer service consumes only a server-verified landmark alias', async () => {

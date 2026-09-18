@@ -713,6 +713,12 @@ function consumeDistrictResolvedAsGeo(filters: AssistantSearchFilters, context: 
     && resolution.canonicalName.length <= 160) {
     return { ...filters, district: resolution.canonicalName.trim() };
   }
+  // The extractor reads district candidates loosely so that «на Беговой» and «в Замоскворечье»
+  // are understood; a candidate that matches no row in `locations` is not a district at all and
+  // would otherwise filter every object out of the search.
+  if (resolution.resolvedByGeo === false && resolution.canonicalName === null) {
+    return { ...filters, district: null };
+  }
   return filters;
 }
 
@@ -850,14 +856,19 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   const district = extractAssistantExplicitDistrict(text);
   if (district) filters.district = district;
   const textWithoutMetroTravel = stripMetroTravelPhrases(textWithoutGeoDistance);
+  // «станцией Беговая» and «ст. м. Беговая» name a station just as «метро Беговая» does, and the
+  // station name ends where the next condition starts: «у метро Беговая до 40 млн» used to be
+  // read as the station «Беговая до 40 млн», which matches nothing.
   const metro = extractNamedCondition(
     textWithoutMetroTravel,
-    /(?:у\s+)?метро\s+[«"]?(?!(?:в|во|на|у|к|от|до|по|за|из|с|со|и|или|не|без)\s)(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
+    /(?<![\p{L}])(?:у\s+)?(?:метро|ст\.\s*м\.|станци\p{L}+(?:\s+метро)?)\s+[«"]?(?!(?:в|во|на|у|к|от|до|по|за|из|с|со|и|или|не|без)\s)(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал|до\s+\d|от\s+\d|бюджет\p{L}*|площад\p{L}*|этаж\p{L}*|класс\p{L}*|\d+\s*(?:комн|млн|миллион|тыс|м2|м²))|[,.;!?\r\n]|$)/iu,
   );
   if (metro) filters.metro = metro;
+  // «от X» names a developer, but «в 10 минутах от метро Беговая» and «в 2 км от парка» name a
+  // place: without this guard they became the developer filter «метро Беговая».
   const developer = extractNamedCondition(
     textWithoutMetroTravel,
-    /(?:(?:от\s+)?застройщик(?:а|ом)?|от\s+(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
+    /(?:(?:от\s+)?застройщик(?:а|ом)?|от\s+(?!(?:метро|ст\.|станци\p{L}*|жк|дом\p{L}*|центр\p{L}*|парк\p{L}*|сквер\p{L}*|вод\p{L}*|рек\p{L}*|озер\p{L}*|мкад|ттк|садов\p{L}*|кольц\p{L}*|точк\p{L}*|границ\p{L}*|школ\p{L}*|мост\p{L}*)(?:$|[^\p{L}]))(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (developer) filters.developer = developer;
 

@@ -3,6 +3,7 @@ import type {
   AssistantAnswer,
   AssistantGeoCandidate,
   AssistantGeoConstraint,
+  AssistantGeoPoint,
   AssistantGeoResolution,
   AssistantGeoResolutionSlot,
   AssistantGeoSearchContext,
@@ -28,6 +29,7 @@ import {
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
 import type { AssistantGeoSearchResult } from './assistant-search.service';
+import { extractAssistantStrictDistrictFromText } from './geo/assistant-district-query';
 import { AssistantMetroTravelTimeUnavailableError } from './geo/assistant-metro-travel-time.service';
 import { buildAssistantComparisonAnswer } from './assistant-comparison-answer';
 import {
@@ -36,6 +38,7 @@ import {
   type AssistantObjectEvidence,
 } from './catalog/assistant-object-answer';
 import { AssistantPlatformCatalogService } from './catalog/assistant-platform-catalog.service';
+import { assistantGeoDefaultPointDistanceMeters } from './geo/assistant-geo-contract';
 import {
   AssistantPlaceResolverService,
   parseResolveInputs,
@@ -412,6 +415,11 @@ export class AssistantAnswerService {
         } catch {
           return { terminal: unavailableResult('PLACE_RESOLUTION') };
         }
+        // A later turn that names its own location replaces the place of an earlier one.
+        // Without this the whole conversation stayed pinned to the first place it mentioned:
+        // «квартиру в ЦАО на 3 комнаты» kept being answered about a shopping centre asked
+        // about three messages earlier, and re-asked the same unanswerable clarification.
+        if (mentionsOwnLocation(message)) return { geo: null };
       }
       return { geo: null };
     }
@@ -445,9 +453,12 @@ export class AssistantAnswerService {
     }
     const converted = resolutionToGeoSelection(resolution);
     if (converted.status === 'AMBIGUOUS') {
+      const labels = converted.candidateLabels ?? [];
       return {
         terminal: {
-          content: 'Уточните, какое именно место вы имеете в виду.',
+          content: labels.length > 0
+            ? `Уточните, какое именно место вы имеете в виду: ${labels.join(', ')}.`
+            : 'Уточните, какое именно место вы имеете в виду.',
           answer: { kind: 'CLARIFICATION', reason: 'AMBIGUOUS_PLACE' },
           evidence: [],
           candidateEvidence: [],
@@ -481,34 +492,110 @@ export class AssistantAnswerService {
       const resolvedByGeo = await this.places.matchesTrustedLandmark(constraint.landmarkId!, district);
       if (resolvedByGeo) return { input: district, canonicalName: null, resolvedByGeo: true };
     }
-    return null;
+    // A candidate only the loose extractor produced («в продаже», «на севере») is not a district:
+    // report it as unresolved so the planner drops it instead of filtering every object out.
+    // An explicit «район X» stays a hard filter even when `locations` does not know the name.
+    const strict = messages.some((message) => extractAssistantStrictDistrictFromText(message) === district);
+    return strict ? null : { input: district, canonicalName: null, resolvedByGeo: false };
   }
 }
 
 function resolutionToGeoSelection(resolution: AssistantGeoResolution):
   | { status: 'RESOLVED'; geo: AssistantGeoSearchSelection }
-  | { status: 'AMBIGUOUS' | 'NOT_FOUND' | 'UNAVAILABLE' } {
+  | { status: 'AMBIGUOUS' | 'NOT_FOUND' | 'UNAVAILABLE'; candidateLabels?: string[] } {
   if (resolution.status === 'NOT_APPLICABLE') return { status: 'NOT_FOUND' };
   if (resolution.status === 'COMPOSITE') {
-    const failure = resolution.constraints.find(({ status }) => status !== 'RESOLVED');
-    if (failure) return { status: resolutionFailureStatus(failure.status) };
-    const constraints = resolution.constraints.flatMap((slot) => {
+    const slots = resolution.constraints.map(narrowSamePlaceAmbiguity);
+    const failure = slots.find(({ status }) => status !== 'RESOLVED');
+    if (failure) {
+      return {
+        status: resolutionFailureStatus(failure.status),
+        ...(failure.status === 'AMBIGUOUS' ? { candidateLabels: distinctCandidateLabels(failure.candidates) } : {}),
+      };
+    }
+    const constraints = slots.flatMap((slot) => {
       if (slot.status !== 'RESOLVED') return [];
       const candidate = slot.candidates[0];
       const constraint = candidate ? candidateToSelection(candidate, slot) : null;
       return constraint ? [constraint] : [];
     });
-    if (constraints.length !== resolution.constraints.length) return { status: 'NOT_FOUND' };
+    if (constraints.length !== slots.length) return { status: 'NOT_FOUND' };
     return { status: 'RESOLVED', geo: { operator: 'ALL', constraints } };
   }
-  if (resolution.status !== 'RESOLVED') {
-    return { status: resolutionFailureStatus(resolution.status) };
+  const narrowed = narrowSamePlaceAmbiguity(resolution);
+  if (narrowed.status !== 'RESOLVED') {
+    return {
+      status: resolutionFailureStatus(narrowed.status),
+      ...(narrowed.status === 'AMBIGUOUS'
+        ? { candidateLabels: distinctCandidateLabels('candidates' in narrowed ? narrowed.candidates : []) }
+        : {}),
+    };
   }
-  const candidate = resolution.candidates[0];
-  const constraint = candidate ? candidateToSelection(candidate, resolution) : null;
+  const candidate = narrowed.candidates[0];
+  const constraint = candidate ? candidateToSelection(candidate, narrowed) : null;
   return constraint
     ? { status: 'RESOLVED', geo: constraint }
     : { status: 'NOT_FOUND' };
+}
+
+// A geocoder answers «павелецкая плаза» with the mall, its office block and its retail part:
+// three candidates a few hundred metres apart, all labelled the same. Asking the broker to pick
+// between them cannot be answered and used to end the conversation, so candidates that sit well
+// inside the search radius are treated as one place.
+function narrowSamePlaceAmbiguity<Resolution extends AssistantGeoResolution | AssistantGeoResolutionSlot>(
+  resolution: Resolution,
+): Resolution {
+  if (resolution.status !== 'AMBIGUOUS') return resolution;
+  const candidates = resolution.candidates;
+  const points = candidates.map(readCandidatePoint);
+  if (points.length < 2 || points.some((point) => point === null)) return resolution;
+  const radiusMeters = candidates[0]?.distanceMeters ?? assistantGeoDefaultPointDistanceMeters;
+  const tolerance = Math.max(100, Math.min(500, radiusMeters * 0.25));
+  const spread = maximumPairwiseDistanceMeters(points as AssistantGeoPoint[]);
+  if (spread > tolerance) return resolution;
+  return { ...resolution, status: 'RESOLVED', candidates: [candidates[0]!] };
+}
+
+function readCandidatePoint(candidate: AssistantGeoCandidate): AssistantGeoPoint | null {
+  if (candidate.kind !== 'POINT') return null;
+  if (candidate.point) return candidate.point;
+  return typeof candidate.latitude === 'number' && typeof candidate.longitude === 'number'
+    ? { latitude: candidate.latitude, longitude: candidate.longitude }
+    : null;
+}
+
+function maximumPairwiseDistanceMeters(points: AssistantGeoPoint[]) {
+  let maximum = 0;
+  for (let left = 0; left < points.length; left += 1) {
+    for (let right = left + 1; right < points.length; right += 1) {
+      maximum = Math.max(maximum, distanceMeters(points[left]!, points[right]!));
+    }
+  }
+  return maximum;
+}
+
+function distanceMeters(left: AssistantGeoPoint, right: AssistantGeoPoint) {
+  const earthRadiusMeters = 6_371_000;
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+  const latitudeLeft = toRadians(left.latitude);
+  const latitudeRight = toRadians(right.latitude);
+  const deltaLatitude = latitudeRight - latitudeLeft;
+  const deltaLongitude = toRadians(right.longitude - left.longitude);
+  const haversine = Math.sin(deltaLatitude / 2) ** 2
+    + Math.cos(latitudeLeft) * Math.cos(latitudeRight) * Math.sin(deltaLongitude / 2) ** 2;
+  return 2 * earthRadiusMeters * Math.asin(Math.min(1, Math.sqrt(haversine)));
+}
+
+// A turn names its own location when the deterministic extractors read a district or a metro
+// station out of it, even though neither becomes a geo constraint.
+function mentionsOwnLocation(message: string) {
+  const filters = extractAssistantExplicitHardFilters([message]);
+  return Boolean(filters.district || filters.metro);
+}
+
+function distinctCandidateLabels(candidates: AssistantGeoCandidate[]) {
+  const labels = [...new Set(candidates.map(({ label }) => label.trim()).filter(Boolean))];
+  return labels.length > 1 ? labels.slice(0, 3) : [];
 }
 
 function resolutionFailureStatus(status: AssistantGeoResolutionSlot['status']) {

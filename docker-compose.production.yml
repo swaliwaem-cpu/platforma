@@ -106,11 +106,17 @@ services:
     image: "${API_IMAGE:?API_IMAGE is required}"
     init: true
     restart: unless-stopped
+    # The base file keeps the worker behind the `assistant-external` profile so a plain
+    # `docker compose up` never reaches developer sites. Production runs the knowledge base, and
+    # inheriting that profile is why the worker was never started there.
+    profiles: !override []
     environment:
       NODE_ENV: production
       DEPLOYMENT_ENV: production
       DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
       ASSISTANT_SOURCE_WORKER_ENABLED: "true"
+      # Both flags are required by `isAssistantSourceWorkerRunnable`; the base default is false.
+      ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: "${ASSISTANT_EXTERNAL_CONNECTORS_ENABLED:?ASSISTANT_EXTERNAL_CONNECTORS_ENABLED is required}"
       ASSISTANT_SOURCE_FETCH_TIMEOUT_MS: "${ASSISTANT_SOURCE_FETCH_TIMEOUT_MS:-10000}"
       ASSISTANT_SOURCE_MAX_RESPONSE_BYTES: "${ASSISTANT_SOURCE_MAX_RESPONSE_BYTES:-5242880}"
       ASSISTANT_SOURCE_MAX_REDIRECTS: "${ASSISTANT_SOURCE_MAX_REDIRECTS:-3}"
