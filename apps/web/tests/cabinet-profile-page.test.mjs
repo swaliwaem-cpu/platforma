@@ -15,7 +15,7 @@ test('profile page follows the reference layout: profile card next to the passwo
     appSource,
     /<div className="cabinet-grid">[\s\S]*?<section className="content-panel cabinet-profile-card"[\s\S]*?<section className="content-panel cabinet-security-card"/,
   );
-  assert.match(appSource, /<div className="cabinet-profile-intro">[\s\S]*?<ProfileAvatar[\s\S]*?<span className="role-pill">\{user\.role\.name\}<\/span>/);
+  assert.match(appSource, /<div className="cabinet-profile-intro">[\s\S]*?<ProfileAvatar[\s\S]*?<span className="role-pill">\{formatRoleName\(user\.role\.name\)\}<\/span>/);
   assert.match(appSource, /<div className="cabinet-security-head">[\s\S]*?<LockIcon \/>[\s\S]*?<h3 id="cabinet-password-title">Смена пароля<\/h3>/);
   assert.match(appSource, /className="secondary-button secondary-button--fit" disabled=\{isPasswordSubmitting\} type="submit"/);
   assert.match(styles, /\.cabinet-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 396px;[\s\S]*?\}/);

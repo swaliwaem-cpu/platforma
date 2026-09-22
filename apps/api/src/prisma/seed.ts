@@ -31,6 +31,7 @@ const permissions = [
   ['training:results:read', 'Read training attempt results'],
   ['training:results:review', 'Review training attempt results'],
   ['training:audio:read', 'Read protected training answer audio'],
+  ['presentations:projects:manage', 'Create project (ЖК) PDF presentations'],
 ] as const;
 
 const rolePermissions = {
@@ -46,6 +47,14 @@ const rolePermissions = {
     'metro:read',
     'files:upload',
     'files:delete',
+    'presentations:projects:manage',
+  ],
+  marketing: [
+    'objects:read',
+    'developers:read',
+    'locations:read',
+    'metro:read',
+    'presentations:projects:manage',
   ],
   user: [
     'objects:read',

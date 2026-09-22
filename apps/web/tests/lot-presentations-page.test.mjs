@@ -170,6 +170,8 @@ test('lot presentations page has workspace and collection tabs with compact lot 
   assert.match(pageSource, /setIsDocumentsPanelOpen\(true\)[\s\S]*Созданные PDF/);
   assert.match(pageSource, /Building2Icon/);
   assert.match(pageSource, /navigate\('\/presentations\/projects'\)[\s\S]*Презентации ЖК/);
+  assert.match(pageSource, /const canOpenProjectPresentations = canAccessProjectPresentations\(user\);/);
+  assert.match(pageSource, /\{canOpenProjectPresentations \? \([\s\S]*Презентации ЖК[\s\S]*\) : null\}/);
   assert.match(pageSource, /const \[activeTab,\s*setActiveTab\] = useState<'workspace' \| 'collections'>\('workspace'\);/);
   assert.doesNotMatch(initialTabEffect, /if \(selectedCollectionId\)/);
   assert.match(pageSource, /В работе/);

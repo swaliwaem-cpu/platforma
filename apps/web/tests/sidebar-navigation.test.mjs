@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
+const roleLabelsSource = readFileSync(resolve(currentDir, '../src/auth/roleLabels.ts'), 'utf8');
 const navItemsStart = appSource.indexOf('const navItems: readonly NavItem[] = [');
 const navItemsEnd = appSource.indexOf('\n];', navItemsStart);
 const navItemsSource = appSource.slice(navItemsStart, navItemsEnd);
@@ -34,4 +35,13 @@ test('sidebar keeps catalog as the final navigation item', () => {
   );
 
   assert.equal(topLevelNavItemIds.at(-1), 'catalog');
+});
+
+test('roles are rendered with russian labels, including the marketing role', () => {
+  assert.match(roleLabelsSource, /marketing: 'Маркетинг'/);
+  assert.match(roleLabelsSource, /admin: 'Администратор'/);
+  assert.match(roleLabelsSource, /user: 'Пользователь'/);
+  assert.match(roleLabelsSource, /return roleLabels\[name\] \?\? name;/);
+  assert.match(appSource, /formatRoleName\(user\.role\.name\)/);
+  assert.doesNotMatch(appSource, /\{user\.role\.name\}/);
 });

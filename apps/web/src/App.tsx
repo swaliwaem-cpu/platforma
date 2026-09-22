@@ -34,6 +34,7 @@ import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
 import { UsersAdminPage } from './admin/UsersAdminPage';
 import { apiRequest } from './admin/api';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { formatRoleName } from './auth/roleLabels';
 import { buildMediaFileContentUrl } from './files/SecureImage';
 import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { canAccessLotPresentations, canAccessProjectPresentations } from './presentations/presentationAccess';
@@ -393,7 +394,7 @@ function AppRoutes() {
               </span>
               <span className="sidebar-user-text">
                 <b>{user.name ?? user.email}</b>
-                <small>{user.role.name}</small>
+                <small>{formatRoleName(user.role.name)}</small>
               </span>
             </button>
             <div className="sidebar-actions">
@@ -1080,7 +1081,7 @@ function CabinetHome() {
               <h3 id="cabinet-profile-title">{user.name ?? user.email}</h3>
               <p>{user.email}</p>
             </div>
-            <span className="role-pill">{user.role.name}</span>
+            <span className="role-pill">{formatRoleName(user.role.name)}</span>
           </div>
 
           <form className="profile-form" onSubmit={(event) => void handleProfileSubmit(event)}>

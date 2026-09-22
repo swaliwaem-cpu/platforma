@@ -29,9 +29,10 @@ const moduleSource = readProjectFile(
 const controller = readProjectFile(
   'apps/api/src/project-presentations/project-presentations.controller.ts',
 );
-const guard = readProjectFile(
-  'apps/api/src/project-presentations/project-presentations-admin.guard.ts',
+const accessMigration = readProjectFile(
+  'apps/api/prisma/migrations/20260922103000_add_project_presentations_permission/migration.sql',
 );
+const seed = readProjectFile('apps/api/src/prisma/seed.ts');
 const service = readProjectFile(
   'apps/api/src/project-presentations/project-presentations.service.ts',
 );
@@ -125,7 +126,7 @@ test('migration creates project presentation enum, tables, indexes and archival 
   );
 });
 
-test('API registers the feature with JWT and authenticated-role access', () => {
+test('API registers the feature behind the project presentation permission', () => {
   assert.match(
     appModule,
     /import \{ ProjectPresentationsModule \} from '\.\/project-presentations\/project-presentations\.module';/,
@@ -134,15 +135,38 @@ test('API registers the feature with JWT and authenticated-role access', () => {
   assert.match(moduleSource, /controllers:\s*\[ProjectPresentationsController\]/);
   assert.match(
     moduleSource,
-    /providers:\s*\[[\s\S]*ProjectPresentationsAdminGuard[\s\S]*ProjectPresentationsService[\s\S]*ProjectPresentationsPdfService[\s\S]*ProjectPresentationsWorkerService/,
+    /providers:\s*\[[\s\S]*ProjectPresentationsService[\s\S]*ProjectPresentationsPdfService[\s\S]*ProjectPresentationsWorkerService/,
   );
   assert.match(controller, /@Controller\('project-presentations'\)/);
   assert.match(
     controller,
-    /@UseGuards\(JwtAuthGuard, ProjectPresentationsAdminGuard\)/,
+    /@UseGuards\(JwtAuthGuard, PermissionsGuard\)\n@RequirePermissions\('presentations:projects:manage'\)/,
   );
-  assert.match(guard, /const request = context\.switchToHttp\(\)\.getRequest<RequestWithAuth>\(\);[\s\S]*return Boolean\(request\.user\);/);
-  assert.doesNotMatch(guard, /NODE_ENV|ForbiddenException|localhost|127\.0\.0\.1|email|role\.name/);
+  assert.doesNotMatch(controller, /NODE_ENV|localhost|127\.0\.0\.1|role\.name/);
+});
+
+test('an additive migration gates the generator and creates the marketing role', () => {
+  assert.match(
+    accessMigration,
+    /INSERT INTO "permissions"[\s\S]*'presentations:projects:manage'[\s\S]*ON CONFLICT \("key"\) DO NOTHING/,
+  );
+  assert.match(
+    accessMigration,
+    /INSERT INTO "roles"[\s\S]*'marketing'[\s\S]*ON CONFLICT \("name"\) DO NOTHING/,
+  );
+  assert.match(
+    accessMigration,
+    /"roles"\."name" IN \('admin', 'editor', 'training_admin', 'marketing'\)/,
+  );
+  assert.match(
+    accessMigration,
+    /"permissions"\."key" IN \('objects:read', 'developers:read', 'locations:read', 'metro:read'\)[\s\S]*"roles"\."name" = 'marketing'/,
+  );
+  assert.doesNotMatch(accessMigration, /DROP|DELETE|TRUNCATE|UPDATE /);
+
+  assert.match(seed, /\['presentations:projects:manage', 'Create project \(ЖК\) PDF presentations'\]/);
+  assert.match(seed, /marketing: \[[\s\S]*'presentations:projects:manage',\n\s*\]/);
+  assert.doesNotMatch(seed, /user: \[[\s\S]*presentations:projects:manage[\s\S]*\] as const/);
 });
 
 test('API exposes catalog, draft editor, async PDF history, retry, download and deletion routes', () => {

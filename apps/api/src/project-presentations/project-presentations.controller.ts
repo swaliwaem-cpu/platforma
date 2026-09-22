@@ -20,16 +20,18 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequirePermissions } from '../auth/permissions.decorator';
+import { PermissionsGuard } from '../auth/permissions.guard';
 import { IMAGE_MAX_SIZE_BYTES } from '../files/file-upload.constants';
 import { UploadedFile as UploadedFileData } from '../files/uploaded-file.type';
-import { ProjectPresentationsAdminGuard } from './project-presentations-admin.guard';
 import { ProjectPresentationsService } from './project-presentations.service';
 import { ProjectPresentationsWorkerService } from './project-presentations-worker.service';
 
 type ContentResponse = { setHeader(name: string, value: string | number): void; send(body: Buffer): void };
 
 @Controller('project-presentations')
-@UseGuards(JwtAuthGuard, ProjectPresentationsAdminGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequirePermissions('presentations:projects:manage')
 export class ProjectPresentationsController {
   constructor(
     private readonly service: ProjectPresentationsService,

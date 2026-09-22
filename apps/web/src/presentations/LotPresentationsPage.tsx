@@ -41,6 +41,7 @@ import {
 } from '../components/ui/table';
 import { SecureImage } from '../files/SecureImage';
 import { LotFinishSelectionModal } from './LotFinishSelectionModal';
+import { canAccessProjectPresentations } from './presentationAccess';
 
 type LotPresentationsPageProps = {
   navigate: (nextPathname: string) => void;
@@ -162,6 +163,7 @@ export function LotPresentationsPage({ navigate }: LotPresentationsPageProps) {
     [collections],
   );
   const hasBrokerContacts = Boolean(user?.brokerPhone && user.brokerEmail);
+  const canOpenProjectPresentations = canAccessProjectPresentations(user);
   const projectLotGroups = useMemo(() => createProjectLotGroups(projectLots), [projectLots]);
   const shouldShowProjectSearchResults = projectSearch.trim().length > 0;
 
@@ -830,14 +832,16 @@ export function LotPresentationsPage({ navigate }: LotPresentationsPageProps) {
             <FileTextIcon aria-hidden="true" />
             Созданные PDF
           </button>
-          <button
-            className="primary-button primary-button--fit lot-presentations-header-trigger lot-presentations-projects-trigger"
-            type="button"
-            onClick={() => navigate('/presentations/projects')}
-          >
-            <Building2Icon aria-hidden="true" />
-            Презентации ЖК
-          </button>
+          {canOpenProjectPresentations ? (
+            <button
+              className="primary-button primary-button--fit lot-presentations-header-trigger lot-presentations-projects-trigger"
+              type="button"
+              onClick={() => navigate('/presentations/projects')}
+            >
+              <Building2Icon aria-hidden="true" />
+              Презентации ЖК
+            </button>
+          ) : null}
         </div>
       </header>
 

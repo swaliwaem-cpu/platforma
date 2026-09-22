@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/table';
 
 import { useAuth } from '../auth/AuthProvider';
+import { formatRoleName } from '../auth/roleLabels';
 import { SelectDropdown } from '../components/SelectDropdown';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
@@ -394,7 +395,7 @@ export function UsersAdminPage({ onBack }: UsersAdminPageProps) {
             <span>Роль</span>
             <SelectDropdown
               ariaLabel="Фильтр по роли"
-              options={[{ value: '', label: 'Все роли' }, ...roles.map((role) => ({ value: role.id, label: role.name }))]}
+              options={[{ value: '', label: 'Все роли' }, ...roles.map((role) => ({ value: role.id, label: formatRoleName(role.name) }))]}
               value={roleFilter}
               onChange={(value) => {
                 setRoleFilter(value);
@@ -469,7 +470,7 @@ export function UsersAdminPage({ onBack }: UsersAdminPageProps) {
                       </span>
                     </TableCell>
                     <TableCell>
-                      <span className="role-pill role-pill--table">{user.role.name}</span>
+                      <span className="role-pill role-pill--table">{formatRoleName(user.role.name)}</span>
                     </TableCell>
                     <TableCell className="user-status-column">
                       <div className="user-status-cell">
@@ -584,7 +585,7 @@ export function UsersAdminPage({ onBack }: UsersAdminPageProps) {
                       <FieldLabel htmlFor="admin-user-role">Роль</FieldLabel>
                       <SelectDropdown
                         id="admin-user-role"
-                        options={roles.map((role) => ({ value: role.id, label: role.name }))}
+                        options={roles.map((role) => ({ value: role.id, label: formatRoleName(role.name) }))}
                         placeholder="Выберите роль"
                         value={form.roleId}
                         onChange={(roleId) => setForm({ ...form, roleId })}
@@ -803,7 +804,7 @@ function RolePermissionsPanel({
     <section className="role-permissions-panel" aria-label="Права выбранной роли">
       <div className="role-permissions-header">
         <div className="role-permissions-title">
-          <span className="role-pill role-pill--panel">{role.name}</span>
+          <span className="role-pill role-pill--panel">{formatRoleName(role.name)}</span>
           <h4>Права роли</h4>
           <p>{role.description || 'Описание роли не заполнено.'}</p>
         </div>

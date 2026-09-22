@@ -12,8 +12,13 @@ const stylesSource = await readFile(new URL('../src/presentations/projects/proje
 const mapSnapshotSource = await readFile(new URL('../src/presentations/projects/projectPresentationMapSnapshot.ts', import.meta.url), 'utf8');
 const templateSource = await readFile(new URL('../../../packages/shared/src/project-presentation-template.mjs', import.meta.url), 'utf8');
 
-test('project presentation routes are available to every authenticated role', () => {
-  assert.match(accessSource, /canAccessProjectPresentations[\s\S]*Pick<AuthUser, 'id'>[\s\S]*return Boolean\(user\);/u);
+test('project presentation routes need the project presentation permission, lot presentations stay open', () => {
+  assert.match(
+    accessSource,
+    /canAccessProjectPresentations[\s\S]*Pick<AuthUser, 'id' \| 'permissions'>[\s\S]*permissions\?\.includes\(PROJECT_PRESENTATIONS_PERMISSION\)/u,
+  );
+  assert.match(accessSource, /PROJECT_PRESENTATIONS_PERMISSION = 'presentations:projects:manage'/u);
+  assert.match(accessSource, /canAccessLotPresentations[\s\S]*return Boolean\(user\);/u);
   assert.doesNotMatch(accessSource, /hostname|import\.meta\.env\.DEV|role\.name|admin@fluffywhite\.moscow/u);
   assert.match(appSource, /\/presentations\/projects/u);
   assert.match(appSource, /ProjectPresentationsPage/u);

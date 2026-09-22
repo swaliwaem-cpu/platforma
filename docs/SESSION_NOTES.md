@@ -10,6 +10,17 @@
 
 ---
 
+## 2026-09-22
+
+### Генератор презентаций ЖК под permission + роль marketing
+
+- Генератор подборок ЖК (`/project-presentations`) больше не открыт всем залогиненным: контроллер перешёл на общий `PermissionsGuard` + `@RequirePermissions('presentations:projects:manage')`, самодельный `ProjectPresentationsAdminGuard` удалён. Генератор лотов (`/lot-presentations`) не тронут — там по-прежнему хватает авторизации.
+- Миграция `20260922103000_add_project_presentations_permission` (additive, только INSERT ... ON CONFLICT DO NOTHING): заводит permission, выдаёт его ролям `admin`, `editor`, `training_admin` и создаёт роль `marketing` (objects/developers/locations/metro:read + презентации ЖК, без training-прав). Роль `user` права не получает — это и есть закрытие доступа. В `seed.ts` те же изменения для чистой базы.
+- Важно про роли: в живой базе их 4 (`admin`, `editor`, `training_admin`, `user`) и часть permissions (`training:take`, `objects:archive` и др.) в коде вообще не описана — источник правды по RBAC сейчас база, а не `seed.ts`. Поэтому доступы раздаёт миграция, а не сид.
+- Фронт: `canAccessProjectPresentations` проверяет permission (было `Boolean(user)`), кнопка «Презентации ЖК» на странице лотов скрыта без права, прямой заход на `/presentations/projects` отдаёт «Недостаточно прав». Имена ролей выводятся через `apps/web/src/auth/roleLabels.ts` (Администратор/Редактор/Маркетинг/Админ обучения/Пользователь) в сайдбаре, кабинете и админке.
+- Проверки: `pnpm test` — api 989/989, web 358/358 (правлены тесты, фиксировавшие «доступно всем ролям»), `pnpm build` ок, миграция накатана локально, образ api пересобран. Живая проверка на локальных временных учётках: user → 403 на `/project-presentations/*` и 200 на лоты/каталог, marketing → 200 на ЖК и лоты, аноним → 401; в браузере у marketing в меню нет «Обучения» и «Админки», у user нет кнопки «Презентации ЖК». Временные учётки удалены из локальной базы.
+- Открыто: на прод не выкатывалось. На проде миграция создаст роль `marketing` и выдаст право admin/editor/training_admin — назначать пользователей роли нужно руками в админке.
+
 ## 2026-09-18
 
 ### Ассистент: понимание локации в запросе и база сайтов застройщиков на проде

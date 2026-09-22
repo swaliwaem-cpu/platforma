@@ -1,14 +1,20 @@
+require('reflect-metadata');
+
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } = require('@nestjs/common');
+const { Reflector } = require('@nestjs/core');
 const { ProjectPresentationDocumentStatus } = require('@prisma/client');
+const { PERMISSIONS_KEY } = require('../dist/auth/permissions.decorator.js');
+const { PermissionsGuard } = require('../dist/auth/permissions.guard.js');
 const {
-  ProjectPresentationsAdminGuard,
-} = require('../dist/project-presentations/project-presentations-admin.guard.js');
+  ProjectPresentationsController,
+} = require('../dist/project-presentations/project-presentations.controller.js');
 const {
   ProjectPresentationsService,
 } = require('../dist/project-presentations/project-presentations.service.js');
@@ -24,12 +30,14 @@ const actor = {
 };
 const image = (number) => ({ id: uuid(100 + number), fileId: uuid(200 + number), file: { checksum: `checksum-${number}` } });
 
-function createContext(roleName) {
+function createContext(permissions) {
   return {
+    getHandler: () => ProjectPresentationsController.prototype.listDrafts,
+    getClass: () => ProjectPresentationsController,
     switchToHttp() {
       return {
         getRequest() {
-          return { user: roleName ? { role: { name: roleName } } : null };
+          return { user: permissions ? { permissions } : null };
         },
       };
     },
@@ -176,21 +184,27 @@ function createSnapshotDraft() {
   };
 }
 
-test('presentation guard allows every authenticated role in every environment', () => {
-  const guard = new ProjectPresentationsAdminGuard();
+test('project presentation routes require the project presentation permission', () => {
+  assert.deepEqual(
+    Reflect.getMetadata(PERMISSIONS_KEY, ProjectPresentationsController),
+    ['presentations:projects:manage'],
+  );
+
+  const guard = new PermissionsGuard(new Reflector());
   const previousNodeEnv = process.env.NODE_ENV;
 
   try {
     for (const nodeEnv of ['development', 'production']) {
       process.env.NODE_ENV = nodeEnv;
-      for (const roleName of ['admin', 'ADMIN', 'broker', 'manager', 'user']) {
-        assert.equal(guard.canActivate(createContext(roleName)), true);
-      }
-    }
 
-    for (const nodeEnv of ['development', 'production']) {
-      process.env.NODE_ENV = nodeEnv;
-      assert.equal(guard.canActivate(createContext(null)), false);
+      assert.equal(
+        guard.canActivate(createContext(['objects:read', 'presentations:projects:manage'])),
+        true,
+      );
+
+      for (const permissions of [['objects:read', 'training:participate'], [], null]) {
+        assert.throws(() => guard.canActivate(createContext(permissions)), ForbiddenException);
+      }
     }
   } finally {
     if (previousNodeEnv === undefined) {

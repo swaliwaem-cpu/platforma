@@ -17,13 +17,13 @@ const editorSource = source('presentations/projects/ProjectPresentationEditorPag
 const previewSource = source('presentations/projects/ProjectPresentationPreview.tsx');
 const styles = source('presentations/projects/projectPresentations.css');
 
-test('list, new draft and editor routes are available to every authenticated role', () => {
+test('list, new draft and editor routes are available to the roles holding the presentation permission', () => {
   const projectAccessBody = accessSource.match(
     /export function canAccessProjectPresentations[\s\S]*?\n\}/,
   )?.[0] ?? '';
 
-  assert.match(projectAccessBody, /Pick<AuthUser, 'id'>/);
-  assert.match(projectAccessBody, /return Boolean\(user\);/);
+  assert.match(projectAccessBody, /Pick<AuthUser, 'id' \| 'permissions'>/);
+  assert.match(projectAccessBody, /return Boolean\(user\?\.permissions\?\.includes\(PROJECT_PRESENTATIONS_PERMISSION\)\);/);
   assert.doesNotMatch(projectAccessBody, /hostname|import\.meta\.env\.DEV|role|email|admin/);
   assert.match(appSource, /function parseProjectPresentationRoute\(pathname: string\)/);
   assert.match(appSource, /kind: 'list' as const/);

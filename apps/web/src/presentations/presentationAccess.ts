@@ -1,5 +1,7 @@
 import type { AuthUser } from '@platforma/shared';
 
+const PROJECT_PRESENTATIONS_PERMISSION = 'presentations:projects:manage';
+
 export function canAccessLotPresentations(
   user: Pick<AuthUser, 'id'> | null | undefined,
 ) {
@@ -7,7 +9,7 @@ export function canAccessLotPresentations(
 }
 
 export function canAccessProjectPresentations(
-  user: Pick<AuthUser, 'id'> | null | undefined,
+  user: Pick<AuthUser, 'id' | 'permissions'> | null | undefined,
 ) {
-  return Boolean(user);
+  return Boolean(user?.permissions?.includes(PROJECT_PRESENTATIONS_PERMISSION));
 }
