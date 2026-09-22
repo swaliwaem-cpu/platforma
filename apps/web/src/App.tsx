@@ -141,7 +141,8 @@ const navItems: readonly NavItem[] = [
   {
     id: 'catalog',
     label: 'Каталог',
-    path: '/catalog',
+    // The section opens on the residential list; commercial stays one click away.
+    path: '/catalog/life',
     section: 'catalog',
     icon: Building2,
     requiredPermissions: ['objects:read'],

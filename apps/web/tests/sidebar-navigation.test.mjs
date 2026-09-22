@@ -19,6 +19,10 @@ test('sidebar keeps cabinet navigation available for the plain user role', () =>
   assert.doesNotMatch(appSource, /user\.role\.name\s*===\s*'user'[\s\S]*?item\.id\s*===\s*'cabinet'/);
 });
 
+test('sidebar catalog navigation opens the residential list first', () => {
+  assert.match(navItemsSource, /id: 'catalog',[\s\S]*?path: '\/catalog\/life',\n {4}section: 'catalog'/);
+});
+
 test('sidebar catalog navigation exposes residential commercial and all sections', () => {
   assert.match(appSource, /children:\s*\[[\s\S]*id:\s*'catalog-life'[\s\S]*label:\s*'Жилая'[\s\S]*path:\s*'\/catalog\/life'/);
   assert.match(appSource, /children:\s*\[[\s\S]*id:\s*'catalog-comm'[\s\S]*label:\s*'Коммерция'[\s\S]*path:\s*'\/catalog\/comm'/);
