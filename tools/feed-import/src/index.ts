@@ -4050,6 +4050,7 @@ function applyFeedSourceUnitMediaRules(unit: NormalizedFeedUnit, source: FeedSou
 
 const mrGroupCianLayoutFirstProjectAliases = new Set(
   [
+    '26 Парквью',
     'City Bay',
     'Cityzen',
     'Fili City',
@@ -4069,6 +4070,7 @@ const mrGroupCianLayoutFirstProjectAliases = new Set(
     'MIRA',
     'МИRА',
     'МИРА',
+    'С5/MIND',
     'Селигер Сити',
     'СЕТ',
     'SET',
