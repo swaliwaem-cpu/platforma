@@ -12,6 +12,13 @@
 
 ## 2026-09-22
 
+### Production deploy feed-mrgroup-20260922T0959Z (main 4a943d4)
+
+- Выкачен `a3fe29c..main` — 5 коммитов, а не только фикс планировок: фильтр лотов каталога, раздел каталога у жилых, право на генератор презентаций, docs. Пересобраны и пересозданы **api и web**; `assistant-source-worker` и `training-voice-worker` оставлены на прежних образах.
+- Релиз `/opt/platforma-releases/feed-mrgroup-20260922T0959Z-4a943d4…`, бэкап (`env.production.before`, `platforma.dump` 73 МБ, `pg_restore -l` = 730 записей) в `/opt/platforma-deploy-backups/feed-mrgroup-20260922T0959Z/`, итог там же в `deploy-result.txt`.
+- Миграция `20260922103000_add_project_presentations_permission` применилась сама на старте api. Проверки: api healthy, `/health` database ok, web 200, неавторизованный `/objects` 401.
+- После подъёма выполнен переимпорт обоих источников MR Group: `3d353c05…` (26 Парквью, 53 лота) и `ae7befb9…` (С5/MIND, 104 лота), оба COMPLETED без warnings/errors. Сверка в базе: у всех 157 лотов `sort_order=0` → `layout-photo` (`/fp/`, планировка лота), `sort_order=1` → `photo` (`/ddu/`, поэтажный план).
+
 ### Порядок планировок у новых фидов MR Group (26 Парквью, С5/MIND)
 
 - На проде добавлены два отдельных CIAN-фида MR Group; в лотах планировка лота и поэтажный план шли местами наоборот.
