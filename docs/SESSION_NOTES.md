@@ -12,6 +12,14 @@
 
 ## 2026-09-22
 
+### Галерея лота: подписи в модалке и ширина карусели
+
+- В модалке «Медиа лота» убрана подпись файла (`<strong>` с именем медиа) — остался только счётчик `N / M`, он прижат вправо (`justify-content: flex-end`). Удалены осиротевшие правила `.object-feed-media-carousel-caption strong` в `styles.css` и `app-theme.css`.
+- На странице лота карусель растягивалась далеко за карточку (стейдж 3532px при ширине рамки 854px) и уезжала под панель «Стоимость»: у `.object-lot-hero .object-lot-media-carousel` не было `grid-template-columns`, поэтому единственная неявная колонка сайзилась по max-content ленты миниатюр (29 шт. × 122px).
+- Фикс: `grid-template-columns: minmax(0, 1fr)` на карусели + `min-width: 0` на `.object-lot-thumbnail-zone`. Лента миниатюр теперь скроллится по горизонтали (`overflow-x: auto` уже был в базовом `.carousel-thumbnails`).
+- Файлы: `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/web/src/styles.css`, `apps/web/src/app-theme.css`.
+- Проверки: `pnpm --filter @platforma/web test` 361/361, `pnpm --filter @platforma/web build` ок. Плюс браузерная сверка на локальном `/objects/zhiloj-kompleks-muza`: стейдж 826px внутри рамки 854px, модалка показывает только `1 / 29`.
+
 ### Production deploy feed-mrgroup-20260922T0959Z (main 4a943d4)
 
 - Выкачен `a3fe29c..main` — 5 коммитов, а не только фикс планировок: фильтр лотов каталога, раздел каталога у жилых, право на генератор презентаций, docs. Пересобраны и пересозданы **api и web**; `assistant-source-worker` и `training-voice-worker` оставлены на прежних образах.

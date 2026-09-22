@@ -7237,18 +7237,10 @@ tr.user-row--deactivated .text-button {
 .object-feed-media-carousel-caption {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   border-top: 1px solid rgb(255 255 255 / 8%);
   padding: 12px 20px;
-}
-
-.object-feed-media-carousel-caption strong {
-  color: #f4f7fa;
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
 }
 
 .object-feed-media-carousel-caption span {
@@ -8006,6 +7998,8 @@ tr.user-row--deactivated .text-button {
   min-width: 0;
   height: 100%;
   aspect-ratio: auto;
+  /* The single column is pinned to the frame width so the thumbnail strip scrolls instead of stretching the stage. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(470px, 1fr) auto;
   gap: 10px;
   place-items: stretch;
@@ -8057,6 +8051,7 @@ tr.user-row--deactivated .text-button {
 .object-lot-media-carousel > .object-lot-thumbnail-zone {
   position: static;
   display: block;
+  min-width: 0;
   height: auto;
   pointer-events: auto;
 }

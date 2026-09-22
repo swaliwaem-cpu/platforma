@@ -2541,7 +2541,6 @@ function ObjectFeedMediaCarousel({
             </div>
 
             <div className="object-feed-media-carousel-caption">
-              <strong>{getFeedMediaTitle(activeMedia)}</strong>
               <span>
                 {activeIndex + 1} / {mediaItems.length}
               </span>

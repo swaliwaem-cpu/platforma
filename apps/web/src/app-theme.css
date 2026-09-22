@@ -496,7 +496,7 @@ html[data-app-theme] :is(.status-pill--blocked, .object-detail-action-button--di
   color: var(--app-theme-danger);
 }
 
-html[data-app-theme] :is(.object-feed-sort-button.is-active, .object-feed-media-carousel-header h3, .object-feed-media-carousel-caption strong) {
+html[data-app-theme] :is(.object-feed-sort-button.is-active, .object-feed-media-carousel-header h3) {
   color: var(--app-theme-ink-900);
 }
 
