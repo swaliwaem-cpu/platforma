@@ -12,6 +12,15 @@
 
 ## 2026-09-22
 
+### Production deploy lot-gallery-20260922T1731Z (main 770fa4f)
+
+- Выкачен `4a943d4..main` — 2 коммита (`17f0f5c` доки, `770fa4f` фикс галереи лота). Правка чисто фронтовая, миграций нет: пересоздан **только web** (`--no-deps --force-recreate`), api остался на `release-4a943d4…-20260922T0959Z`, воркеры и postgres не трогали.
+- Релиз `/opt/platforma-releases/lot-gallery-20260922T1731Z-770fa4f…` — git-клон предыдущего релиза + `git fetch` из бандла, checkout `770fa4f`, дерево чистое. Образ `platforma-web:release-770fa4f…-20260922T1731Z`, `WEB_IMAGE` обновлён в `/opt/platforma/.env.production`.
+- Бэкап в `/opt/platforma-deploy-backups/lot-gallery-20260922T1731Z/`: `env.production.before`, `platforma.dump` (74 МБ, sha256 `df47ad4f…`, `pg_restore -l` = 715 записей), `restore.list`, сам бандл и `deploy-result.txt` с откатом.
+- Проверки на проде: `broker.fluffywhite.moscow` 200, `/api/health` 200, `/api/objects` без логина 401, web-контейнер поднялся без ошибок в логах. В отданном `/assets/index-2Ockoery.css`: у `.object-lot-media-carousel` есть `grid-template-columns:minmax(0,1fr)`, у caption `justify-content:flex-end`, селектора `.object-feed-media-carousel-caption strong` больше нет.
+- Откат: вернуть `WEB_IMAGE` на `release-4a943d4…-20260922T0959Z` и пересоздать web из старого релиз-каталога. БД не тронута.
+- Открыто: под прод-логином UI не смотрел — прод-учётки нет.
+
 ### Галерея лота: подписи в модалке и ширина карусели
 
 - В модалке «Медиа лота» убрана подпись файла (`<strong>` с именем медиа) — остался только счётчик `N / M`, он прижат вправо (`justify-content: flex-end`). Удалены осиротевшие правила `.object-feed-media-carousel-caption strong` в `styles.css` и `app-theme.css`.
