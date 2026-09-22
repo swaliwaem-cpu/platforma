@@ -678,6 +678,9 @@ test('ObjectsService.list filters objects by matching lot price per meter rooms 
         source: {
           deletedAt: null,
         },
+        status: {
+          in: ['AVAILABLE', 'BOOKED', 'RESERVED'],
+        },
         effectivePrice: {
           gte: '10000000',
           lte: '12500000',
@@ -707,6 +710,9 @@ test('ObjectsService.list filters objects by matching lot price per meter rooms 
       },
       source: {
         deletedAt: null,
+      },
+      status: {
+        in: ['AVAILABLE', 'BOOKED', 'RESERVED'],
       },
       effectivePrice: {
         gte: '10000000',
@@ -761,6 +767,9 @@ test('ObjectsService.list filters objects by several selected lot rooms', async 
     source: {
       deletedAt: null,
     },
+    status: {
+      in: ['AVAILABLE', 'BOOKED', 'RESERVED'],
+    },
     rooms: {
       in: [2, 3],
     },
@@ -771,6 +780,9 @@ test('ObjectsService.list filters objects by several selected lot rooms', async 
     },
     source: {
       deletedAt: null,
+    },
+    status: {
+      in: ['AVAILABLE', 'BOOKED', 'RESERVED'],
     },
     rooms: {
       in: [2, 3],
@@ -838,6 +850,9 @@ test('ObjectsService.list treats Aura separate-room layouts as studios in lot fi
   assert.deepEqual(lotWhere, {
     source: {
       deletedAt: null,
+    },
+    status: {
+      in: ['AVAILABLE', 'BOOKED', 'RESERVED'],
     },
     OR: [
       {
@@ -1494,6 +1509,12 @@ test('MapService.listObjects filters objects by matching lot price per meter roo
   assert.deepEqual(lotFilter, {
     feedUnits: {
       some: {
+        source: {
+          deletedAt: null,
+        },
+        status: {
+          in: ['AVAILABLE', 'BOOKED', 'RESERVED'],
+        },
         effectivePrice: {
           gte: '10000000',
           lte: '12500000',
@@ -1541,6 +1562,12 @@ test('MapService.listObjects filters objects by several selected lot rooms', asy
   const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
 
   assert.deepEqual(lotWhere, {
+    source: {
+      deletedAt: null,
+    },
+    status: {
+      in: ['AVAILABLE', 'BOOKED', 'RESERVED'],
+    },
     rooms: {
       in: [2, 3],
     },
@@ -2523,6 +2550,36 @@ test('ObjectsService.listFeedUnitGroups applies room and completion filters befo
   assert.equal(filters.some((filter) => filter.completionYear === 2028), true);
   assert.equal(filters.some((filter) => filter.completionQuarter === 4), true);
   assert.equal(result.total, 0);
+});
+
+test('ObjectsService.listFeedUnitGroups reports how many lots the object has at all', async () => {
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const countCalls = [];
+  const prisma = {
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedUnit: {
+      findMany: async () => [],
+      count: async (args) => {
+        countCalls.push(args.where);
+
+        return countCalls.length === 1 ? 0 : 12;
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.listFeedUnitGroups(objectId, { rooms: '2', priceMax: '35000000' });
+
+  assert.deepEqual(countCalls.at(-1), {
+    objectId,
+    source: {
+      deletedAt: null,
+    },
+  });
+  assert.equal(result.total, 0);
+  assert.equal(result.objectFeedUnitsTotal, 12);
 });
 
 test('MapService.listObjects serializes all map gallery images for popup previews', async () => {

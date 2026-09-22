@@ -7414,16 +7414,19 @@ tr.user-row--deactivated .text-button {
 
 .object-feed-units-state {
   display: grid;
-  gap: 5px;
-  padding: 20px 0;
+  justify-items: center;
+  gap: 6px;
+  padding: 44px 24px 48px;
+  text-align: center;
 }
 
 .object-feed-units-state strong {
   color: var(--app-theme-ink-900, #18202a);
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .object-feed-units-state span {
+  max-width: 420px;
   color: var(--app-theme-ink-700, #6d7885);
   font-size: 13px;
   font-weight: 700;

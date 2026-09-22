@@ -28,6 +28,25 @@ test('object detail page loads active feed units with public filters', () => {
   assert.doesNotMatch(source, /feedUnitStatusFilterOptions[\s\S]*?ARCHIVED/);
 });
 
+test('object detail hides the lots block for an object without a feed', () => {
+  assert.match(
+    objectFeedUnitsSectionSource,
+    /const \[objectFeedUnitsTotal,\s*setObjectFeedUnitsTotal\] = useState<number \| null>\(null\);/,
+  );
+  assert.match(objectFeedUnitsSectionSource, /setObjectFeedUnitsTotal\(data\.objectFeedUnitsTotal\);/);
+  assert.match(objectFeedUnitsSectionSource, /if \(objectFeedUnitsTotal === 0\) \{\s*return null;\s*\}/);
+  assert.match(objectFeedUnitsSectionSource, /onFeedUnitsAvailabilityChange\(objectFeedUnitsTotal > 0\);/);
+  assert.match(source, /onFeedUnitsAvailabilityChange=\{setHasFeedUnits\}/);
+  assert.match(source, /\{hasFeedUnits \? \([\s\S]*?Подобрать лот/);
+});
+
+test('object detail lot empty state speaks to brokers instead of feed imports', () => {
+  assert.doesNotMatch(source, /Запустите импорт фида/);
+  assert.match(objectFeedUnitsSectionSource, /hasActiveFilters \? 'Лоты не найдены' : 'Свободных лотов нет'/);
+  assert.match(objectFeedUnitsSectionSource, /'Измените или сбросьте фильтры\.'/);
+  assert.match(objectFeedUnitsSectionSource, /'Все лоты этого объекта проданы или сняты с продажи\.'/);
+});
+
 test('object detail feed units render grouped completion and room rows', () => {
   assert.match(source, /const \[groups,\s*setGroups\] = useState<FeedUnitGroupSummary\[\]>\(\[\]\);/);
   assert.match(source, /const \[expandedCompletionGroups,\s*setExpandedCompletionGroups\] = useState<Set<string>>/);

@@ -681,6 +681,8 @@ function ObjectDetail({
   ]
     .filter(Boolean)
     .join(' · ');
+  // The lots section reports back whether the object has a feed at all; without one there is nothing to pick.
+  const [hasFeedUnits, setHasFeedUnits] = useState(true);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const isDescriptionLong = descriptionParagraphs.join(' ').length > 420;
 
@@ -790,9 +792,11 @@ function ObjectDetail({
             )}
           </div>
 
-          <button className="object-detail-summary-cta" type="button" onClick={() => scrollToSection('object-lots')}>
-            Подобрать лот
-          </button>
+          {hasFeedUnits ? (
+            <button className="object-detail-summary-cta" type="button" onClick={() => scrollToSection('object-lots')}>
+              Подобрать лот
+            </button>
+          ) : null}
 
           {canEditObject ? (
             <a aria-label="Редактировать" className="object-detail-edit-link" href={editObjectPath} title="Редактировать">
@@ -827,7 +831,12 @@ function ObjectDetail({
           </section>
         ) : null}
 
-        <ObjectFeedUnitsSection accessToken={accessToken} navigate={navigate} object={object} />
+        <ObjectFeedUnitsSection
+          accessToken={accessToken}
+          navigate={navigate}
+          object={object}
+          onFeedUnitsAvailabilityChange={setHasFeedUnits}
+        />
 
         {listedFiles.length > 0 ? (
           <section className="detail-section object-documents-section" aria-label="Документы">
@@ -1326,14 +1335,18 @@ function ObjectFeedUnitsSection({
   accessToken,
   navigate,
   object,
+  onFeedUnitsAvailabilityChange,
 }: {
   accessToken: string;
   navigate: (nextPathname: string) => void;
   object: RealEstateObjectDetail;
+  onFeedUnitsAvailabilityChange: (hasFeedUnits: boolean) => void;
 }) {
   const [groups, setGroups] = useState<FeedUnitGroupSummary[]>([]);
   const initialFilters = useMemo(() => getInitialObjectFeedUnitFiltersFromLocation(), []);
   const [total, setTotal] = useState(0);
+  // null until the first response: the object may simply have no feed, and then there is nothing to show.
+  const [objectFeedUnitsTotal, setObjectFeedUnitsTotal] = useState<number | null>(null);
   const [hasDiscountPrices, setHasDiscountPrices] = useState(false);
   const [expandedCompletionGroups, setExpandedCompletionGroups] = useState<Set<string>>(() => new Set());
   const [expandedRoomGroups, setExpandedRoomGroups] = useState<Set<string>>(() => new Set());
@@ -1397,6 +1410,12 @@ function ObjectFeedUnitsSection({
   const previousFeedUnitFiltersKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (objectFeedUnitsTotal !== null) {
+      onFeedUnitsAvailabilityChange(objectFeedUnitsTotal > 0);
+    }
+  }, [objectFeedUnitsTotal, onFeedUnitsAvailabilityChange]);
+
+  useEffect(() => {
     if (!accessToken) {
       return;
     }
@@ -1442,6 +1461,7 @@ function ObjectFeedUnitsSection({
           previousFeedUnitFiltersKeyRef.current = feedUnitFiltersKey;
           setGroups(data.groups);
           setTotal(data.total);
+          setObjectFeedUnitsTotal(data.objectFeedUnitsTotal);
           setHasDiscountPrices(data.hasDiscountPrices);
           if (shouldResetExpandedGroups) {
             setVisibleRoomLotCounts({});
@@ -1563,6 +1583,11 @@ function ObjectFeedUnitsSection({
 
       return nextGroups;
     });
+  }
+
+  // An object without a feed has no lots to filter, so the whole section stays out of the page.
+  if (objectFeedUnitsTotal === 0) {
+    return null;
   }
 
   return (
@@ -1950,8 +1975,12 @@ function ObjectFeedUnitsSection({
 
       {!showFeedUnitsSkeleton && !error && groups.length === 0 ? (
         <div className="object-feed-units-state">
-          <strong>Лоты не найдены</strong>
-          <span>Запустите импорт фида или измените фильтры.</span>
+          <strong>{hasActiveFilters ? 'Лоты не найдены' : 'Свободных лотов нет'}</strong>
+          <span>
+            {hasActiveFilters
+              ? 'Измените или сбросьте фильтры.'
+              : 'Все лоты этого объекта проданы или сняты с продажи.'}
+          </span>
         </div>
       ) : null}
 

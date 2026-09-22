@@ -24,6 +24,13 @@ import { createSearchContainsFilters } from '../search/search-filters';
 import { findCatalogSearchObjectIds } from './object-search';
 
 const objectPdfUploadLimit = 10;
+// The catalog must match the same lots a broker sees inside an object, otherwise
+// a lot filter finds an object whose matching lots are all sold or archived.
+export const catalogVisibleFeedUnitStatuses = [
+  FeedUnitStatus.AVAILABLE,
+  FeedUnitStatus.BOOKED,
+  FeedUnitStatus.RESERVED,
+] as const;
 const feedUnitBuildingCollator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
 const deliveredFeedBuildingStates = new Set([
   'hand_over',
@@ -744,18 +751,28 @@ export class ObjectsService {
 
     const { where, discountWhere } = this.createFeedUnitFilterContext(objectId, query);
     const orderBy = this.parseFeedUnitOrderBy(query.sortBy, query.sortDirection);
-    const [items, discountedUnitsCount] = await Promise.all([
+    const [items, discountedUnitsCount, objectFeedUnitsTotal] = await Promise.all([
       this.prisma.feedUnit.findMany({
         where,
         include: feedUnitInclude,
         orderBy,
       }),
       this.prisma.feedUnit.count({ where: discountWhere }),
+      // Lots the object has at all, so the page can tell «no feed» from «filters matched nothing».
+      this.prisma.feedUnit.count({
+        where: {
+          objectId,
+          source: {
+            deletedAt: null,
+          },
+        },
+      }),
     ]);
 
     return {
       groups: this.createFeedUnitGroups(items),
       total: items.length,
+      objectFeedUnitsTotal,
       hasDiscountPrices: discountedUnitsCount > 0,
     };
   }
@@ -2584,6 +2601,9 @@ export class ObjectsService {
       ? {
           source: {
             deletedAt: null,
+          },
+          status: {
+            in: [...catalogVisibleFeedUnitStatuses],
           },
           ...lotFilters,
         }

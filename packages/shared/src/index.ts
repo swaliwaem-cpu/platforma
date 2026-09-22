@@ -512,6 +512,8 @@ export type FeedUnitGroupSummary = {
 export type FeedUnitGroupsResponse = {
   groups: FeedUnitGroupSummary[];
   total: number;
+  /** Lots the object has regardless of filters: 0 means the object has no feed at all. */
+  objectFeedUnitsTotal: number;
   hasDiscountPrices: boolean;
 };
 

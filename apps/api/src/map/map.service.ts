@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { LocationType, ObjectFileType, ObjectStatus, Prisma, RealEstateObjectType } from '@prisma/client';
 
 import { findCatalogSearchObjectIds } from '../objects/object-search';
+import { catalogVisibleFeedUnitStatuses } from '../objects/objects.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const mapObjectInclude = {
@@ -445,7 +446,15 @@ export class MapService {
     return Object.keys(lotWhere).length > 0
       ? {
           feedUnits: {
-            some: lotWhere,
+            some: {
+              source: {
+                deletedAt: null,
+              },
+              status: {
+                in: [...catalogVisibleFeedUnitStatuses],
+              },
+              ...lotWhere,
+            },
           },
         }
       : null;

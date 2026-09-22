@@ -164,7 +164,7 @@ test('object detail follows variant C: a 16:9 photo with everything else under i
   const filesIndex = objectDetailSource.indexOf('id="object-files-title"');
   const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions object-files-primary-actions"');
   const specsIndex = objectDetailSource.indexOf('id="object-specs-title"');
-  const lotsIndex = objectDetailSource.indexOf('<ObjectFeedUnitsSection accessToken={accessToken}');
+  const lotsIndex = objectDetailSource.indexOf('<ObjectFeedUnitsSection');
   const documentsIndex = objectDetailSource.indexOf('<section className="detail-section object-documents-section"');
   const descriptionGridIndex = objectDetailSource.indexOf('className="object-description-location-grid"');
   const contentIndex = objectDetailSource.indexOf('id="object-content-sections-title"');
