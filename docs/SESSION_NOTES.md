@@ -12,6 +12,14 @@
 
 ## 2026-09-23
 
+### Production deploy assistant-v2-20260923T0909Z (main 7f29486)
+
+- Выкачен `9518b2a..7f29486` (docs + пересборка ассистента). Пересобраны и пересозданы **api и web** (`--no-deps api web`), миграций нет. Контейнер `platforma-assistant-source-worker-1` остановлен и удалён (сервиса больше нет в compose, образ остался). `training-voice-worker` не трогали.
+- Релиз `/opt/platforma-releases/assistant-v2-20260923T0909Z-7f29486…`, образы `platforma-api|web:release-7f29486…-20260923T0909Z`. В `.env.production` изменились ровно `API_IMAGE` и `WEB_IMAGE`; старые `ASSISTANT_*` переменные остались в файле, новый код их не читает. `YANDEX_SEARCH_*` на проде нет — поиск через браузер.
+- Бэкап `/opt/platforma-deploy-backups/assistant-v2-20260923T0909Z/`: env, `platforma.dump` 87 МБ + sha256 (`pg_restore -l` = 730), бандл, `deploy-result.txt` с откатом.
+- Проверки: api healthy, `/api/health` 200, web 200, `/api/assistant/config` и `/assistant/jobs` без логина 401. Смоук одноразовым контейнером из прод-образа: браузерный поиск с IP сервера работает (8 результатов, без капчи); «однушка до 20 млн в Веер 2» — 6.9 с, 10 лотов; «Адмирал от Галс» — 54 с, 10 лотов с официального hals-development.ru.
+- `origin` запушен: `main` = `7f29486`, плюс `archive/assistant-v1` и тег `assistant-v1-archive`.
+
 ### ИИ-помощник: модель DeepSeek и поиск без API (локально, без коммита)
 
 - Сравнение моделей нашим агентом (7 запросов по платформе + 4 проекта только в вебе): `deepseek-v4.1-flash` — 7/7 и 4/4, 8.6 с на платформенный вопрос (qwen-plus 14 с, qwen3.8-flash 17 с), ~51k токенов на веб-вопрос. Стал моделью по умолчанию (`ASSISTANT_MODEL`). deepseek-v4-pro медленный (до 47 с), deepseek-v4-flash жрёт ~116k токенов на веб-вопрос, kimi-k3/glm-5.3 отвечают 400 `invalid_parameter_error` на наш запрос.
