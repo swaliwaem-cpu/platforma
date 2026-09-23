@@ -12,7 +12,6 @@ import {
 } from 'react';
 import {
   BookOpen,
-  Building2,
   House,
   Layers,
   LockIcon,
@@ -101,12 +100,13 @@ const userStatusLabels: Record<UserStatus, string> = {
 
 const navItems: readonly NavItem[] = [
   {
-    id: 'cabinet',
-    label: 'Кабинет',
-    path: '/cabinet',
-    section: 'cabinet',
+    // The cabinet stays reachable from the user card at the bottom of the sidebar.
+    id: 'catalog',
+    label: 'Каталог',
+    path: '/catalog/life',
+    section: 'catalog',
     icon: House,
-    requiredPermissions: [],
+    requiredPermissions: ['objects:read'],
   },
   {
     id: 'presentations',
@@ -131,32 +131,6 @@ const navItems: readonly NavItem[] = [
     section: 'admin',
     icon: ShieldCheck,
     requiredPermissions: ['admin:access'],
-  },
-  {
-    id: 'catalog',
-    label: 'Каталог',
-    // The section opens on the residential list; commercial stays one click away.
-    path: '/catalog/life',
-    section: 'catalog',
-    icon: Building2,
-    requiredPermissions: ['objects:read'],
-    children: [
-      {
-        id: 'catalog-life',
-        label: 'Жилая',
-        path: '/catalog/life',
-      },
-      {
-        id: 'catalog-comm',
-        label: 'Коммерция',
-        path: '/catalog/comm',
-      },
-      {
-        id: 'catalog-all',
-        label: 'Все',
-        path: '/catalog',
-      },
-    ],
   },
 ];
 
