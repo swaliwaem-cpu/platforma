@@ -298,8 +298,8 @@ test('snapshot freezes chosen order, manual content, image order, generating bro
     profilePhoto: null,
   });
   assert.deepEqual(snapshot.cta, {
-    label: '@FluffyWhite',
-    url: 'https://t.me/FluffyWhite',
+    label: '@svetlana_fluffywhite',
+    url: 'https://t.me/svetlana_fluffywhite',
   });
 
   draft.objects[0].manualTitle = 'Изменено после запуска';

@@ -50,8 +50,8 @@ export type ProjectPresentationSnapshotV1 = {
     image: ProjectPresentationSnapshotImage | null;
   };
   cta: {
-    label: '@FluffyWhite';
-    url: 'https://t.me/FluffyWhite';
+    label: string;
+    url: string;
   };
   broker: {
     name: string;

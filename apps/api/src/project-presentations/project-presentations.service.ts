@@ -535,7 +535,7 @@ export class ProjectPresentationsService {
           .map(({ title: featureTitle, caption }) => ({ title: featureTitle, caption })),
       },
       map: { title: draft.mapTitle ?? '' },
-      cta: { label: '@FluffyWhite', url: 'https://t.me/FluffyWhite' },
+      cta: { label: '@svetlana_fluffywhite', url: template.PROJECT_PRESENTATION_LINKS.chat },
       // Contacts belong to the account that starts the generation, not to the draft author.
       broker: {
         name: broker.name ?? broker.email,

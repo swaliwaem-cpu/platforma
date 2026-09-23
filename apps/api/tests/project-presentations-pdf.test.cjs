@@ -49,8 +49,8 @@ function createSnapshot(objectsCount) {
     },
     map: { title: 'Москва рядом с парком' },
     cta: {
-      label: '@FluffyWhite',
-      url: 'https://t.me/FluffyWhite',
+      label: '@svetlana_fluffywhite',
+      url: 'https://t.me/svetlana_fluffywhite',
     },
     broker: {
       name: 'Мария Брокер',
@@ -119,7 +119,11 @@ test('project PDF links every project, the catalog contacts and always dials the
   const buffer = await new ProjectPresentationsPdfService(await createFilesService()).generate(createSnapshot(2));
   const source = buffer.toString('latin1');
 
-  assert.equal((source.match(/https:\/\/t\.me\/FluffyWhite/g) ?? []).length, 2);
+  // Each project button opens the chat with the project title typed in.
+  for (const index of [1, 2]) {
+    const url = `https://t.me/svetlana_fluffywhite?text=${encodeURIComponent(`Жилой комплекс ${index}`)}`;
+    assert.ok(source.includes(`/URI (${url})`), url);
+  }
   for (const url of [
     'https://clck.ru/3QmQoS',
     'https://www.instagram.com/fluffywhite.estate/',
@@ -135,7 +139,7 @@ test('the final page always shows the catalog phone number', async () => {
   const template = await loadTemplate();
   const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
   const html = template.renderProjectPresentationHtml(
-    { cover: { title: 'T', subtitle: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [], contacts: { ctaUrl: 'https://t.me/FluffyWhite' } },
+    { cover: { title: 'T', subtitle: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [], contacts: { ctaUrl: 'https://t.me/svetlana_fluffywhite' } },
     { fontUrls, pageKeys: ['final'] },
   );
 
@@ -157,7 +161,7 @@ test('every value of the project card keeps one font size instead of shrinking t
     imageSrcs: [null, null, null],
   };
   const html = template.renderProjectPresentationHtml(
-    { cover: { title: 'T', subtitle: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [project], contacts: { ctaUrl: 'https://t.me/FluffyWhite' } },
+    { cover: { title: 'T', subtitle: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers: [] }, projects: [project], contacts: { ctaUrl: 'https://t.me/svetlana_fluffywhite' } },
     { fontUrls, pageKeys: ['p1'] },
   );
 
@@ -201,7 +205,7 @@ test('template renders the approved page order, escapes user text and links the 
       advantages: ['Один', 'Два', 'Три', 'Четыре', 'Лишнее'],
       imageSrcs: [null, null, null],
     }],
-    contacts: { ctaUrl: 'https://t.me/FluffyWhite' },
+    contacts: { ctaUrl: 'https://t.me/svetlana_fluffywhite' },
   };
 
   const html = template.renderProjectPresentationHtml(model, { fontUrls });
@@ -224,7 +228,14 @@ test('template renders the approved page order, escapes user text and links the 
   // Markers carry the project titles and flip to the left when they sit near the right edge of the frame.
   assert.match(html, /class="fw-map__marker" style="left:10px;top:20px"><span class="fw-map__label">КОД Сокольники<\/span>/);
   assert.match(html, /class="fw-map__marker is-flipped" style="left:600px;top:40px"><span class="fw-map__label">Дом Дау<\/span>/);
-  assert.match(html, /class="fw-button fw-button--details" href="https:\/\/t\.me\/FluffyWhite"/);
+  assert.ok(html.includes(
+    `class="fw-button fw-button--details" href="https://t.me/svetlana_fluffywhite?text=${encodeURIComponent('КОД Сокольники')}"`,
+  ));
+  // The caption rule must not reach the icon tile, which is a span too and would lose its centering grid.
+  assert.match(html, /\.fw-feature>div>span\{display:block;margin-top:8px/);
+  assert.doesNotMatch(html, /\.fw-feature span\{/);
+  // Blurred shadows turn into grey boxes in PDF viewers, so the map markers draw none.
+  assert.doesNotMatch(html, /\.fw-map__(?:marker|label)\{[^}]*box-shadow:[^;}]*\d+px \d+px \d+px/);
   assert.match(html, /class="fw-button fw-button--start" href="https:\/\/clck\.ru\/3QmQoS"/);
   assert.match(html, /<a href="https:\/\/www\.instagram\.com\/fluffywhite\.estate\/" class="fw-social"><span>Instagram<\/span>/);
   assert.match(html, /<a href="https:\/\/t\.me\/\+OacAOVxTqWM0Y2Ji" class="fw-social"><span>Telegram<\/span>/);
@@ -314,4 +325,22 @@ test('reference fonts are bundled with their OFL licenses and runtime settings h
   });
   assert.equal(getProjectPresentationMapConfig({ PROJECT_PRESENTATIONS_MAP_ATTEMPTS: '0' }).attempts, 1);
   assert.equal(getProjectPresentationMapConfig({ PROJECT_PRESENTATIONS_MAP_ENABLED: 'false' }).enabled, false);
+});
+
+test('project contact link carries the page title as the prefilled Telegram message', async () => {
+  const template = await loadTemplate();
+
+  assert.equal(
+    template.getProjectPresentationContactUrl('https://t.me/svetlana_fluffywhite', 'Соул'),
+    'https://t.me/svetlana_fluffywhite?text=%D0%A1%D0%BE%D1%83%D0%BB',
+  );
+  assert.equal(
+    template.getProjectPresentationContactUrl('https://t.me/svetlana_fluffywhite', '  Шагал  '),
+    `https://t.me/svetlana_fluffywhite?text=${encodeURIComponent('Шагал')}`,
+  );
+  assert.equal(
+    template.getProjectPresentationContactUrl('https://t.me/svetlana_fluffywhite', ' '),
+    'https://t.me/svetlana_fluffywhite',
+  );
+  assert.equal(template.PROJECT_PRESENTATION_LINKS.chat, 'https://t.me/svetlana_fluffywhite');
 });

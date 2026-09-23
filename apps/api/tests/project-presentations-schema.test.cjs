@@ -235,7 +235,7 @@ test('contracts fix the 12-object limit, 3:4 page, ordered snapshot and Telegram
   );
   assert.match(
     types,
-    /cta: \{[\s\S]*label: '@FluffyWhite';[\s\S]*url: 'https:\/\/t\.me\/FluffyWhite';/,
+    /cta: \{[\s\S]*label: string;[\s\S]*url: string;/,
   );
   assert.match(
     service,
@@ -251,7 +251,7 @@ test('contracts fix the 12-object limit, 3:4 page, ordered snapshot and Telegram
   );
   assert.match(
     service,
-    /cta: \{ label: '@FluffyWhite', url: 'https:\/\/t\.me\/FluffyWhite' \}/,
+    /cta: \{ label: '@svetlana_fluffywhite', url: template\.PROJECT_PRESENTATION_LINKS\.chat \}/,
   );
 });
 

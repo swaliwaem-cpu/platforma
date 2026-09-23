@@ -31,7 +31,7 @@ export const PROJECT_PRESENTATION_FONT_FILES = Object.freeze([
 ]);
 // `chat` backs the per-project buttons; the rest are copied from the last page of the FluffyWhite catalog.
 export const PROJECT_PRESENTATION_LINKS = Object.freeze({
-  chat: 'https://t.me/FluffyWhite',
+  chat: 'https://t.me/svetlana_fluffywhite',
   start: 'https://clck.ru/3QmQoS',
   instagram: 'https://www.instagram.com/fluffywhite.estate/',
   telegram: 'https://t.me/+OacAOVxTqWM0Y2Ji',
@@ -69,6 +69,13 @@ export function truncateProjectPresentationDescription(value, limit = PROJECT_PR
   const slice = text.slice(0, limit - 1);
   const wordBoundary = slice.replace(/\s+\S*$/u, '');
   return `${(wordBoundary || slice).replace(/[\s,.;:—–-]+$/u, '')}…`;
+}
+
+// The chat opens with the project name already typed, so the broker sees which page the client came from.
+export function getProjectPresentationContactUrl(chatUrl, projectTitle) {
+  const message = String(projectTitle ?? '').replace(/\s+/gu, ' ').trim();
+  if (!message) return chatUrl;
+  return `${chatUrl}${chatUrl.includes('?') ? '&' : '?'}text=${encodeURIComponent(message)}`;
 }
 
 export function getProjectPresentationPageKeys(projectKeys) {
@@ -161,7 +168,7 @@ ${ringsSvg('fw-facts__rings', 150, 150, '#59222b', [78, 116, 154, 192])}
 </dl>
 <p class="fw-facts__label fw-facts__label--list">Основные преимущества</p>
 <ol class="fw-facts__list">${advantages.map((advantage, index) => `<li><span class="fw-facts__number">${String(index + 1).padStart(2, '0')}</span><span class="fw-facts__advantage">${text(advantage)}</span></li>`).join('')}</ol>
-<a class="fw-button fw-button--details" href="${escapeHtml(ctaUrl)}"><span>Узнать подробности</span><span class="fw-button__arrow">${icon('arrowRight', 16)}</span></a>
+<a class="fw-button fw-button--details" href="${escapeHtml(getProjectPresentationContactUrl(ctaUrl, project.title))}"><span>Узнать подробности</span><span class="fw-button__arrow">${icon('arrowRight', 16)}</span></a>
 </div>
 </div>
 <div class="fw-project__bottom"><div class="fw-photo">${image(firstDetail)}</div><div class="fw-photo">${image(secondDetail)}</div></div>
@@ -355,12 +362,12 @@ img{display:block;width:100%;height:100%;object-fit:cover}
 .fw-feature{display:flex;height:84px;align-items:center;gap:16px;padding:0 20px;border-radius:22px;background:#fff}
 .fw-feature>div{min-width:0}
 .fw-feature strong{display:block;overflow:hidden;font:500 19px/19px "FW Display";letter-spacing:-.01em;text-overflow:ellipsis;white-space:nowrap}
-.fw-feature span{display:block;margin-top:8px;overflow:hidden;color:#63685f;font-size:13px;line-height:15.7px;text-overflow:ellipsis;white-space:nowrap}
+.fw-feature>div>span{display:block;margin-top:8px;overflow:hidden;color:#63685f;font-size:13px;line-height:15.7px;text-overflow:ellipsis;white-space:nowrap}
 .fw-map__head{position:absolute;top:30px;right:36px;left:36px}
 .fw-map__title{font:400 66px/64.9px "FW Display";letter-spacing:-.035em;text-wrap:balance}
 .fw-map__frame{position:absolute;top:189px;left:36px;width:648px;height:735px;overflow:hidden;border-radius:28px;background:#e4e0d7}
-.fw-map__marker{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border:4px solid #f4f2eb;border-radius:50%;background:#430a13;box-shadow:0 0 0 6px rgba(67,10,19,.16),0 3px 10px rgba(20,23,19,.3)}
-.fw-map__label{position:absolute;top:50%;left:26px;max-width:200px;overflow:hidden;padding:4.5px 11px;border-radius:999px;background:#430a13;color:#f4f2eb;font-size:12.5px;font-weight:500;line-height:15px;text-overflow:ellipsis;white-space:nowrap;transform:translateY(-50%);box-shadow:0 3px 10px rgba(20,23,19,.28)}
+.fw-map__marker{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border:4px solid #f4f2eb;border-radius:50%;background:#430a13;box-shadow:0 0 0 6px rgba(67,10,19,.16)}
+.fw-map__label{position:absolute;top:50%;left:26px;max-width:200px;overflow:hidden;padding:4.5px 11px;border-radius:999px;background:#430a13;color:#f4f2eb;font-size:12.5px;font-weight:500;line-height:15px;text-overflow:ellipsis;white-space:nowrap;transform:translateY(-50%)}
 .fw-map__marker.is-flipped .fw-map__label{right:26px;left:auto}
 .fw-project__head{position:absolute;top:30px;left:36px;width:648px;height:273px;overflow:hidden}
 .fw-project__title{font:400 60px/60px "FW Display";letter-spacing:-.035em;text-wrap:balance}

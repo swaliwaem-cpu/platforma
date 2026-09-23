@@ -96,7 +96,7 @@ test('async generation and shared history expose statuses, polling, retry and co
   assert.match(editorSource, /window\.setInterval\([\s\S]*getProjectPresentationDocument\(accessToken, document\.id\)[\s\S]*2000/);
   assert.match(editorSource, /PENDING: 'PDF поставлен в очередь'/);
   assert.match(editorSource, /RUNNING: `Формируем PDF · \$\{document\.progress\}%`/);
-  assert.match(editorSource, /READY: 'PDF готов'/);
+  assert.match(editorSource, /READY: 'PDF готов, скачивание началось'/);
   assert.match(editorSource, /FAILED: 'Не удалось сформировать PDF'/);
   assert.match(listSource, /Черновики[\s\S]*История PDF/);
   assert.match(listSource, /draft\.owner\?\.name \?\? draft\.owner\?\.email/);
@@ -105,6 +105,18 @@ test('async generation and shared history expose statuses, polling, retry and co
   assert.match(listSource, /deleteTarget\.kind === 'draft'[\s\S]*deleteProjectPresentationDraft[\s\S]*deleteProjectPresentationDocument/);
   assert.match(listSource, /Черновик нельзя будет восстановить/);
   assert.match(listSource, /Файл и запись истории будут удалены без возможности восстановления/);
+});
+
+test('the PDF started in the editor downloads by itself once it is ready', () => {
+  assert.match(
+    editorSource,
+    /autoDownloadDocumentIdRef\.current = response\.document\.id;[\s\S]*downloadWhenReady\(response\.document\)/,
+  );
+  assert.match(editorSource, /getProjectPresentationDocument\(accessToken, document\.id\)[\s\S]*downloadWhenReady\(response\.document\)/);
+  assert.match(
+    editorSource,
+    /function downloadWhenReady[\s\S]*autoDownloadDocumentIdRef\.current !== nextDocument\.id[\s\S]*nextDocument\.status !== 'READY'[\s\S]*autoDownloadDocumentIdRef\.current = null;[\s\S]*downloadProjectPresentationDocument\(accessToken, nextDocument\)/,
+  );
 });
 
 test('interactive controls have labels, state announcements and validation focus recovery', () => {

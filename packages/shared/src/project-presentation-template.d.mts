@@ -39,6 +39,8 @@ export type ProjectPresentationTemplateModel = {
   };
 };
 
+export declare function getProjectPresentationContactUrl(chatUrl: string, projectTitle: string): string;
+
 export type ProjectPresentationTemplateOptions = {
   fontUrls: Record<ProjectPresentationFontFile, string>;
   pageKeys?: string[];

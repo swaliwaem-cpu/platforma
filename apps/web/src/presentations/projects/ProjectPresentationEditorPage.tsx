@@ -243,6 +243,8 @@ function ExistingProjectPresentationEditor({
   const isDirtyRef = useRef(false);
   const isCoverUploadingRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
+  // The PDF started from this editor downloads by itself once it is ready.
+  const autoDownloadDocumentIdRef = useRef<string | null>(null);
   const savePromiseRef = useRef<Promise<ProjectPresentationDraft | null> | null>(null);
 
   useEffect(() => {
@@ -350,7 +352,10 @@ function ExistingProjectPresentationEditor({
 
     const timerId = window.setInterval(() => {
       void getProjectPresentationDocument(accessToken, document.id)
-        .then((response) => setDocument(response.document))
+        .then((response) => {
+          setDocument(response.document);
+          downloadWhenReady(response.document);
+        })
         .catch(() => undefined);
     }, 2000);
 
@@ -636,12 +641,30 @@ function ExistingProjectPresentationEditor({
       }
 
       const response = await createProjectPresentationDocument(accessToken, savedDraft);
+      autoDownloadDocumentIdRef.current = response.document.id;
       setDocument(response.document);
+      downloadWhenReady(response.document);
     } catch (caughtError) {
       setGenerationError(resolveError(caughtError, 'Не удалось запустить генерацию PDF'));
     } finally {
       setIsGenerating(false);
     }
+  }
+
+  function downloadWhenReady(nextDocument: ProjectPresentationDocument) {
+    if (
+      !accessToken ||
+      autoDownloadDocumentIdRef.current !== nextDocument.id ||
+      nextDocument.status !== 'READY' ||
+      !nextDocument.canDownload
+    ) {
+      return;
+    }
+
+    autoDownloadDocumentIdRef.current = null;
+    void downloadProjectPresentationDocument(accessToken, nextDocument).catch(() => {
+      setGenerationError('PDF готов, но скачивание не началось. Нажмите «Скачать PDF».');
+    });
   }
 
   async function handleSaveAndExit() {
@@ -1824,7 +1847,7 @@ function GenerationStatus({
   const labels: Record<ProjectPresentationDocument['status'], string> = {
     PENDING: 'PDF поставлен в очередь',
     RUNNING: `Формируем PDF · ${document.progress}%`,
-    READY: 'PDF готов',
+    READY: 'PDF готов, скачивание началось',
     FAILED: 'Не удалось сформировать PDF',
   };
 
