@@ -12,6 +12,18 @@
 
 ## 2026-09-23
 
+### Production deploy feed-profitbase-20260923T070043Z (main 9518b2a)
+
+- Выкачен `770fa4f..main` — 2 коммита (`79e60ed` доки, `9518b2a` фикс импорта Profitbase-фида). Миграций в коммите нет: пересоздан **только api** (`--no-deps api`), web остался на `release-770fa4f…-20260922T1731Z`, `assistant-source-worker` и `training-voice-worker` не трогали.
+- Релиз `/opt/platforma-releases/feed-profitbase-20260923T070043Z-9518b2a…` — клон предыдущего релиз-каталога + `git fetch` из бандла, checkout `9518b2a`, дерево чистое. Образ `platforma-api:release-9518b2a…-20260923T070043Z` (2.09 ГБ), `API_IMAGE` обновлён в `/opt/platforma/.env.production` (`WEB_IMAGE` не тронут, в env изменилась ровно одна строка).
+- Бэкап в `/opt/platforma-deploy-backups/feed-profitbase-20260923T070043Z/`: `env.production.before`, `env.production.candidate`, `platforma.dump` (74 МБ, sha256 рядом, `pg_restore -l` = 730 записей), сам бандл и `deploy-result.txt` с командой отката.
+- Проверки на проде: контейнер api healthy, в логах ошибок нет, `/api/health` 200, `/api/objects` без логина 401, `/api/feeds/sources` 401, web 200. Смоук на живом фиде «Страна Девелопмент» (240 МБ) **внутри прод-контейнера**: 7442 лота, 0 warnings, 6 объектов, `format YANDEX_REALTY`, у «Страны.Парковой» в `filterJson` нет `addressIncludes` — фикс отработал. Временный `/tmp/analysis.json` удалён.
+- Прод: 5.9 ГБ RAM (в пике импорта оставалось 2.4 ГБ свободно), дефолтный heap в контейнере 2198 МБ; `FEED_IMPORT_MAX_OLD_SPACE_MB` не задавали, работает константа 2048.
+- Доступ: SSH на прод режет классификатор auto-режима (`[Production Reads]`/`[Production Deploy]`) **несмотря на** allow-правила `Bash(ssh:*)`/`Bash(scp:*)` в `~/.claude/settings.json` — классификатор выше allowlist. Деплой прошёл только после того, как пользователь вручную вышел из auto-режима.
+- Не сделано: сам источник в админке прода не заводили, `run` с записью лотов и скачиванием 12751 медиа не гоняли.
+
+---
+
 ### Фид «Страна Девелопмент» (Profitbase, 240 МБ) — импортёр его не принимал
 
 - Фид `pb4988.strana.profitbase.ru` (7442 лота, 6 ЖК) падал на `analyze`/`preview`/`run` с `JS heap out of memory`. Формат определялся верно (`YANDEX_REALTY`, Profitbase уже ходит через него — см. живой `pb20909`), ломалась именно память: однопроходный разбор давал пик heap 2301 МБ при дефолтном лимите V8 2349 МБ, внутри api-контейнера лимит вообще 1060 МБ.
