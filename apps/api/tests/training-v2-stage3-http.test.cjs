@@ -24,7 +24,7 @@ if (!databaseUrl) {
   process.env.JWT_ACCESS_SECRET = 'training-v2-stage3-http-secret';
   process.env.TRAINING_AI_MODE = 'fake';
   process.env.TELEGRAM_TRANSPORT_MODE = 'fake';
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.ALIBABA_API_KEY;
 
   const { TrainingModule } = require('../dist/training/training.module.js');
   const {

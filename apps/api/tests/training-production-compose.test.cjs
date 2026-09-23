@@ -77,18 +77,19 @@ test('production Compose is fail-closed and preserves the 100 MiB PDF contract',
     'DATABASE_URL',
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY',
-    'OPENAI_API_KEY',
-    'OPENAI_TRANSCRIPTION_MODEL',
-    'OPENAI_QUESTION_GENERATION_MODEL',
-    'OPENAI_EVALUATOR_MODEL',
+    'ALIBABA_API_KEY',
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_WEBHOOK_SECRET',
   ]) {
     assert.match(production, new RegExp(`\\$\\{${requiredName}:\\?`, 'u'));
   }
 
-  assert.match(productionApi, /TRAINING_AI_MODE: openai/u);
-  assert.match(productionWorker, /TRAINING_AI_MODE: openai/u);
+  assert.match(productionApi, /TRAINING_AI_MODE: alibaba/u);
+  assert.match(productionWorker, /TRAINING_AI_MODE: alibaba/u);
+  assert.match(productionApi, /ALIBABA_API_KEY: "\$\{ALIBABA_API_KEY:\?/u);
+  assert.match(productionWorker, /ALIBABA_API_KEY: "\$\{ALIBABA_API_KEY:\?/u);
+  assert.match(productionExample, /^TRAINING_AI_MODE=alibaba$/mu);
+  assert.doesNotMatch(production, /OPENAI_/u);
   assert.match(productionApi, /TELEGRAM_TRANSPORT_MODE: real/u);
   assert.match(productionWorker, /TELEGRAM_TRANSPORT_MODE: real/u);
   assert.match(productionApi, /TRAINING_MATERIAL_MAX_BYTES: "104857600"/u);

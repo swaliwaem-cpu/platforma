@@ -135,7 +135,7 @@ export class TrainingAiUsageService implements TrainingAiUsageRecorder {
       await this.prisma.trainingAiUsageEvent.createMany({
         data: [{
           operationRunId: input.operationRunId,
-          provider: 'openai',
+          provider: 'alibaba',
           operation: bounded(input.operation, 64),
           requestedModel: bounded(input.requestedModel, 120),
           model: bounded(input.model, 120),

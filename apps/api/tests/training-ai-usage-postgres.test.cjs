@@ -157,10 +157,10 @@ if (!databaseUrl) {
     assert.equal(report.totals.errorRate, 0.6667);
     assert.equal(report.totals.retryOverhead.totalTokens, 150);
     assert.equal(report.totals.fallbackOverhead.totalTokens, 150);
-    assert.equal(report.totals.estimatedCostUsd, 0.002199);
-    assert.deepEqual(report.totals.pricingVersions, ['openai-standard-pricing-2026-08-07']);
+    assert.equal(report.totals.estimatedCostUsd, 0.00027);
+    assert.deepEqual(report.totals.pricingVersions, ['alibaba-dashscope-intl-pricing-2026-09-23']);
     assert.equal(report.byOperation[0].operation, 'training_answer_evaluation');
-    assert.equal(report.byModel[0].model, 'gpt-5.6-terra');
+    assert.equal(report.byModel[0].model, 'deepseek-v4.1-flash');
     assert.equal(report.byProject[0].projectId, project.id);
     assert.equal(report.recentRuns.items[0].operationRunId, operationRunId);
     assert.equal(report.recentRuns.items[0].attempts, 3);
@@ -251,10 +251,10 @@ if (!databaseUrl) {
     return {
       operationRunId: randomUUID(),
       operation: 'training_answer_evaluation',
-      requestedModel: 'gpt-5.6-terra',
-      model: 'gpt-5.6-terra',
-      reasoningEffort: 'medium',
-      promptVersion: 'training-evaluator-prompt-v2',
+      requestedModel: 'deepseek-v4.1-flash',
+      model: 'deepseek-v4.1-flash',
+      reasoningEffort: null,
+      promptVersion: 'training-evaluator-prompt-v5',
       compilerVersion: null,
       schemaVersion: 'training-v2-evaluation-v1',
       projectId: null,
@@ -273,7 +273,7 @@ if (!databaseUrl) {
       usage: {
         inputTokens: 100,
         cachedTokens: 40,
-        cacheWriteTokens: 10,
+        cacheWriteTokens: 0,
         outputTokens: 50,
         reasoningTokens: 12,
         totalTokens: 150,

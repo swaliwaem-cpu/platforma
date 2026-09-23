@@ -67,6 +67,44 @@ export const TRAINING_AI_PRICING_SNAPSHOTS: readonly TrainingAiPricingSnapshot[]
       },
     },
   },
+  {
+    // Alibaba Model Studio, international (Singapore) deployment, busy-hours prices.
+    // The cached-input discount is not published for DeepSeek, so cached input is
+    // billed at the full input price here: the estimate errs on the high side.
+    version: 'alibaba-dashscope-intl-pricing-2026-09-23',
+    effectiveFrom: '2026-09-23T00:00:00.000Z',
+    shortContextMaximumInputTokens: 1_000_000,
+    models: {
+      'deepseek-v4.1-flash': {
+        short: {
+          inputUsdPerMillion: 0.3,
+          cachedInputUsdPerMillion: 0.3,
+          cacheWriteUsdPerMillion: 0.3,
+          outputUsdPerMillion: 1.2,
+        },
+        long: {
+          inputUsdPerMillion: 0.3,
+          cachedInputUsdPerMillion: 0.3,
+          cacheWriteUsdPerMillion: 0.3,
+          outputUsdPerMillion: 1.2,
+        },
+      },
+      'deepseek-v4-pro': {
+        short: {
+          inputUsdPerMillion: 2.4,
+          cachedInputUsdPerMillion: 2.4,
+          cacheWriteUsdPerMillion: 2.4,
+          outputUsdPerMillion: 4.8,
+        },
+        long: {
+          inputUsdPerMillion: 2.4,
+          cachedInputUsdPerMillion: 2.4,
+          cacheWriteUsdPerMillion: 2.4,
+          outputUsdPerMillion: 4.8,
+        },
+      },
+    },
+  },
 ] as const;
 
 export function estimateTrainingAiCost(

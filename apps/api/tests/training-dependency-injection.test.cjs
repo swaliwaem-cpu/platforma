@@ -44,7 +44,7 @@ if (!databaseUrl) {
     process.env.TRAINING_VOICE_WORKER_ENABLED = 'false';
     process.env.TRAINING_MATERIAL_WORKER_ENABLED = 'false';
     process.env.TRAINING_TELEGRAM_OUTBOX_WORKER_ENABLED = 'false';
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.ALIBABA_API_KEY;
 
     const { TrainingModule } = require('../dist/training/training.module.js');
     const application = await NestFactory.createApplicationContext(TrainingModule, {

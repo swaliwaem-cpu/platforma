@@ -8,11 +8,7 @@ import {
   ABSOLUTE_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
   MIN_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
 } from './training-question-context-budget';
-import {
-  DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL,
-  DEFAULT_OPENAI_QUESTION_GENERATION_MODEL,
-  DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY,
-} from './training-question-generation-router';
+import { DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY } from './training-question-generation-router';
 import {
   getTrainingAudioLimits,
   TrainingAudioLimitsError,
@@ -84,7 +80,7 @@ export function validateTrainingRuntimeConfig(
   requireSecret(environment, 'TELEGRAM_BOT_TOKEN', 24);
   requireValue(environment, 'TELEGRAM_BOT_USERNAME', 5);
   requireSecret(environment, 'TELEGRAM_WEBHOOK_SECRET', 16);
-  requireExact(environment, 'TRAINING_AI_MODE', 'openai');
+  requireExact(environment, 'TRAINING_AI_MODE', 'alibaba');
   isTrainingCrossProjectGenerationReuseEnabled(environment);
   isTrainingHarmlessExtraRoutingEnabled(environment);
   try {
@@ -95,21 +91,23 @@ export function validateTrainingRuntimeConfig(
     }
     throw error;
   }
-  requireSecret(environment, 'OPENAI_API_KEY', 20);
-  requireValue(environment, 'OPENAI_TRANSCRIPTION_MODEL', 3);
+  requireSecret(environment, 'ALIBABA_API_KEY', 20);
   validateQuestionGenerationRouting(environment);
   requireOptionalInteger(
     environment,
-    'OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS',
+    'TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS',
     MIN_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
     ABSOLUTE_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
   );
-  requirePreferredValue(
-    environment,
-    'OPENAI_EVALUATOR_MODEL',
-    'OPENAI_EVALUATION_MODEL',
-    3,
-  );
+  for (const key of [
+    'TRAINING_TRANSCRIPTION_MODEL',
+    'TRAINING_EVALUATOR_MODEL',
+    'TRAINING_EVALUATOR_FALLBACK_MODEL',
+    'TRAINING_QUESTION_GENERATION_MODEL',
+    'TRAINING_QUESTION_GENERATION_LUNA_MODEL',
+  ]) {
+    requireOptionalValue(environment, key, 3);
+  }
 
   validateHttpsUrl(environment, 'PUBLIC_APP_URL', false);
   validateHttpsUrl(environment, 'TELEGRAM_WEBHOOK_URL', true);
@@ -160,16 +158,13 @@ function requireValue(environment: TrainingEnvironment, key: string, minimumLeng
   return value;
 }
 
-function requirePreferredValue(
+function requireOptionalValue(
   environment: TrainingEnvironment,
-  primaryKey: string,
-  fallbackKey: string,
+  key: string,
   minimumLength: number,
 ) {
-  if (environment[primaryKey]?.trim()) {
-    return requireValue(environment, primaryKey, minimumLength);
-  }
-  return requireValue(environment, fallbackKey, minimumLength);
+  if (!environment[key]?.trim()) return;
+  requireValue(environment, key, minimumLength);
 }
 
 function requireSecret(environment: TrainingEnvironment, key: string, minimumLength: number) {
@@ -194,24 +189,11 @@ function requireOptionalInteger(
 
 function validateQuestionGenerationRouting(environment: TrainingEnvironment) {
   const strategy = (
-    environment.OPENAI_QUESTION_GENERATION_STRATEGY ??
+    environment.TRAINING_QUESTION_GENERATION_STRATEGY?.trim() ||
     DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY
-  ).trim();
+  );
   if (strategy !== 'terra_only' && strategy !== 'luna_then_terra') {
-    throw new TrainingRuntimeConfigError('OPENAI_QUESTION_GENERATION_STRATEGY_INVALID');
-  }
-
-  if (environment.OPENAI_QUESTION_GENERATION_MODEL?.trim() !==
-    DEFAULT_OPENAI_QUESTION_GENERATION_MODEL) {
-    throw new TrainingRuntimeConfigError('OPENAI_QUESTION_GENERATION_MODEL_INVALID');
-  }
-
-  const lunaModel = (
-    environment.OPENAI_QUESTION_GENERATION_LUNA_MODEL ??
-    DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL
-  ).trim();
-  if (lunaModel !== DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL) {
-    throw new TrainingRuntimeConfigError('OPENAI_QUESTION_GENERATION_LUNA_MODEL_INVALID');
+    throw new TrainingRuntimeConfigError('TRAINING_QUESTION_GENERATION_STRATEGY_INVALID');
   }
 }
 

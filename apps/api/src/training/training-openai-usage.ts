@@ -25,15 +25,22 @@ export type TrainingOpenAIResponseMetadata = {
   usage: TrainingOpenAIUsage | null;
 };
 
+// Chat completions usage. Nothing here writes to the explicit prompt cache, so
+// cache writes are always zero once the provider reported any usage at all.
 export function parseTrainingOpenAIUsage(value: unknown): TrainingOpenAIUsage | null {
   if (!isRecord(value)) return null;
-  const inputDetails = isRecord(value.input_tokens_details) ? value.input_tokens_details : null;
-  const outputDetails = isRecord(value.output_tokens_details) ? value.output_tokens_details : null;
+  const inputDetails = isRecord(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
+  const outputDetails = isRecord(value.completion_tokens_details)
+    ? value.completion_tokens_details
+    : null;
+  const inputTokens = readTokenCount(value.prompt_tokens);
+  const outputTokens = readTokenCount(value.completion_tokens);
+  const reported = inputTokens !== null || outputTokens !== null;
   const usage = {
-    inputTokens: readTokenCount(value.input_tokens),
-    cachedTokens: readTokenCount(inputDetails?.cached_tokens),
-    cacheWriteTokens: readTokenCount(inputDetails?.cache_write_tokens),
-    outputTokens: readTokenCount(value.output_tokens),
+    inputTokens,
+    cachedTokens: readTokenCount(inputDetails?.cached_tokens) ?? (reported ? 0 : null),
+    cacheWriteTokens: reported ? 0 : null,
+    outputTokens,
     reasoningTokens: readTokenCount(outputDetails?.reasoning_tokens),
     totalTokens: readTokenCount(value.total_tokens),
   };

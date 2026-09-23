@@ -12,7 +12,7 @@
     "start": "node --env-file-if-exists=.env dist/main.js",
     "test": "pnpm build && node tests/run-tests.cjs",
     "test:training:stage4:browser": "pnpm build && node tests/training-v2-stage4-browser-runtime.cjs",
-    "test:training:openai:smoke": "pnpm build && node tests/training-v2-openai-smoke.cjs"
+    "test:training:ai:smoke": "pnpm build && node tests/training-v2-ai-smoke.cjs"
   },
   "dependencies": {
     "@nestjs/common": "11.1.19",

@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 
 import {
   readQuestionGenerationMaxOutputTokens,
-  readQuestionGenerationReasoning,
   TRAINING_QUESTION_COMPILER_VERSION,
   TRAINING_QUESTION_EVIDENCE_DEDUP_ALGORITHM,
+  TRAINING_QUESTION_GENERATION_REASONING,
   TRAINING_QUESTION_LOCATOR_CONTRACT,
   TRAINING_QUESTION_PROMPT_VERSION,
   TRAINING_QUESTION_SELECTION_ALGORITHM,
@@ -84,7 +84,7 @@ export function createTrainingQuestionGenerationPlan(
   const providerMode = getTrainingAiMode();
   const routing = readQuestionGenerationRoutingConfig();
   const generationModel = routing.primaryModel;
-  const generationReasoning = readQuestionGenerationReasoning();
+  const generationReasoning = TRAINING_QUESTION_GENERATION_REASONING;
   const routingStrategy = `${routing.routingVersion}:${providerMode}:${routing.strategy}`;
   const maxOutputTokens = readQuestionGenerationMaxOutputTokens();
   const generationKey = {

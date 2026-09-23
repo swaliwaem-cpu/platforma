@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  DEFAULT_TRAINING_FALLBACK_MODEL,
+  DEFAULT_TRAINING_PRIMARY_MODEL,
   TrainingOpenAIClient,
   TrainingOpenAIError,
   waitBeforeTrainingOpenAIRetry,
@@ -10,9 +12,11 @@ import {
   type TrainingOpenAIUsage,
 } from './training-openai-usage';
 
-export const DEFAULT_OPENAI_QUESTION_GENERATION_MODEL = 'gpt-5.6-terra';
-export const DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL = 'gpt-5.6-luna';
-export const DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY = 'terra_only';
+// "Luna" is the fast first-pass model, "Terra" the stronger one that gets the request
+// when Luna's answer fails local validation (or the only model under terra_only).
+export const DEFAULT_TRAINING_QUESTION_GENERATION_MODEL = DEFAULT_TRAINING_FALLBACK_MODEL;
+export const DEFAULT_TRAINING_QUESTION_GENERATION_LUNA_MODEL = DEFAULT_TRAINING_PRIMARY_MODEL;
+export const DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY = 'luna_then_terra';
 export const TRAINING_QUESTION_ROUTING_STRATEGY_VERSION = 'luna-terra-router-v1';
 export const TRAINING_QUESTION_VALIDATOR_VERSION = 'training-question-validator-v1';
 export const TRAINING_QUESTION_GENERATION_MAX_HTTP_ATTEMPTS = 2;
@@ -67,15 +71,15 @@ export function readQuestionGenerationRoutingConfig(
   environment: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): TrainingQuestionGenerationRoutingConfig {
   const strategy = readQuestionGenerationStrategy(environment);
-  const terraModel = readExactModel(
+  const terraModel = readModel(
     environment,
-    'OPENAI_QUESTION_GENERATION_MODEL',
-    DEFAULT_OPENAI_QUESTION_GENERATION_MODEL,
+    'TRAINING_QUESTION_GENERATION_MODEL',
+    DEFAULT_TRAINING_QUESTION_GENERATION_MODEL,
   );
-  const lunaModel = readExactModel(
+  const lunaModel = readModel(
     environment,
-    'OPENAI_QUESTION_GENERATION_LUNA_MODEL',
-    DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL,
+    'TRAINING_QUESTION_GENERATION_LUNA_MODEL',
+    DEFAULT_TRAINING_QUESTION_GENERATION_LUNA_MODEL,
   );
 
   return {
@@ -93,12 +97,12 @@ export function readQuestionGenerationStrategy(
   environment: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): TrainingQuestionGenerationStrategy {
   const raw = (
-    environment.OPENAI_QUESTION_GENERATION_STRATEGY ??
+    environment.TRAINING_QUESTION_GENERATION_STRATEGY?.trim() ||
     DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY
-  ).trim();
+  );
 
   if (raw !== 'terra_only' && raw !== 'luna_then_terra') {
-    throw new TrainingOpenAIError('OPENAI_QUESTION_GENERATION_STRATEGY_INVALID', false);
+    throw new TrainingOpenAIError('TRAINING_QUESTION_GENERATION_STRATEGY_INVALID', false);
   }
   return raw;
 }
@@ -227,7 +231,7 @@ async function executeAttempt<T>(input: {
 
   try {
     const response = await input.client.request({
-      path: '/responses',
+      path: '/chat/completions',
       body: input.body,
       contentType: 'application/json',
       clientRequestId,
@@ -364,12 +368,12 @@ async function safelyObserve(
   await Promise.resolve(observer(telemetry)).catch(() => undefined);
 }
 
-function readExactModel(
+function readModel(
   environment: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  key: 'OPENAI_QUESTION_GENERATION_MODEL' | 'OPENAI_QUESTION_GENERATION_LUNA_MODEL',
-  expected: string,
+  key: 'TRAINING_QUESTION_GENERATION_MODEL' | 'TRAINING_QUESTION_GENERATION_LUNA_MODEL',
+  fallback: string,
 ) {
-  const value = (environment[key] ?? expected).trim();
-  if (value !== expected) throw new TrainingOpenAIError(`${key}_INVALID`, false);
+  const value = environment[key]?.trim() || fallback;
+  if (value.length > 120) throw new TrainingOpenAIError(`${key}_INVALID`, false);
   return value;
 }

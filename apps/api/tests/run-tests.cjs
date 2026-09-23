@@ -13,7 +13,6 @@ environment.NODE_ENV = 'test';
 environment.TRAINING_AI_MODE = 'fake';
 environment.TELEGRAM_TRANSPORT_MODE = 'fake';
 environment.PROJECT_PRESENTATIONS_MAP_ENABLED = 'false';
-delete environment.OPENAI_API_KEY;
 delete environment.ALIBABA_API_KEY;
 delete environment.LOCATIONIQ_API_KEY;
 delete environment.YANDEX_SEARCH_API_KEY;

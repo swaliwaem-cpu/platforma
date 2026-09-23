@@ -1,8 +1,9 @@
 const { createHash, randomUUID } = require('node:crypto');
+const { readFileSync } = require('node:fs');
 
 const {
-  DEFAULT_OPENAI_EVALUATION_MODEL,
-  DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+  DEFAULT_TRAINING_PRIMARY_MODEL,
+  DEFAULT_TRAINING_TRANSCRIPTION_MODEL,
   TrainingOpenAIClient,
   TrainingOpenAIError,
 } = require('../dist/training/training-openai-client.js');
@@ -17,37 +18,38 @@ const {
 } = require('../dist/training/training-evaluator.js');
 
 if (
-  process.env.TRAINING_AI_MODE !== 'openai' ||
-  process.env.OPENAI_SMOKE_ENABLED !== 'true' ||
-  !process.env.OPENAI_API_KEY?.trim()
+  process.env.TRAINING_AI_MODE !== 'alibaba' ||
+  process.env.TRAINING_AI_SMOKE_ENABLED !== 'true' ||
+  !process.env.ALIBABA_API_KEY?.trim()
 ) {
   console.log(JSON.stringify({
     status: 'skipped',
     required: [
-      'TRAINING_AI_MODE=openai',
-      'OPENAI_SMOKE_ENABLED=true',
-      'OPENAI_API_KEY',
+      'TRAINING_AI_MODE=alibaba',
+      'TRAINING_AI_SMOKE_ENABLED=true',
+      'ALIBABA_API_KEY',
     ],
+    optional: ['TRAINING_AI_SMOKE_AUDIO_FILE=<path to a .webm or .wav speech sample>'],
   }));
   process.exit(0);
 }
 
-process.env.OPENAI_TRANSCRIPTION_MAX_RETRIES = '0';
-process.env.OPENAI_EVALUATION_MAX_RETRIES = '0';
+process.env.TRAINING_TRANSCRIPTION_MAX_RETRIES = '0';
+process.env.TRAINING_EVALUATION_MAX_RETRIES = '0';
 
 void run();
 
 async function run() {
   const requestedTranscriptionModel =
-    process.env.OPENAI_TRANSCRIPTION_MODEL ?? DEFAULT_OPENAI_TRANSCRIPTION_MODEL;
+    process.env.TRAINING_TRANSCRIPTION_MODEL || DEFAULT_TRAINING_TRANSCRIPTION_MODEL;
   const requestedEvaluationModel =
-    process.env.OPENAI_EVALUATOR_MODEL ??
-    process.env.OPENAI_EVALUATION_MODEL ??
-    DEFAULT_OPENAI_EVALUATION_MODEL;
-  const client = new TrainingOpenAIClient(process.env.OPENAI_API_KEY);
+    process.env.TRAINING_EVALUATOR_MODEL || DEFAULT_TRAINING_PRIMARY_MODEL;
+  const client = new TrainingOpenAIClient(process.env.ALIBABA_API_KEY);
   const transcriber = new OpenAITrainingTranscriber(client);
   const evaluator = new OpenAITrainingEvaluator(client);
-  const wav = createSyntheticWav();
+  const audioFile = process.env.TRAINING_AI_SMOKE_AUDIO_FILE?.trim();
+  const audio = audioFile ? readFileSync(audioFile) : createSyntheticWav();
+  const mimeType = audioFile?.endsWith('.webm') ? 'audio/webm' : 'audio/wav';
   const failures = [];
   let transcription = null;
   let evaluation = null;
@@ -61,10 +63,10 @@ async function run() {
       attemptId,
       answerId: randomUUID(),
       fileId: randomUUID(),
-      mimeType: 'audio/wav',
-      sizeBytes: wav.length,
-      checksum: createHash('sha256').update(wav).digest('hex'),
-      wav,
+      mimeType,
+      sizeBytes: audio.length,
+      checksum: createHash('sha256').update(audio).digest('hex'),
+      wav: audio,
       vocabularyPrompt: 'Краткий словарь имён и терминов: Platforma, аттестация',
     });
   } catch (error) {
@@ -133,7 +135,9 @@ function providerSummary(requestedModel, result) {
 }
 
 function safeFailureCode(error) {
-  return error instanceof TrainingOpenAIError ? error.code : 'OPENAI_SMOKE_FAILED';
+  return error instanceof TrainingOpenAIError
+    ? [error.code, error.detailCode].filter(Boolean).join(':')
+    : 'TRAINING_AI_SMOKE_FAILED';
 }
 
 function createSyntheticWav() {

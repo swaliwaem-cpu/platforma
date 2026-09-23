@@ -37,12 +37,9 @@ function validProductionEnvironment() {
     TELEGRAM_BOT_USERNAME: 'platforma_training_bot',
     TELEGRAM_WEBHOOK_SECRET: 'safe_webhook_secret_123456',
     TELEGRAM_WEBHOOK_URL: 'https://training.fluffywhite.moscow/training/telegram/webhook',
-    TRAINING_AI_MODE: 'openai',
-    OPENAI_API_KEY: 'sk-live-project-key-value-123456',
-    OPENAI_TRANSCRIPTION_MODEL: 'gpt-transcribe-production',
-    OPENAI_QUESTION_GENERATION_MODEL: 'gpt-5.6-terra',
-    OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS: '30000',
-    OPENAI_EVALUATOR_MODEL: 'gpt-5.6-terra',
+    TRAINING_AI_MODE: 'alibaba',
+    ALIBABA_API_KEY: 'sk-live-project-key-value-123456',
+    TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS: '30000',
     PUBLIC_APP_URL: 'https://platforma.fluffywhite.moscow',
     MINIO_BUCKET: 'platforma',
     TRAINING_AUDIO_BUCKET: 'platforma-training-audio',
@@ -95,24 +92,35 @@ test('harmless-extra routing is strict and remains fail-closed before calibratio
   );
 });
 
-test('question generation routing defaults to terra_only and requires exact official models', () => {
+test('question generation routing defaults to fast DeepSeek with the stronger one as fallback', () => {
   assert.deepEqual(readQuestionGenerationRoutingConfig({}), {
+    strategy: 'luna_then_terra',
+    routingVersion: 'luna-terra-router-v1',
+    validatorVersion: 'training-question-validator-v1',
+    primaryModel: 'deepseek-v4.1-flash',
+    fallbackModel: 'deepseek-v4-pro',
+    terraModel: 'deepseek-v4-pro',
+    lunaModel: 'deepseek-v4.1-flash',
+  });
+  assert.deepEqual(readQuestionGenerationRoutingConfig({
+    TRAINING_QUESTION_GENERATION_STRATEGY: 'terra_only',
+  }), {
     strategy: 'terra_only',
     routingVersion: 'luna-terra-router-v1',
     validatorVersion: 'training-question-validator-v1',
-    primaryModel: 'gpt-5.6-terra',
+    primaryModel: 'deepseek-v4-pro',
     fallbackModel: null,
-    terraModel: 'gpt-5.6-terra',
-    lunaModel: 'gpt-5.6-luna',
+    terraModel: 'deepseek-v4-pro',
+    lunaModel: 'deepseek-v4.1-flash',
   });
   assert.equal(readQuestionGenerationRoutingConfig({
-    OPENAI_QUESTION_GENERATION_STRATEGY: 'luna_then_terra',
-  }).primaryModel, 'gpt-5.6-luna');
+    TRAINING_QUESTION_GENERATION_LUNA_MODEL: 'qwen-plus',
+  }).primaryModel, 'qwen-plus');
   assert.throws(
     () => readQuestionGenerationRoutingConfig({
-      OPENAI_QUESTION_GENERATION_MODEL: 'gpt-5.6-luna',
+      TRAINING_QUESTION_GENERATION_STRATEGY: 'luna_first',
     }),
-    /OPENAI_QUESTION_GENERATION_MODEL_INVALID/,
+    /TRAINING_QUESTION_GENERATION_STRATEGY_INVALID/,
   );
 });
 
@@ -138,9 +146,12 @@ test('production enabled mode requires real providers, HTTPS and pairwise distin
     ['TRAINING_AI_MODE', 'fake'],
     ['TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED', 'TRUE'],
     ['TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED', 'TRUE'],
-    ['OPENAI_QUESTION_GENERATION_STRATEGY', 'luna_first'],
-    ['OPENAI_QUESTION_GENERATION_MODEL', 'gpt-5.6-luna'],
-    ['OPENAI_QUESTION_GENERATION_LUNA_MODEL', 'gpt-5.6-terra'],
+    ['TRAINING_AI_MODE', 'openai'],
+    ['ALIBABA_API_KEY', ''],
+    ['ALIBABA_API_KEY', 'placeholder-key-value-123456'],
+    ['TRAINING_QUESTION_GENERATION_STRATEGY', 'luna_first'],
+    ['TRAINING_QUESTION_GENERATION_MODEL', 'x'],
+    ['TRAINING_QUESTION_GENERATION_LUNA_MODEL', 'placeholder'],
     ['PUBLIC_APP_URL', 'http://platforma.fluffywhite.moscow'],
     ['PUBLIC_APP_URL', 'https://127.0.0.1'],
     ['PUBLIC_APP_URL', 'https://10.1.2.3'],
@@ -148,12 +159,13 @@ test('production enabled mode requires real providers, HTTPS and pairwise distin
     ['TELEGRAM_WEBHOOK_URL', 'https://localhost/training/telegram/webhook'],
     ['TRAINING_AUDIO_BUCKET', 'platforma'],
     ['TRAINING_MATERIAL_BUCKET', 'Invalid_Bucket'],
-    ['OPENAI_QUESTION_GENERATION_MODEL', ''],
-    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', '4999'],
-    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', '120001'],
-    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', 'not-a-number'],
-    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', '   '],
-    ['OPENAI_EVALUATOR_MODEL', ''],
+    ['TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS', '4999'],
+    ['TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS', '120001'],
+    ['TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS', 'not-a-number'],
+    ['TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS', '   '],
+    ['TRAINING_EVALUATOR_MODEL', 'placeholder'],
+    ['TRAINING_EVALUATOR_FALLBACK_MODEL', 'x'],
+    ['TRAINING_TRANSCRIPTION_MODEL', 'example-model'],
   ];
 
   for (const [key, value] of invalidCases) {
@@ -162,20 +174,24 @@ test('production enabled mode requires real providers, HTTPS and pairwise distin
   }
 });
 
-test('production evaluator model validation follows primary then legacy fallback precedence', () => {
-  const legacyOnly = validProductionEnvironment();
-  delete legacyOnly.OPENAI_EVALUATOR_MODEL;
-  legacyOnly.OPENAI_EVALUATION_MODEL = 'gpt-5.6-terra';
-  assert.deepEqual(validateTrainingRuntimeConfig(legacyOnly), { enabled: true });
+test('production model overrides are optional but validated when set', () => {
+  assert.deepEqual(validateTrainingRuntimeConfig({
+    ...validProductionEnvironment(),
+    TRAINING_TRANSCRIPTION_MODEL: 'qwen3-asr-flash',
+    TRAINING_EVALUATOR_MODEL: 'deepseek-v4.1-flash',
+    TRAINING_EVALUATOR_FALLBACK_MODEL: 'deepseek-v4-pro',
+    TRAINING_QUESTION_GENERATION_MODEL: 'deepseek-v4-pro',
+    TRAINING_QUESTION_GENERATION_LUNA_MODEL: 'deepseek-v4.1-flash',
+    TRAINING_QUESTION_GENERATION_STRATEGY: 'terra_only',
+  }), { enabled: true });
 
-  const invalidPrimary = {
-    ...legacyOnly,
-    OPENAI_EVALUATOR_MODEL: 'placeholder',
-  };
   assert.throws(
-    () => validateTrainingRuntimeConfig(invalidPrimary),
+    () => validateTrainingRuntimeConfig({
+      ...validProductionEnvironment(),
+      TRAINING_EVALUATOR_MODEL: 'placeholder',
+    }),
     (error) => error instanceof TrainingRuntimeConfigError &&
-      error.code === 'OPENAI_EVALUATOR_MODEL_INVALID',
+      error.code === 'TRAINING_EVALUATOR_MODEL_INVALID',
   );
 });
 
@@ -368,9 +384,9 @@ test('Docker and ordinary-test contracts preserve signal, ffmpeg and opt-in Open
   assert.match(compose,
     /training-voice-worker:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED:\s*\$\{TRAINING_VOICE_WORKER_ENABLED:-true\}/u);
   assert.match(ordinaryTests, /TRAINING_AI_MODE = 'fake'/u);
-  assert.match(ordinaryTests, /delete environment\.OPENAI_API_KEY/u);
-  assert.notEqual(packageJson.scripts.test, packageJson.scripts['test:training:openai:smoke']);
-  assert.doesNotMatch(packageJson.scripts.test, /openai.*smoke/iu);
+  assert.match(ordinaryTests, /delete environment\.ALIBABA_API_KEY/u);
+  assert.notEqual(packageJson.scripts.test, packageJson.scripts['test:training:ai:smoke']);
+  assert.doesNotMatch(packageJson.scripts.test, /ai.*smoke/iu);
   assert.notEqual(
     packageJson.scripts.test,
     packageJson.scripts['benchmark:training:question-budget'],

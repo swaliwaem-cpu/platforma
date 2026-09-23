@@ -61,7 +61,7 @@ pnpm-монорепозиторий (pnpm@10):
 - Контроллеры (6): employee API, admin API, materials, config, audio-access, telegram webhook (`POST /training/telegram/webhook`, secret-token, 64 KB лимит).
 - Ядро: `training-project.service.ts` (DRAFT→PUBLISHED_CLOSED→OPEN), `training-attempt.service.ts` + state (snapshot 1 main + 10 вопросов, таймер, 3 из 10, лимиты, retake-delay), results/review/ranking.
 - Знания: knowledge service, materials (PDF через pdfjs-dist, URL через cheerio).
-- AI: три провайдер-интерфейса с DI-токенами (`TRAINING_EVALUATOR`, `TRAINING_TRANSCRIBER`, `TRAINING_MATERIAL_SUGGESTER`), fake/openai по `TRAINING_AI_MODE`; учёт расхода — `training-ai-usage.service.ts`.
+- AI: три провайдер-интерфейса с DI-токенами (`TRAINING_EVALUATOR`, `TRAINING_TRANSCRIBER`, `TRAINING_MATERIAL_SUGGESTER`), fake/alibaba по `TRAINING_AI_MODE` (DashScope: DeepSeek для вопросов и оценки, `qwen3-asr-flash` для голоса, ключ `ALIBABA_API_KEY` общий с ассистентом); учёт расхода — `training-ai-usage.service.ts`.
 - Voice worker (910 строк): PG row-lock claim (lock_owner + heartbeat + fencing, stale 2 мин, concurrency 3); транскрибация → оценка → outbox.
 - Telegram: линковка по токену (TTL 15 мин), outbox-worker (claim+heartbeat, retry до 8 раз, backoff до часа).
 - Скрипты: `training:webhook:{status,register,delete}`, `test:training-v2:e2e`, `benchmark:training:*`.
@@ -69,7 +69,7 @@ pnpm-монорепозиторий (pnpm@10):
 ### Интеграции backend
 
 S3/MinIO (самописный SigV4 на fetch/HMAC), OpenRouteService (пешеходные маршруты, PG-кэш),
-OpenAI (training), Alibaba DashScope + Yandex Search API (assistant), Telegram Bot API, nodemailer (email-коды), ffmpeg (аудио),
+Alibaba DashScope (training и assistant), Yandex Search API (assistant), Telegram Bot API, nodemailer (email-коды), ffmpeg (аудио),
 sharp (variants), pdfkit/pdfjs-dist, playwright-core (рендер презентаций), cheerio.
 Внешней очереди нет — везде in-process polling-воркеры с PG-claim (lock_owner/heartbeat/stale-recovery).
 
@@ -130,7 +130,7 @@ PostgreSQL + PostGIS (`searchPoint` geography(Point,4326)) + pgvector. Доме�
 
 - `docker/postgres/` — собственный образ: postgis 16-3.5 + pgvector 0.8.6.
 - `docker-compose.yml` (локально, всё уже поднято): postgres:5432, redis:6379, minio:9000/9001 (бакеты platforma, platforma-training-audio, platforma-training-materials), api:3000 (по умолчанию `ASSISTANT_MODULE_ENABLED=false`, AI/geo — fake), training-voice-worker, assistant-source-worker (профиль, выключен), web:5173.
-- `docker-compose.production.yml` — override: секреты обязательны (`:?required`), порты закрыты за прокси (127.0.0.1), `TRAINING_AI_MODE=openai`, `TELEGRAM_TRANSPORT_MODE=real`, готовые images из CI.
+- `docker-compose.production.yml` — override: секреты обязательны (`:?required`), порты закрыты за прокси (127.0.0.1), `TRAINING_AI_MODE=alibaba`, `TELEGRAM_TRANSPORT_MODE=real`, готовые images из CI.
 - Деплой: push в `main` = раскатка на прод → никогда без явной команды пользователя.
 - Миграции: 75, эволюция каталог→фиды→презентации→training v1→v2→assistant t01–t07→geo2. Последние: `20260903173000_add_assistant_geo2_metro_routes`, `20260907010000_allow_zero_assistant_metro_duration`.
 

@@ -1,9 +1,13 @@
-export const DEFAULT_OPENAI_TRANSCRIPTION_MODEL =
-  'gpt-4o-mini-transcribe-2025-12-15';
-export const DEFAULT_OPENAI_EVALUATION_MODEL = 'gpt-5.6-terra';
-export const DEFAULT_OPENAI_EVALUATION_REASONING = 'medium';
+// Training talks to Alibaba DashScope (OpenAI-compatible chat completions) with the
+// same ALIBABA_API_KEY and base URL as the assistant. DeepSeek does the text work,
+// Qwen ASR does speech recognition.
+export const DEFAULT_TRAINING_ALIBABA_BASE_URL =
+  'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+export const DEFAULT_TRAINING_TRANSCRIPTION_MODEL = 'qwen3-asr-flash';
+export const DEFAULT_TRAINING_PRIMARY_MODEL = 'deepseek-v4.1-flash';
+export const DEFAULT_TRAINING_FALLBACK_MODEL = 'deepseek-v4-pro';
 
-export type TrainingAiMode = 'fake' | 'openai';
+export type TrainingAiMode = 'fake' | 'alibaba';
 
 export type TrainingOpenAIRequestPolicy = {
   timeoutMs: number;
@@ -57,13 +61,13 @@ export class TrainingOpenAIClient {
   constructor(
     private readonly apiKey: string,
     private readonly fetchImplementation: typeof fetch = fetch,
-    private readonly baseUrl = 'https://api.openai.com/v1',
+    private readonly baseUrl = readTrainingAlibabaBaseUrl(),
   ) {
-    if (!apiKey.trim()) throw new TrainingOpenAIError('OPENAI_API_KEY_MISSING', false);
+    if (!apiKey.trim()) throw new TrainingOpenAIError('ALIBABA_API_KEY_MISSING', false);
   }
 
   async request<T>(input: {
-    path: '/audio/transcriptions' | '/responses';
+    path: '/chat/completions';
     body: BodyInit;
     contentType?: string;
     clientRequestId?: string;
@@ -228,18 +232,91 @@ export class TrainingOpenAIClient {
 export function getTrainingAiMode(): TrainingAiMode {
   const mode = (process.env.TRAINING_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US');
 
-  if (mode !== 'fake' && mode !== 'openai') {
+  if (mode !== 'fake' && mode !== 'alibaba') {
     throw new TrainingOpenAIError('TRAINING_AI_MODE_INVALID', false);
   }
 
   return mode;
 }
 
-export function getOpenAIApiKey() {
-  const key = process.env.OPENAI_API_KEY?.trim() ?? '';
+export function getTrainingAlibabaApiKey() {
+  const key = process.env.ALIBABA_API_KEY?.trim() ?? '';
 
-  if (!key) throw new TrainingOpenAIError('OPENAI_API_KEY_MISSING', false);
+  if (!key) throw new TrainingOpenAIError('ALIBABA_API_KEY_MISSING', false);
   return key;
+}
+
+function readTrainingAlibabaBaseUrl() {
+  return (
+    process.env.ASSISTANT_ALIBABA_BASE_URL?.trim() || DEFAULT_TRAINING_ALIBABA_BASE_URL
+  ).replace(/\/+$/u, '');
+}
+
+export function readTrainingModel(name: string, fallback: string) {
+  const model = (process.env[name] ?? '').trim() || fallback;
+
+  if (model.length > 120) throw new TrainingOpenAIError(`${name}_INVALID`, false);
+  return model;
+}
+
+export type TrainingChatCompletionMessage = {
+  role: 'system' | 'user';
+  content: string;
+};
+
+// JSON mode instead of strict json_schema: DashScope rejects json_schema for
+// deepseek-v4.1-flash, so the schema goes into the prompt and every caller
+// validates the parsed object locally.
+export function createTrainingJsonChatCompletionBody(input: {
+  model: string;
+  instructions: string;
+  schema: unknown;
+  userMessages: string[];
+  maxOutputTokens: number;
+}) {
+  const messages: TrainingChatCompletionMessage[] = [
+    {
+      role: 'system',
+      content: [
+        input.instructions,
+        'Ответ — один JSON-объект без markdown и пояснений, строго по этой JSON Schema:',
+        JSON.stringify(input.schema),
+      ].join('\n\n'),
+    },
+    ...input.userMessages.map((content) => ({ role: 'user' as const, content })),
+  ];
+
+  return {
+    model: input.model,
+    messages,
+    response_format: { type: 'json_object' },
+    max_tokens: input.maxOutputTokens,
+    temperature: 0.2,
+    enable_thinking: false,
+    stream: false,
+  };
+}
+
+export type TrainingChatCompletionOutput = {
+  content: string | null;
+  finishReason: string | null;
+};
+
+export function readTrainingChatCompletionOutput(
+  value: unknown,
+): TrainingChatCompletionOutput | null {
+  if (!isRecord(value) || !Array.isArray(value.choices) || value.choices.length !== 1) {
+    return null;
+  }
+  const choice = value.choices[0];
+  if (!isRecord(choice) || !isRecord(choice.message)) return null;
+
+  return {
+    content: typeof choice.message.content === 'string' && choice.message.content.trim()
+      ? choice.message.content
+      : null,
+    finishReason: typeof choice.finish_reason === 'string' ? choice.finish_reason : null,
+  };
 }
 
 export function readTrainingOpenAIInteger(
@@ -273,6 +350,10 @@ function statusError(status: number, attempts: number) {
             : 'OPENAI_HTTP_ERROR';
 
   return new TrainingOpenAIError(code, retryable, attempts);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function normalizeFetchError(error: unknown, attempts: number) {

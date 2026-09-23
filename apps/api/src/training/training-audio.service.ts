@@ -17,7 +17,8 @@ import { S3StorageService } from '../files/s3-storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   getTrainingAudioLimits,
-  OPENAI_TRANSCRIPTION_HARD_MAX_BYTES,
+  TRAINING_MERGED_AUDIO_HARD_MAX_BYTES,
+  TRAINING_TRANSCRIPTION_MAX_CHUNK_SECONDS,
   TrainingAudioLimitsError,
   type TrainingAudioLimits,
 } from './training-audio-limits';
@@ -270,7 +271,7 @@ export class TrainingAudioService {
       const output = await inspectAudioFile(
         outputPath,
         'audio/webm',
-        OPENAI_TRANSCRIPTION_HARD_MAX_BYTES,
+        TRAINING_MERGED_AUDIO_HARD_MAX_BYTES,
       );
       const checksum = await hashFile(outputPath);
       const key = `training-v2/answers/${answerId}/merged.webm`;
@@ -392,7 +393,7 @@ export class TrainingAudioService {
       format.mimeType,
       format.mimeType === 'audio/wav'
         ? 64 * 1024 * 1024
-        : OPENAI_TRANSCRIPTION_HARD_MAX_BYTES,
+        : TRAINING_MERGED_AUDIO_HARD_MAX_BYTES,
     );
 
     const ownership = await this.prisma.trainingAnswer.count({
@@ -554,7 +555,10 @@ export class TrainingAudioService {
     limits: TrainingAudioLimits,
     mimeType: TrainingAudioMimeType = 'audio/webm',
   ): Promise<TrainingProviderAudioUpload[]> {
-    if (sizeBytes <= limits.providerUploadMaxBytes) {
+    if (
+      sizeBytes <= limits.providerUploadMaxBytes &&
+      durationSeconds <= TRAINING_TRANSCRIPTION_MAX_CHUNK_SECONDS
+    ) {
       return [{
         sequence: 0,
         filePath: mergedPath,
@@ -858,7 +862,7 @@ export function calculateTrainingAudioChunkDuration(limits: TrainingAudioLimits)
   const containerReserveBytes = 64 * 1024;
   const usableBytes = limits.providerUploadMaxBytes - containerReserveBytes;
   const seconds = Math.floor((usableBytes * 8) / limits.opusBitrateBps);
-  return Math.max(15, seconds);
+  return Math.max(15, Math.min(TRAINING_TRANSCRIPTION_MAX_CHUNK_SECONDS, seconds));
 }
 
 function trainingOpusOutputArgs(opusBitrateBps: number) {

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import { Logger } from '@nestjs/common';
 
@@ -12,8 +12,11 @@ import {
   validateTrainingStructuredEvaluation,
 } from './training-evaluator';
 import {
-  DEFAULT_OPENAI_EVALUATION_MODEL,
-  DEFAULT_OPENAI_EVALUATION_REASONING,
+  createTrainingJsonChatCompletionBody,
+  DEFAULT_TRAINING_FALLBACK_MODEL,
+  DEFAULT_TRAINING_PRIMARY_MODEL,
+  readTrainingChatCompletionOutput,
+  readTrainingModel,
   readTrainingOpenAIInteger,
   TrainingOpenAIClient,
   TrainingOpenAIError,
@@ -30,7 +33,7 @@ import {
 } from './training-openai-usage';
 import type { TrainingAiUsageRecorder } from './training-ai-usage.service';
 
-export const TRAINING_EVALUATOR_PROMPT_VERSION = 'training-evaluator-prompt-v4';
+export const TRAINING_EVALUATOR_PROMPT_VERSION = 'training-evaluator-prompt-v5';
 export const TRAINING_EVALUATOR_REPAIR_VERSION = 'training-evaluator-repair-v1';
 
 type TrainingEvaluationRepair = Readonly<{
@@ -69,29 +72,28 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
     input: TrainingEvaluationInput,
     options?: { signal?: AbortSignal },
   ): Promise<TrainingEvaluationResult> {
-    const model = (
-      process.env.OPENAI_EVALUATOR_MODEL?.trim() ||
-      process.env.OPENAI_EVALUATION_MODEL?.trim() ||
-      DEFAULT_OPENAI_EVALUATION_MODEL
-    ).trim();
-    const reasoning = readEvaluationReasoning(input.questionType);
-
-    if (!model) throw new TrainingOpenAIError('OPENAI_EVALUATION_MODEL_INVALID', false);
+    // The fast model answers first; a malformed or invalid answer is repaired by the
+    // stronger one.
+    const primaryModel = readTrainingModel('TRAINING_EVALUATOR_MODEL', DEFAULT_TRAINING_PRIMARY_MODEL);
+    const repairModel = readTrainingModel(
+      'TRAINING_EVALUATOR_FALLBACK_MODEL',
+      DEFAULT_TRAINING_FALLBACK_MODEL,
+    );
     const limits = readTrainingEvaluationOutputLimits();
     const maximumOutputTokens = readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_MAX_OUTPUT_TOKENS',
+      'TRAINING_EVALUATION_MAX_OUTPUT_TOKENS',
       4_000,
       500,
       16_000,
     );
     const timeoutMs = readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_TIMEOUT_MS',
+      'TRAINING_EVALUATION_TIMEOUT_MS',
       120_000,
       1_000,
       300_000,
     );
     const maximumProviderRetries = readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_MAX_RETRIES',
+      'TRAINING_EVALUATION_MAX_RETRIES',
       2,
       0,
       5,
@@ -103,6 +105,7 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
 
     const requestEvaluation = async (repair: TrainingEvaluationRepair | null) => {
       const attemptOffset = totalAttempts;
+      const model = repair ? repairModel : primaryModel;
       const remainingMs = deadline - Date.now();
 
       if (remainingMs <= 0) {
@@ -111,11 +114,10 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
 
       try {
         const response = await this.client.request({
-          path: '/responses',
+          path: '/chat/completions',
           body: JSON.stringify(createEvaluationRequestBody({
             input,
             model,
-            reasoning,
             maximumOutputTokens,
             limits,
             repair,
@@ -146,7 +148,7 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
             const usageLog = createTrainingOpenAIUsageLog({
               operation: 'training_answer_evaluation',
               model: metadata.model ?? model,
-              reasoningEffort: reasoning,
+              reasoningEffort: null,
               projectId: input.projectId,
               questionId: input.questionId,
               attemptId: input.attemptId,
@@ -169,7 +171,7 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
               operation: usageLog.operation,
               requestedModel: model,
               model: metadata.model ?? model,
-              reasoningEffort: reasoning,
+              reasoningEffort: null,
               promptVersion: TRAINING_EVALUATOR_PROMPT_VERSION,
               compilerVersion: null,
               schemaVersion: resolveEvaluationSchemaVersion(input),
@@ -183,8 +185,9 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
               httpStatus: observation.httpStatus,
               outcome: observation.outcome,
               errorCode: observation.errorCode,
-              isRetry: attemptOrdinal > 1,
-              isFallback: false,
+              isRetry: attemptOrdinal > 1 && repair === null,
+              isFallback: repair !== null,
+              fallbackReason: repair ? 'evaluation_repair_after_invalid_output' : null,
               usage: metadata.usage,
               latencyMs: observation.durationMs,
             });
@@ -229,137 +232,100 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
 function createEvaluationRequestBody(input: {
   input: TrainingEvaluationInput;
   model: string;
-  reasoning: string;
   maximumOutputTokens: number;
   limits: TrainingEvaluationOutputLimits;
   repair: TrainingEvaluationRepair | null;
 }) {
   const schemaVersion = resolveEvaluationSchemaVersion(input.input);
-  const content = [
-    {
-      type: 'input_text',
-      text: JSON.stringify({
-        schema_version: schemaVersion,
-        prompt_version: TRAINING_EVALUATOR_PROMPT_VERSION,
-        question: {
-          text: input.input.questionText,
-          type: input.input.questionType,
-          max_answer_score: input.input.maxScore,
-        },
-        approved_facts: input.input.facts.map((fact) => ({
-          id: fact.id,
-          statement: fact.statement,
-          aliases: fact.aliases,
-          required: fact.required,
-        })),
-        criteria: input.input.criteria.map((criterion) => ({
-          id: criterion.id,
-          code: criterion.code,
-          title: criterion.title,
-          guidance: criterion.guidance,
-          max_points: criterion.maxPoints,
-        })),
-      }),
-      prompt_cache_breakpoint: { mode: 'explicit' },
-    },
-    {
-      type: 'input_text',
-      text: JSON.stringify({
-        trust_boundary: 'UNTRUSTED_TRANSCRIPT',
-        transcript: input.input.transcript,
-        objective_metrics: input.input.objectiveMetrics,
-        harmless_extra_routing_enabled: input.input.harmlessExtraRoutingEnabled === true,
-      }),
-    },
+  // Question facts first and transcript last, so the provider's prefix cache can
+  // reuse the stable part across answers to the same question.
+  const userMessages = [
+    JSON.stringify({
+      schema_version: schemaVersion,
+      prompt_version: TRAINING_EVALUATOR_PROMPT_VERSION,
+      question: {
+        text: input.input.questionText,
+        type: input.input.questionType,
+        max_answer_score: input.input.maxScore,
+      },
+      approved_facts: input.input.facts.map((fact) => ({
+        id: fact.id,
+        statement: fact.statement,
+        aliases: fact.aliases,
+        required: fact.required,
+      })),
+      criteria: input.input.criteria.map((criterion) => ({
+        id: criterion.id,
+        code: criterion.code,
+        title: criterion.title,
+        guidance: criterion.guidance,
+        max_points: criterion.maxPoints,
+      })),
+    }),
+    JSON.stringify({
+      trust_boundary: 'UNTRUSTED_TRANSCRIPT',
+      transcript: input.input.transcript,
+      objective_metrics: input.input.objectiveMetrics,
+      harmless_extra_routing_enabled: input.input.harmlessExtraRoutingEnabled === true,
+    }),
   ];
 
   if (input.repair) {
-    content.push({
-      type: 'input_text',
-      text: JSON.stringify({
-        repair_contract: TRAINING_EVALUATOR_REPAIR_VERSION,
-        validation_error_code: input.repair.errorCode,
-        instruction: [
-          'Сгенерируй оценку заново, исправив только указанный класс ошибки.',
-          'Не копируй невалидный ответ и не меняй JSON schema.',
-          'Каждая evidence должна быть точной подстрокой transcript.',
-          'Используй только переданные fact_id и criterion_id.',
-          'Сохраняй пояснения и summary краткими.',
-        ].join(' '),
-      }),
-    });
+    userMessages.push(JSON.stringify({
+      repair_contract: TRAINING_EVALUATOR_REPAIR_VERSION,
+      validation_error_code: input.repair.errorCode,
+      instruction: [
+        'Сгенерируй оценку заново, исправив только указанный класс ошибки.',
+        'Не копируй невалидный ответ и не меняй JSON schema.',
+        'Каждая evidence должна быть точной подстрокой transcript.',
+        'Используй только переданные fact_id и criterion_id.',
+        'Сохраняй пояснения и summary краткими.',
+      ].join(' '),
+    }));
   }
 
-  return {
+  return createTrainingJsonChatCompletionBody({
     model: input.model,
-    reasoning: { effort: input.reasoning },
-    store: false,
-    max_output_tokens: input.maximumOutputTokens,
+    maxOutputTokens: input.maximumOutputTokens,
     instructions: createEvaluationInstructions(input.input),
-    prompt_cache_key: createEvaluationPromptCacheKey(input.input),
-    prompt_cache_options: { mode: 'explicit' },
-    input: [{ role: 'user', content }],
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'training_v2_evaluation',
-        strict: true,
-        schema: createEvaluationSchema(input.input, input.limits),
-      },
-    },
-  };
+    schema: createEvaluationSchema(input.input, input.limits),
+    userMessages,
+  });
 }
 
 export function readTrainingEvaluationOutputLimits(): TrainingEvaluationOutputLimits {
   return {
     evidenceMaxChars: readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_EVIDENCE_MAX_CHARS',
+      'TRAINING_EVALUATION_EVIDENCE_MAX_CHARS',
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.evidenceMaxChars,
       80,
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.evidenceMaxChars,
     ),
     explanationMaxChars: readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_EXPLANATION_MAX_CHARS',
+      'TRAINING_EVALUATION_EXPLANATION_MAX_CHARS',
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.explanationMaxChars,
       80,
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.explanationMaxChars,
     ),
     summaryMaxChars: readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_SUMMARY_MAX_CHARS',
+      'TRAINING_EVALUATION_SUMMARY_MAX_CHARS',
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.summaryMaxChars,
       80,
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.summaryMaxChars,
     ),
     unsupportedClaimsMax: readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_UNSUPPORTED_CLAIMS_MAX',
+      'TRAINING_EVALUATION_UNSUPPORTED_CLAIMS_MAX',
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.unsupportedClaimsMax,
       0,
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.unsupportedClaimsMax,
     ),
     unsupportedClaimMaxChars: readTrainingOpenAIInteger(
-      'OPENAI_EVALUATION_UNSUPPORTED_CLAIM_MAX_CHARS',
+      'TRAINING_EVALUATION_UNSUPPORTED_CLAIM_MAX_CHARS',
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.unsupportedClaimMaxChars,
       80,
       DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS.unsupportedClaimMaxChars,
     ),
   };
-}
-
-function readEvaluationReasoning(questionType: TrainingEvaluationInput['questionType']) {
-  const typeSpecific = questionType === 'FOLLOW_UP'
-    ? process.env.OPENAI_EVALUATOR_FOLLOW_UP_REASONING?.trim()
-    : process.env.OPENAI_EVALUATOR_MAIN_REASONING?.trim();
-  const reasoning = (
-    typeSpecific ||
-    process.env.OPENAI_EVALUATOR_REASONING?.trim() ||
-    process.env.OPENAI_EVALUATION_REASONING?.trim() ||
-    DEFAULT_OPENAI_EVALUATION_REASONING
-  ).trim();
-
-  if (!['low', 'medium', 'high'].includes(reasoning)) {
-    throw new TrainingOpenAIError('OPENAI_EVALUATION_REASONING_INVALID', false);
-  }
-  return reasoning;
 }
 
 function isRepairableEvaluationError(error: TrainingOpenAIError) {
@@ -508,43 +474,27 @@ function parseEvaluationResponse(
   input: TrainingEvaluationInput,
   limits: TrainingEvaluationOutputLimits,
 ) {
-  if (!isRecord(value)) throw new TrainingOpenAIError('OPENAI_EVALUATION_MALFORMED', false);
-  if (typeof value.status !== 'string') {
-    throw new TrainingOpenAIError('OPENAI_EVALUATION_MALFORMED', false);
+  const output = readTrainingChatCompletionOutput(value);
+  if (!output) throw new TrainingOpenAIError('OPENAI_EVALUATION_MALFORMED', false);
+  if (output.finishReason === 'length') {
+    throw new TrainingOpenAIError('OPENAI_EVALUATION_OUTPUT_LIMIT', false);
   }
-  if (value.status === 'incomplete') {
-    const reason = isRecord(value.incomplete_details) &&
-      typeof value.incomplete_details.reason === 'string'
-      ? value.incomplete_details.reason
-      : null;
-
-    if (reason === 'max_output_tokens') {
-      throw new TrainingOpenAIError('OPENAI_EVALUATION_OUTPUT_LIMIT', false);
-    }
+  if (output.finishReason !== 'stop') {
     throw new TrainingOpenAIError(
       'OPENAI_EVALUATION_INCOMPLETE',
       false,
       0,
-      reason === 'content_filter' ? 'CONTENT_FILTER' : 'UNKNOWN_INCOMPLETE_REASON',
+      output.finishReason === 'content_filter'
+        ? 'CONTENT_FILTER'
+        : 'UNEXPECTED_RESPONSE_STATUS',
     );
   }
-  if (containsRefusal(value.output)) {
-    throw new TrainingOpenAIError('OPENAI_EVALUATION_REFUSED', false);
-  }
-  if (value.status !== 'completed') {
-    throw new TrainingOpenAIError(
-      'OPENAI_EVALUATION_INCOMPLETE',
-      false,
-      0,
-      'UNEXPECTED_RESPONSE_STATUS',
-    );
-  }
+  if (!output.content) throw new TrainingOpenAIError('OPENAI_EVALUATION_MALFORMED', false);
 
-  const outputText = readOutputText(value.output);
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(outputText);
+    parsed = JSON.parse(output.content);
   } catch {
     throw new TrainingOpenAIError('OPENAI_EVALUATION_MALFORMED', false);
   }
@@ -552,11 +502,11 @@ function parseEvaluationResponse(
   try {
     return {
       evaluation: validateTrainingStructuredEvaluation(parsed, input, limits),
-      actualModel: typeof value.model === 'string' && value.model.trim()
+      actualModel: isRecord(value) && typeof value.model === 'string' && value.model.trim()
         ? value.model.slice(0, 120)
         : requestedModel,
       responseId: readTrainingOpenAIResponseId(value),
-      usage: parseTrainingOpenAIUsage(value.usage),
+      usage: isRecord(value) ? parseTrainingOpenAIUsage(value.usage) : null,
     };
   } catch (error) {
     throw new TrainingOpenAIError(
@@ -589,52 +539,6 @@ const SAFE_EVALUATION_VALIDATION_CODES = new Set([
 function getSafeEvaluationValidationCode(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   return SAFE_EVALUATION_VALIDATION_CODES.has(code) ? code : 'UNKNOWN_VALIDATION_ERROR';
-}
-
-function readOutputText(value: unknown) {
-  if (!Array.isArray(value)) throw new TrainingOpenAIError('OPENAI_EVALUATION_MALFORMED', false);
-  const texts: string[] = [];
-
-  for (const item of value) {
-    if (!isRecord(item) || !Array.isArray(item.content)) continue;
-
-    for (const content of item.content) {
-      if (isRecord(content) && content.type === 'output_text' && typeof content.text === 'string') {
-        texts.push(content.text);
-      }
-    }
-  }
-
-  if (texts.length !== 1 || !texts[0]?.trim()) {
-    throw new TrainingOpenAIError('OPENAI_EVALUATION_MALFORMED', false);
-  }
-
-  return texts[0];
-}
-
-function containsRefusal(value: unknown) {
-  return Array.isArray(value) && value.some(
-    (item) => isRecord(item) && Array.isArray(item.content) && item.content.some(
-      (content) => isRecord(content) && content.type === 'refusal',
-    ),
-  );
-}
-
-export function createEvaluationPromptCacheKey(input: Pick<
-  TrainingEvaluationInput,
-  | 'projectKnowledgeVersion'
-  | 'questionId'
-  | 'evaluationSchemaVersion'
-  | 'harmlessExtraRoutingEnabled'
->) {
-  const digest = createHash('sha256').update([
-    String(input.projectKnowledgeVersion),
-    input.questionId,
-    TRAINING_EVALUATOR_PROMPT_VERSION,
-    resolveEvaluationSchemaVersion(input),
-    input.harmlessExtraRoutingEnabled === true ? 'classified' : 'conservative',
-  ].join('\0')).digest('hex');
-  return digest;
 }
 
 function resolveEvaluationSchemaVersion(

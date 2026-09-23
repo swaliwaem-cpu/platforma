@@ -924,20 +924,20 @@ test('question knowledge deduplicates exact content with stable hash and fresh p
   assert.equal(rawChars, single.fullSourceChars * 2);
   assert.equal(withDuplicate.fullSourceChars, single.fullSourceChars);
 
-  const previousBudget = process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS;
+  const previousBudget = process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS;
   try {
-    process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = '30000';
+    process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS = '30000';
     const thirtyThousand = prepare([canonical]);
-    process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = '20000';
+    process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS = '20000';
     const twentyThousand = prepare([canonical]);
     assert.equal(thirtyThousand.evidenceMetrics.chosenBudget, single.evidenceMetrics.uniqueChars);
     assert.equal(twentyThousand.evidenceMetrics.chosenBudget, single.evidenceMetrics.uniqueChars);
     assert.equal(thirtyThousand.sourceHash, twentyThousand.sourceHash);
   } finally {
     if (previousBudget === undefined) {
-      delete process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS;
+      delete process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS;
     } else {
-      process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = previousBudget;
+      process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS = previousBudget;
     }
   }
 });
@@ -1095,10 +1095,10 @@ test('question evidence chunking stays stable when source count crosses the old 
   const prepare = (items) => prepareTrainingQuestionKnowledge({
     projectId: 'project', objectId: 'object', objectTitle: 'Север', sources: items,
   });
-  const previousBudget = process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS;
+  const previousBudget = process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS;
 
   try {
-    process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = '5000';
+    process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS = '5000';
     const base = prepare(sources);
     const withDuplicate = prepare([...sources, duplicateUnion]);
 
@@ -1132,9 +1132,9 @@ test('question evidence chunking stays stable when source count crosses the old 
     });
   } finally {
     if (previousBudget === undefined) {
-      delete process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS;
+      delete process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS;
     } else {
-      process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = previousBudget;
+      process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS = previousBudget;
     }
   }
 });
@@ -1343,16 +1343,14 @@ test('question AI evidence uses deterministic compact IDs and keeps full provena
 });
 
 test('question sourceHash includes compact locator contract and compiler version', () => {
-  const previousModel = process.env.OPENAI_QUESTION_GENERATION_MODEL;
-  const previousLunaModel = process.env.OPENAI_QUESTION_GENERATION_LUNA_MODEL;
-  const previousStrategy = process.env.OPENAI_QUESTION_GENERATION_STRATEGY;
-  const previousReasoning = process.env.OPENAI_QUESTION_GENERATION_REASONING;
-  const previousBudget = process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS;
-  process.env.OPENAI_QUESTION_GENERATION_MODEL = 'gpt-5.6-terra';
-  process.env.OPENAI_QUESTION_GENERATION_LUNA_MODEL = 'gpt-5.6-luna';
-  process.env.OPENAI_QUESTION_GENERATION_STRATEGY = 'terra_only';
-  process.env.OPENAI_QUESTION_GENERATION_REASONING = 'low';
-  process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = '30000';
+  const previousModel = process.env.TRAINING_QUESTION_GENERATION_MODEL;
+  const previousLunaModel = process.env.TRAINING_QUESTION_GENERATION_LUNA_MODEL;
+  const previousStrategy = process.env.TRAINING_QUESTION_GENERATION_STRATEGY;
+  const previousBudget = process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS;
+  process.env.TRAINING_QUESTION_GENERATION_MODEL = 'deepseek-v4-pro';
+  process.env.TRAINING_QUESTION_GENERATION_LUNA_MODEL = 'deepseek-v4.1-flash';
+  process.env.TRAINING_QUESTION_GENERATION_STRATEGY = 'terra_only';
+  process.env.TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS = '30000';
 
   try {
     const prepared = prepareTrainingQuestionKnowledge({
@@ -1368,15 +1366,15 @@ test('question sourceHash includes compact locator contract and compiler version
     });
     const hashInput = {
       compilerVersion: 'training-question-compiler-v7',
-      promptVersion: 'training-question-prompt-v3',
+      promptVersion: 'training-question-prompt-v4',
       routing: {
         strategy: 'terra_only',
         routingVersion: 'luna-terra-router-v1',
-        primaryModel: 'gpt-5.6-terra',
+        primaryModel: 'deepseek-v4-pro',
         fallbackModel: null,
         validatorVersion: 'training-question-validator-v1',
       },
-      reasoning: 'low',
+      reasoning: 'none',
       chosenBudget: prepared.evidenceMetrics.chosenBudget,
       budgetPolicyVersion: TRAINING_QUESTION_CONTEXT_BUDGET_POLICY_VERSION,
       selectionAlgorithm: 'source-coverage-numeric-priority-v1',
@@ -1416,18 +1414,17 @@ test('question sourceHash includes compact locator contract and compiler version
     assert.notEqual(prepared.sourceHash, previousStrategyHash);
     assert.notEqual(prepared.sourceHash, previousValidatorHash);
   } finally {
-    restoreEnv('OPENAI_QUESTION_GENERATION_MODEL', previousModel);
-    restoreEnv('OPENAI_QUESTION_GENERATION_LUNA_MODEL', previousLunaModel);
-    restoreEnv('OPENAI_QUESTION_GENERATION_STRATEGY', previousStrategy);
-    restoreEnv('OPENAI_QUESTION_GENERATION_REASONING', previousReasoning);
-    restoreEnv('OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', previousBudget);
+    restoreEnv('TRAINING_QUESTION_GENERATION_MODEL', previousModel);
+    restoreEnv('TRAINING_QUESTION_GENERATION_LUNA_MODEL', previousLunaModel);
+    restoreEnv('TRAINING_QUESTION_GENERATION_STRATEGY', previousStrategy);
+    restoreEnv('TRAINING_QUESTION_GENERATION_SOURCE_MAX_CHARS', previousBudget);
   }
 });
 
 test('question strategy changes sourceHash and shared generation artifact key', () => {
-  const previousStrategy = process.env.OPENAI_QUESTION_GENERATION_STRATEGY;
-  const previousModel = process.env.OPENAI_QUESTION_GENERATION_MODEL;
-  const previousLunaModel = process.env.OPENAI_QUESTION_GENERATION_LUNA_MODEL;
+  const previousStrategy = process.env.TRAINING_QUESTION_GENERATION_STRATEGY;
+  const previousModel = process.env.TRAINING_QUESTION_GENERATION_MODEL;
+  const previousLunaModel = process.env.TRAINING_QUESTION_GENERATION_LUNA_MODEL;
   const objectId = '19191919-1919-4919-8919-191919191919';
   const input = {
     projectId: 'project-routing-hash',
@@ -1447,13 +1444,13 @@ test('question strategy changes sourceHash and shared generation artifact key', 
     })],
   };
 
-  process.env.OPENAI_QUESTION_GENERATION_MODEL = 'gpt-5.6-terra';
-  process.env.OPENAI_QUESTION_GENERATION_LUNA_MODEL = 'gpt-5.6-luna';
+  process.env.TRAINING_QUESTION_GENERATION_MODEL = 'deepseek-v4-pro';
+  process.env.TRAINING_QUESTION_GENERATION_LUNA_MODEL = 'deepseek-v4.1-flash';
   try {
-    process.env.OPENAI_QUESTION_GENERATION_STRATEGY = 'terra_only';
+    process.env.TRAINING_QUESTION_GENERATION_STRATEGY = 'terra_only';
     const terraPrepared = prepareTrainingQuestionKnowledge(input);
     const terraPlan = createTrainingQuestionGenerationPlan(input, terraPrepared, objectId);
-    process.env.OPENAI_QUESTION_GENERATION_STRATEGY = 'luna_then_terra';
+    process.env.TRAINING_QUESTION_GENERATION_STRATEGY = 'luna_then_terra';
     const lunaPrepared = prepareTrainingQuestionKnowledge(input);
     const lunaPlan = createTrainingQuestionGenerationPlan(input, lunaPrepared, objectId);
 
@@ -1464,13 +1461,13 @@ test('question strategy changes sourceHash and shared generation artifact key', 
     assert.equal(terraPlan.generationKey.strategy, 'terra_only');
     assert.equal(terraPlan.generationKey.fallbackModel, null);
     assert.equal(lunaPlan.generationKey.strategy, 'luna_then_terra');
-    assert.equal(lunaPlan.generationKey.primaryModel, 'gpt-5.6-luna');
-    assert.equal(lunaPlan.generationKey.fallbackModel, 'gpt-5.6-terra');
+    assert.equal(lunaPlan.generationKey.primaryModel, 'deepseek-v4.1-flash');
+    assert.equal(lunaPlan.generationKey.fallbackModel, 'deepseek-v4-pro');
     assert.equal(lunaPlan.generationKey.validatorVersion, 'training-question-validator-v1');
   } finally {
-    restoreEnv('OPENAI_QUESTION_GENERATION_STRATEGY', previousStrategy);
-    restoreEnv('OPENAI_QUESTION_GENERATION_MODEL', previousModel);
-    restoreEnv('OPENAI_QUESTION_GENERATION_LUNA_MODEL', previousLunaModel);
+    restoreEnv('TRAINING_QUESTION_GENERATION_STRATEGY', previousStrategy);
+    restoreEnv('TRAINING_QUESTION_GENERATION_MODEL', previousModel);
+    restoreEnv('TRAINING_QUESTION_GENERATION_LUNA_MODEL', previousLunaModel);
   }
 });
 

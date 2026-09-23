@@ -12,10 +12,10 @@ const {
   buildTrainingVocabularyPrompt,
 } = require('../dist/training/training-transcriber.js');
 
-test('OpenAI transcription serializes one WAV multipart part and bounded vocabulary', async () => {
+test('Qwen ASR transcription sends one inline WAV part with Russian and bounded vocabulary', async () => {
   const wav = makeWav();
   const usageRecords = [];
-  const request = await captureNativeRequest({ text: 'Тестовая расшифровка' }, async (baseUrl) => {
+  const request = await captureNativeRequest(asrResponse('Тестовая расшифровка'), async (baseUrl) => {
     const transcriber = new OpenAITrainingTranscriber(
       new TrainingOpenAIClient('test-key', fetch, baseUrl),
       { record: async (value) => { usageRecords.push(value); return true; } },
@@ -23,22 +23,47 @@ test('OpenAI transcription serializes one WAV multipart part and bounded vocabul
     const result = await transcriber.transcribe(makeInput(wav, 'Словарь: ЖК Север'));
 
     assert.equal(result.text, 'Тестовая расшифровка');
-    assert.equal(result.model, 'gpt-4o-mini-transcribe-2025-12-15');
+    assert.equal(result.model, 'qwen3-asr-flash');
     assert.equal(result.requestId, 'request-test');
   });
 
-  assert.equal(request.url, '/v1/audio/transcriptions');
-  assert.match(request.headers['content-type'], /^multipart\/form-data; boundary=/u);
-  assert.equal(countMatches(request.body, 'name="file"'), 1);
-  assert.match(request.body, /filename="answer.wav"/u);
-  assert.match(request.body, /name="model"[\s\S]*gpt-4o-mini-transcribe-2025-12-15/u);
-  assert.match(request.body, /name="language"[\s\S]*ru/u);
-  assert.match(request.body, /ЖК Север/u);
-  assert.equal(request.raw.includes(wav), true);
+  const body = JSON.parse(request.body);
+  assert.equal(request.url, '/compatible-mode/v1/chat/completions');
+  assert.match(request.headers['content-type'], /^application\/json/u);
+  assert.equal(body.model, 'qwen3-asr-flash');
+  assert.equal(body.stream, false);
+  assert.deepEqual(body.asr_options, { language: 'ru', enable_itn: false });
+  assert.deepEqual(body.messages.map((message) => message.role), ['system', 'user']);
+  assert.match(body.messages[0].content[0].text, /ЖК Север/u);
+  assert.equal(body.messages[1].content.length, 1);
+  assert.equal(body.messages[1].content[0].type, 'input_audio');
+  assert.equal(
+    body.messages[1].content[0].input_audio.data,
+    `data:audio/wav;base64,${wav.toString('base64')}`,
+  );
   assert.equal(usageRecords.length, 1);
   assert.equal(usageRecords[0].outcome, 'accepted');
   assert.equal(usageRecords[0].operation, 'training_audio_transcription');
   assert.equal(usageRecords[0].attemptOrdinal, 1);
+  assert.deepEqual(usageRecords[0].usage, {
+    inputTokens: 275,
+    cachedTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 12,
+    reasoningTokens: null,
+    totalTokens: 287,
+  });
+});
+
+test('Qwen ASR transcription without vocabulary sends only the audio message', async () => {
+  let body;
+  const transcriber = makeTranscriber(async (_url, init) => {
+    body = JSON.parse(init.body);
+    return jsonResponse(asrResponse('ok'));
+  });
+
+  await withProviderEnv(() => transcriber.transcribe(makeInput(makeWav(), '')));
+  assert.deepEqual(body.messages.map((message) => message.role), ['user']);
 });
 
 test('transcription vocabulary normalizes, deduplicates and excludes fact statements', () => {
@@ -58,7 +83,7 @@ test('transcription vocabulary normalizes, deduplicates and excludes fact statem
   assert.doesNotMatch(prompt, /В проекте 120 квартир/u);
 });
 
-test('OpenAI transcription retries 429 and 500 but not permanent 400/401', async () => {
+test('Qwen ASR transcription retries 429 and 500 but not permanent 400/401', async () => {
   await withProviderEnv(async () => {
     for (const status of [429, 500]) {
       let calls = 0;
@@ -66,7 +91,7 @@ test('OpenAI transcription retries 429 and 500 but not permanent 400/401', async
         calls += 1;
         return calls === 1
           ? new Response('', { status, headers: { 'retry-after': '0' } })
-          : jsonResponse({ text: 'ok' });
+          : jsonResponse(asrResponse('ok'));
       });
 
       assert.equal((await transcriber.transcribe(makeInput(makeWav(), ''))).text, 'ok');
@@ -85,26 +110,26 @@ test('OpenAI transcription retries 429 and 500 but not permanent 400/401', async
   });
 });
 
-test('OpenAI transcription bounds timeout and rejects empty/malformed responses', async () => {
+test('Qwen ASR transcription bounds timeout and rejects empty/malformed responses', async () => {
   await withProviderEnv(async () => {
-    process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '1000';
-    process.env.OPENAI_TRANSCRIPTION_MAX_RETRIES = '0';
+    process.env.TRAINING_TRANSCRIPTION_TIMEOUT_MS = '1000';
+    process.env.TRAINING_TRANSCRIPTION_MAX_RETRIES = '0';
     const timedOut = makeTranscriber((_url, init) => new Promise((_resolve, reject) => {
       init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
     }));
     await assert.rejects(() => timedOut.transcribe(makeInput(makeWav(), '')), (error) => error.code === 'OPENAI_TIMEOUT');
 
-    for (const payload of [{ text: '' }, { unexpected: true }]) {
+    for (const payload of [asrResponse(''), { text: 'legacy' }, { unexpected: true }]) {
       const malformed = makeTranscriber(async () => jsonResponse(payload));
       await assert.rejects(() => malformed.transcribe(makeInput(makeWav(), '')), (error) => error.code === 'OPENAI_EMPTY_TRANSCRIPT');
     }
   });
 });
 
-test('OpenAI transcription forwards caller abort and does not retry a cancelled request', async () => {
+test('Qwen ASR transcription forwards caller abort and does not retry a cancelled request', async () => {
   await withProviderEnv(async () => {
-    process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '10000';
-    process.env.OPENAI_TRANSCRIPTION_MAX_RETRIES = '2';
+    process.env.TRAINING_TRANSCRIPTION_TIMEOUT_MS = '10000';
+    process.env.TRAINING_TRANSCRIPTION_MAX_RETRIES = '2';
     const controller = new AbortController();
     let calls = 0;
     let signalStarted;
@@ -138,8 +163,8 @@ test('OpenAI transcription forwards caller abort and does not retry a cancelled 
 
 test('Retry-After outside the hard deadline preserves the completed request count', async () => {
   await withProviderEnv(async () => {
-    process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '1000';
-    process.env.OPENAI_TRANSCRIPTION_MAX_RETRIES = '2';
+    process.env.TRAINING_TRANSCRIPTION_TIMEOUT_MS = '1000';
+    process.env.TRAINING_TRANSCRIPTION_MAX_RETRIES = '2';
     let calls = 0;
     const transcriber = makeTranscriber(async () => {
       calls += 1;
@@ -154,21 +179,25 @@ test('Retry-After outside the hard deadline preserves the completed request coun
   });
 });
 
-test('OpenAI transcription rejects invalid or oversized audio before fetch', async () => {
+test('Qwen ASR transcription rejects invalid or oversized audio before fetch', async () => {
   let calls = 0;
   const transcriber = makeTranscriber(async () => {
     calls += 1;
-    return jsonResponse({ text: 'unexpected' });
+    return jsonResponse(asrResponse('unexpected'));
   });
   await assert.rejects(() => transcriber.transcribe(makeInput(Buffer.alloc(50), '')), (error) => error.code === 'OPENAI_INVALID_AUDIO');
-  const oversized = makeWav(25 * 1024 * 1024 + 1);
+  const oversized = makeWav(9 * 1024 * 1024 + 1);
   await assert.rejects(() => transcriber.transcribe(makeInput(oversized, '')), (error) => error.code === 'OPENAI_INVALID_AUDIO');
   assert.equal(calls, 0);
 });
 
 function makeTranscriber(fetchImplementation) {
   return new OpenAITrainingTranscriber(
-    new TrainingOpenAIClient('test-key', fetchImplementation, 'https://openai.invalid/v1'),
+    new TrainingOpenAIClient(
+      'test-key',
+      fetchImplementation,
+      'https://dashscope.invalid/compatible-mode/v1',
+    ),
   );
 }
 
@@ -191,6 +220,26 @@ function makeWav(size = 64) {
   wav.write('RIFF', 0, 'ascii');
   wav.write('WAVE', 8, 'ascii');
   return wav;
+}
+
+function asrResponse(text) {
+  return {
+    id: 'chatcmpl-asr',
+    object: 'chat.completion',
+    model: 'qwen3-asr-flash',
+    choices: [{
+      index: 0,
+      finish_reason: 'stop',
+      message: { role: 'assistant', content: text },
+    }],
+    usage: {
+      prompt_tokens: 275,
+      prompt_tokens_details: { audio_tokens: 245, text_tokens: 30 },
+      completion_tokens: 12,
+      total_tokens: 287,
+      seconds: 9,
+    },
+  };
 }
 
 function jsonResponse(value) {
@@ -221,7 +270,7 @@ async function captureNativeRequest(responseValue, run) {
   const address = server.address();
 
   try {
-    await run(`http://127.0.0.1:${address.port}/v1`);
+    await run(`http://127.0.0.1:${address.port}/compatible-mode/v1`);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
@@ -231,11 +280,12 @@ async function captureNativeRequest(responseValue, run) {
 
 async function withProviderEnv(run) {
   const original = { ...process.env };
-  process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '2000';
-  process.env.OPENAI_TRANSCRIPTION_MAX_RETRIES = '1';
+  process.env.TRAINING_TRANSCRIPTION_TIMEOUT_MS = '2000';
+  process.env.TRAINING_TRANSCRIPTION_MAX_RETRIES = '1';
+  delete process.env.TRAINING_TRANSCRIPTION_MODEL;
 
   try {
-    await run();
+    return await run();
   } finally {
     for (const key of Object.keys(process.env)) {
       if (!(key in original)) delete process.env[key];

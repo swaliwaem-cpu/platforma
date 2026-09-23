@@ -14,7 +14,7 @@
     "dev:web": "pnpm --filter @platforma/web dev",
     "test": "pnpm -r --if-present test",
     "test:training-v2:e2e": "node apps/api/tests/training-v2-stage5-part4-e2e.cjs",
-    "test:training:openai:smoke": "pnpm --filter @platforma/api test:training:openai:smoke",
+    "test:training:ai:smoke": "pnpm --filter @platforma/api test:training:ai:smoke",
     "benchmark:training:question-budget": "pnpm build:api && node --env-file-if-exists=.env apps/api/tests/training-v2-question-budget-benchmark.cjs",
     "benchmark:training:luna-terra": "pnpm build:api && node --env-file-if-exists=.env apps/api/tests/training-v2-luna-terra-benchmark.cjs",
     "benchmark:training:evaluator": "pnpm build:api && node --env-file-if-exists=.env apps/api/tests/training-v2-evaluator-efficiency-benchmark.cjs",

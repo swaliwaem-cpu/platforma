@@ -21,7 +21,7 @@ import {
 } from './training-evaluator';
 import { OpenAITrainingEvaluator } from './training-openai-evaluator';
 import {
-  getOpenAIApiKey,
+  getTrainingAlibabaApiKey,
   getTrainingAiMode,
   TrainingOpenAIClient,
 } from './training-openai-client';
@@ -121,9 +121,9 @@ import { TrainingAudioStorageService } from './training-audio-storage.service';
         fakeEvaluator: DeterministicFakeTrainingEvaluator,
         aiUsage: TrainingAiUsageService,
       ) =>
-        getTrainingAiMode() === 'openai'
+        getTrainingAiMode() === 'alibaba'
           ? new OpenAITrainingEvaluator(
-              new TrainingOpenAIClient(getOpenAIApiKey()),
+              new TrainingOpenAIClient(getTrainingAlibabaApiKey()),
               aiUsage,
             )
           : fakeEvaluator,
@@ -139,9 +139,9 @@ import { TrainingAudioStorageService } from './training-audio-storage.service';
         fakeSuggester: DeterministicFakeTrainingMaterialSuggester,
         aiUsage: TrainingAiUsageService,
       ) =>
-        getTrainingAiMode() === 'openai'
+        getTrainingAiMode() === 'alibaba'
           ? new OpenAITrainingMaterialSuggester(
-              new TrainingOpenAIClient(getOpenAIApiKey()),
+              new TrainingOpenAIClient(getTrainingAlibabaApiKey()),
               aiUsage,
             )
           : fakeSuggester,
@@ -153,9 +153,9 @@ import { TrainingAudioStorageService } from './training-audio-storage.service';
         fakeTranscriber: DeterministicFakeTrainingTranscriber,
         aiUsage: TrainingAiUsageService,
       ) =>
-        getTrainingAiMode() === 'openai'
+        getTrainingAiMode() === 'alibaba'
           ? new OpenAITrainingTranscriber(
-              new TrainingOpenAIClient(getOpenAIApiKey()),
+              new TrainingOpenAIClient(getTrainingAlibabaApiKey()),
               aiUsage,
             )
           : fakeTranscriber,

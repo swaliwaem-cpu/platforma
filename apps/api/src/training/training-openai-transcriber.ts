@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { openAsBlob } from 'node:fs';
-import { open, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 
 import { Logger } from '@nestjs/common';
 
 import {
   getTrainingAudioLimits,
-  OPENAI_TRANSCRIPTION_HARD_MAX_BYTES,
+  TRAINING_TRANSCRIPTION_UPLOAD_HARD_MAX_BYTES,
 } from './training-audio-limits';
 import {
-  DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+  DEFAULT_TRAINING_TRANSCRIPTION_MODEL,
+  readTrainingChatCompletionOutput,
+  readTrainingModel,
   readTrainingOpenAIInteger,
   TrainingOpenAIClient,
   TrainingOpenAIError,
@@ -44,11 +45,10 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
     options?: { signal?: AbortSignal },
   ): Promise<TrainingTranscriptionResult> {
     const uploads = await resolveTranscriptionUploads(input);
-    const model = (
-      process.env.OPENAI_TRANSCRIPTION_MODEL ?? DEFAULT_OPENAI_TRANSCRIPTION_MODEL
-    ).trim();
-
-    if (!model) throw new TrainingOpenAIError('OPENAI_TRANSCRIPTION_MODEL_INVALID', false);
+    const model = readTrainingModel(
+      'TRAINING_TRANSCRIPTION_MODEL',
+      DEFAULT_TRAINING_TRANSCRIPTION_MODEL,
+    );
 
     const results: TranscriptionPartResult[] = [];
     let attempts = 0;
@@ -104,31 +104,41 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
     uploadCount: number,
     signal?: AbortSignal,
   ): Promise<TranscriptionPartResult> {
-    const form = new FormData();
-    const file = upload.filePath
-      ? await openAsBlob(upload.filePath, { type: upload.mimeType })
-      : new Blob([new Uint8Array(upload.buffer!)], { type: upload.mimeType });
-    form.set('file', file, upload.fileName);
-    form.set('model', model);
-    form.set('language', 'ru');
-    form.set('response_format', 'json');
-    if (prompt) form.set('prompt', prompt);
+    const audio = upload.filePath ? await readFile(upload.filePath) : upload.buffer!;
+    // Qwen ASR takes the audio inline and uses the system text as recognition context
+    // (names, terms, the tail of the previous part).
+    const body = JSON.stringify({
+      model,
+      messages: [
+        ...(prompt ? [{ role: 'system', content: [{ type: 'text', text: prompt }] }] : []),
+        {
+          role: 'user',
+          content: [{
+            type: 'input_audio',
+            input_audio: { data: `data:${upload.mimeType};base64,${audio.toString('base64')}` },
+          }],
+        },
+      ],
+      stream: false,
+      asr_options: { language: 'ru', enable_itn: false },
+    });
 
     const operationRunId = randomUUID();
     const response = await this.client.request({
-      path: '/audio/transcriptions',
-      body: form,
+      path: '/chat/completions',
+      body,
+      contentType: 'application/json',
       clientRequestId: operationRunId,
       signal,
       policy: {
         timeoutMs: readTrainingOpenAIInteger(
-          'OPENAI_TRANSCRIPTION_TIMEOUT_MS',
+          'TRAINING_TRANSCRIPTION_TIMEOUT_MS',
           60_000,
           1_000,
           300_000,
         ),
         maxRetries: readTrainingOpenAIInteger(
-          'OPENAI_TRANSCRIPTION_MAX_RETRIES',
+          'TRAINING_TRANSCRIPTION_MAX_RETRIES',
           2,
           0,
           5,
@@ -136,13 +146,14 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
       },
       parse: async (httpResponse) => {
         const value: unknown = await httpResponse.json();
+        const output = readTrainingChatCompletionOutput(value);
 
-        if (!isRecord(value) || typeof value.text !== 'string' || !value.text.trim()) {
+        if (!isRecord(value) || !output?.content) {
           throw new TrainingOpenAIError('OPENAI_EMPTY_TRANSCRIPT', true);
         }
 
         return {
-          text: value.text.normalize('NFC').trim(),
+          text: output.content.normalize('NFC').trim(),
           actualModel: typeof value.model === 'string' && value.model.trim()
             ? value.model.slice(0, 120)
             : model,
@@ -219,7 +230,7 @@ async function resolveTranscriptionUploads(
   input: TrainingTranscriptionInput,
 ): Promise<ResolvedTranscriptionUpload[]> {
   const configuredMax = getTrainingAudioLimits().providerUploadMaxBytes;
-  const maximumBytes = Math.min(configuredMax, OPENAI_TRANSCRIPTION_HARD_MAX_BYTES);
+  const maximumBytes = Math.min(configuredMax, TRAINING_TRANSCRIPTION_UPLOAD_HARD_MAX_BYTES);
   const uploads: ResolvedTranscriptionUpload[] = input.providerUploads?.length
     ? input.providerUploads
     : input.filePath

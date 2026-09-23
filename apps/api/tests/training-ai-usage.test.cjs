@@ -25,7 +25,7 @@ test('versioned pricing separates uncached, cached, cache-write and output token
     totalTokens: 150,
   }, new Date('2026-08-08T00:00:00.000Z'));
 
-  assert.equal(TRAINING_AI_PRICING_SNAPSHOTS.length, 1);
+  assert.equal(TRAINING_AI_PRICING_SNAPSHOTS.length, 2);
   assert.deepEqual(estimate, {
     pricingVersion: 'openai-standard-pricing-2026-08-07',
     pricingStatus: 'estimated',
@@ -41,7 +41,37 @@ test('versioned pricing separates uncached, cached, cache-write and output token
   );
 });
 
-test('OpenAI client observes transport, provider, local validation and accepted attempts once', async () => {
+test('Alibaba DeepSeek pricing applies from the migration date and bills cached input at full price', () => {
+  const usage = {
+    inputTokens: 1_000,
+    cachedTokens: 400,
+    cacheWriteTokens: 0,
+    outputTokens: 500,
+    reasoningTokens: null,
+    totalTokens: 1_500,
+  };
+  const occurredAt = new Date('2026-09-24T00:00:00.000Z');
+
+  assert.deepEqual(estimateTrainingAiCost('deepseek-v4.1-flash', usage, occurredAt), {
+    pricingVersion: 'alibaba-dashscope-intl-pricing-2026-09-23',
+    pricingStatus: 'estimated',
+    estimatedCostUsd: '0.00090000',
+  });
+  assert.equal(
+    estimateTrainingAiCost('deepseek-v4-pro', usage, occurredAt).estimatedCostUsd,
+    '0.00480000',
+  );
+  assert.equal(
+    estimateTrainingAiCost('gpt-5.6-terra', usage, occurredAt).pricingStatus,
+    'model_unpriced',
+  );
+  assert.equal(
+    estimateTrainingAiCost('qwen3-asr-flash', usage, occurredAt).pricingStatus,
+    'model_unpriced',
+  );
+});
+
+test('training AI client observes transport, provider, local validation and accepted attempts once', async () => {
   const observations = [];
   const operationRunId = randomUUID();
   let calls = 0;
@@ -61,10 +91,10 @@ test('OpenAI client observes transport, provider, local validation and accepted 
       status: 200,
       headers: { 'content-type': 'application/json', 'x-request-id': 'request-ok' },
     });
-  }, 'https://openai.invalid/v1');
+  }, 'https://dashscope.invalid/compatible-mode/v1');
 
   const response = await client.request({
-    path: '/responses',
+    path: '/chat/completions',
     body: '{}',
     contentType: 'application/json',
     clientRequestId: operationRunId,

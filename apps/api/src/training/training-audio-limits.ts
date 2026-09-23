@@ -1,9 +1,14 @@
-export const OPENAI_TRANSCRIPTION_HARD_MAX_BYTES = 25 * 1024 * 1024;
+// Ceiling for the merged answer file kept in storage.
+export const TRAINING_MERGED_AUDIO_HARD_MAX_BYTES = 25 * 1024 * 1024;
+// Qwen ASR accepts one file up to 10 MB and 5 minutes; longer answers are sent in
+// overlapping parts of at most TRAINING_TRANSCRIPTION_MAX_CHUNK_SECONDS.
+export const TRAINING_TRANSCRIPTION_UPLOAD_HARD_MAX_BYTES = 10 * 1024 * 1024;
+export const TRAINING_TRANSCRIPTION_MAX_CHUNK_SECONDS = 240;
 
 const DEFAULT_MAX_DURATION_SECONDS = 30 * 60;
 const DEFAULT_MAX_SEGMENT_BYTES = 20 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_INPUT_BYTES = 60 * 1024 * 1024;
-const DEFAULT_PROVIDER_UPLOAD_MAX_BYTES = 24 * 1024 * 1024;
+const DEFAULT_PROVIDER_UPLOAD_MAX_BYTES = 9 * 1024 * 1024;
 const DEFAULT_FFMPEG_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 64 * 1024 * 1024;
 const DEFAULT_FFMPEG_CONCURRENCY = 1;
@@ -61,7 +66,7 @@ export function getTrainingAudioLimits(
       'TRAINING_AUDIO_PROVIDER_UPLOAD_MAX_BYTES',
       DEFAULT_PROVIDER_UPLOAD_MAX_BYTES,
       256 * 1024,
-      OPENAI_TRANSCRIPTION_HARD_MAX_BYTES,
+      TRAINING_MERGED_AUDIO_HARD_MAX_BYTES,
     ),
     ffmpegTimeoutMs: readInteger(
       environment,
@@ -100,6 +105,12 @@ export function getTrainingAudioLimits(
     ),
   } satisfies TrainingAudioLimits;
 
+  // Env files written for OpenAI still carry 24 MB; Qwen ASR takes at most 10 MB.
+  limits.providerUploadMaxBytes = Math.min(
+    limits.providerUploadMaxBytes,
+    TRAINING_TRANSCRIPTION_UPLOAD_HARD_MAX_BYTES,
+  );
+
   if (limits.maxTotalInputBytes < limits.maxSegmentBytes) {
     throw new TrainingAudioLimitsError('TRAINING_AUDIO_MAX_TOTAL_INPUT_BYTES_INVALID');
   }
@@ -109,7 +120,7 @@ export function getTrainingAudioLimits(
 
   const encodedUpperBound =
     Math.ceil((limits.maxDurationSeconds * limits.opusBitrateBps) / 8) + 1024 * 1024;
-  if (encodedUpperBound > OPENAI_TRANSCRIPTION_HARD_MAX_BYTES) {
+  if (encodedUpperBound > TRAINING_MERGED_AUDIO_HARD_MAX_BYTES) {
     throw new TrainingAudioLimitsError('TRAINING_AUDIO_CODEC_LIMITS_INCONSISTENT');
   }
 

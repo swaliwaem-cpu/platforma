@@ -782,7 +782,7 @@ function readResponseId(value: unknown) {
 
 function readGenerationLeaseMs() {
   const configuredLease = readTrainingOpenAIInteger(
-    'OPENAI_QUESTION_GENERATION_LEASE_MS',
+    'TRAINING_QUESTION_GENERATION_LEASE_MS',
     DEFAULT_GENERATION_LEASE_MS,
     30_000,
     600_000,

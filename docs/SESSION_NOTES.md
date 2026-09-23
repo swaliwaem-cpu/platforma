@@ -12,6 +12,14 @@
 
 ## 2026-09-23
 
+### Модуль обучения: OpenAI → Alibaba DashScope (локально, без коммита)
+
+- Все 4 ИИ-точки на DashScope `/chat/completions` с общим с ассистентом `ALIBABA_API_KEY`/`ASSISTANT_ALIBABA_BASE_URL`, `TRAINING_AI_MODE=alibaba` (значение `openai` теперь ошибка старта). Голос — `qwen3-asr-flash` (аудио inline base64, контекст словаря в system, куски ≤240 с — у ASR лимит 5 мин/10 МБ). Оценка, вопросы, подсказки — `deepseek-v4.1-flash`, при невалидном ответе один перезапрос на `deepseek-v4-pro` (решение пользователя). Ответ в `json_object`: flash на DashScope отвечает 400 на `json_schema`, поэтому схема идёт в промпт, валидируют прежние локальные валидаторы.
+- Env `OPENAI_*` → `TRAINING_*` (модели, таймауты, лимиты), reasoning-переменные удалены; коды ошибок `OPENAI_*` и имена файлов/классов `training-openai-*` оставлены (коды лежат в БД). Учёт: `provider='alibaba'`, прайс-снимок `alibaba-dashscope-intl-pricing-2026-09-23` (flash $0.30/$1.20, pro $2.40/$4.80, кэш по полной цене; ASR без оценки). `fallback_reason` обязателен при `is_fallback` (CHECK в БД) — у оценщика/подсказок заполнен. `TRAINING_AUDIO_PROVIDER_UPLOAD_MAX_BYTES` старше 10 МБ не валит старт, а обрезается.
+- Живые пробы: ASR на русском webm/opus 2 с; оценка частичного ответа 3–5 с с точными цитатами и пойманной выдумкой; генерация 11 вопросов — flash 13 с, либо flash-провал → pro, 43 с. Smoke: `pnpm --filter @platforma/api test:training:ai:smoke` (+ `TRAINING_AI_SMOKE_ENABLED=true`, `TRAINING_AI_SMOKE_AUDIO_FILE`).
+- Локально корневой `.env` переключён на `alibaba`, api и training-voice-worker пересобраны, здоровы. Для прода: в `.env.production` нужен `ALIBABA_API_KEY` (compose теперь требует его и в api, и в воркере), старые `OPENAI_*` можно удалить. Бенчмарки `training-v2-*-benchmark.cjs` и `scripts/training-luna-terra-eval-fixture.cjs` остались под OpenAI (выключены, в `pnpm test` не входят).
+- Проверки: `pnpm test` (api 487, web 342, feed 77, wp 23), `pnpm build`, training postgres/http-харнессы на временной БД. Уже падавший до этих правок `training-v2-stage3-http` (текст «Требует проверки.» vs «Результат проверяется.») не трогал.
+
 ### Production deploy assistant-v2-20260923T0909Z (main 7f29486)
 
 - Выкачен `9518b2a..7f29486` (docs + пересборка ассистента). Пересобраны и пересозданы **api и web** (`--no-deps api web`), миграций нет. Контейнер `platforma-assistant-source-worker-1` остановлен и удалён (сервиса больше нет в compose, образ остался). `training-voice-worker` не трогали.
