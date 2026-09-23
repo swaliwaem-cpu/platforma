@@ -12,6 +12,13 @@
 
 ## 2026-09-23
 
+### Production deploy training-alibaba-20260923T1115Z (main e21364e)
+
+- Выкачен `7f29486..e21364e` (доки + обучение на Alibaba). Пересобран образ api, пересозданы **api и training-voice-worker** — воркер впервые ушёл с образа patch5 (его OpenAI-ключ был мёртв, голосовые на проде до этого не работали). Web не трогали, миграций нет (78, 0 pending).
+- В `.env.production` изменились `API_IMAGE` и `TRAINING_AI_MODE` (`openai`→`alibaba`); `ALIBABA_API_KEY` там уже был. Старые `OPENAI_*` остались, код их не читает. Перед воркером `training-voice-worker-predeploy`: activeClaims 0.
+- Бэкап `/opt/platforma-deploy-backups/training-alibaba-20260923T1115Z/`: env before/candidate, `platforma.dump` 88 МБ + sha256 (`pg_restore -l` = 730), бандл, `deploy-result.txt` с откатом.
+- Проверки: api healthy (продовая валидация конфига обучения прошла), `/health` 200, web 200, `/api/training/admin/ai-usage` без логина 401, в воркере mode=alibaba и ключ есть. Платный смоук ASR+оценки из прод-образа заблокировал классификатор auto-режима — вживую с IP прода не проверено.
+
 ### Модуль обучения: OpenAI → Alibaba DashScope (локально, без коммита)
 
 - Все 4 ИИ-точки на DashScope `/chat/completions` с общим с ассистентом `ALIBABA_API_KEY`/`ASSISTANT_ALIBABA_BASE_URL`, `TRAINING_AI_MODE=alibaba` (значение `openai` теперь ошибка старта). Голос — `qwen3-asr-flash` (аудио inline base64, контекст словаря в system, куски ≤240 с — у ASR лимит 5 мин/10 МБ). Оценка, вопросы, подсказки — `deepseek-v4.1-flash`, при невалидном ответе один перезапрос на `deepseek-v4-pro` (решение пользователя). Ответ в `json_object`: flash на DashScope отвечает 400 на `json_schema`, поэтому схема идёт в промпт, валидируют прежние локальные валидаторы.
