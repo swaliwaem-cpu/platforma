@@ -166,7 +166,8 @@ export function normalizeFeedUnitStatus(value: unknown): FeedStatusNormalization
     return { status: 'BOOKED' };
   }
 
-  if (normalized === 'reserved') {
+  // Profitbase keeps a lot whose deal is being signed in EXECUTION: it is taken, but not sold yet.
+  if (normalized === 'reserved' || normalized === 'execution') {
     return { status: 'RESERVED' };
   }
 
@@ -174,7 +175,8 @@ export function normalizeFeedUnitStatus(value: unknown): FeedStatusNormalization
     return { status: 'SOLD' };
   }
 
-  if (normalized === 'archived' || normalized === 'archive' || normalized === 'unavailable') {
+  // Profitbase appends a CRM pipeline id to custom unavailable statuses, e.g. UNAVAILABLE_amo_68c3e49f74052.
+  if (normalized === 'archived' || normalized === 'archive' || normalized?.startsWith('unavailable')) {
     return { status: 'ARCHIVED' };
   }
 
@@ -189,21 +191,92 @@ export function normalizeFeedUnitStatus(value: unknown): FeedStatusNormalization
   };
 }
 
-export class YandexRealtyFeedParser implements FeedParser {
-  parse(xml: string): FeedParseResult {
-    const root = parseXml(xml);
-    const feed = asRecord(root['realty-feed']);
+// A Profitbase export of a whole developer reaches hundreds of megabytes, and parsing
+// such a document in one pass needs more heap than the import process is given. Cutting
+// it into self-contained documents keeps every offer tree short-lived; the parsed result
+// is the same, so ordinary feeds stay on the single-pass path.
+const yandexFeedSplitThresholdBytes = 16 * 1024 * 1024;
+const yandexFeedSplitOfferCount = 400;
+const yandexFeedOfferCloseTag = '</offer>';
 
-    if (!feed) {
-      throw new Error('Yandex Realty feed must contain <realty-feed>');
+function* splitYandexFeedXmlIntoDocuments(xml: string): Generator<string> {
+  const firstOfferAt = xml.search(/<offer[\s>]/u);
+
+  if (firstOfferAt < 0 || xml.length < yandexFeedSplitThresholdBytes || !canSplitYandexFeedXml(xml, firstOfferAt)) {
+    yield xml;
+    return;
+  }
+
+  const header = xml.slice(0, firstOfferAt);
+  let chunkStart = firstOfferAt;
+  let cursor = firstOfferAt;
+  let offersInChunk = 0;
+
+  while (true) {
+    const closeTagAt = xml.indexOf(yandexFeedOfferCloseTag, cursor);
+
+    if (closeTagAt < 0) {
+      break;
     }
 
+    cursor = closeTagAt + yandexFeedOfferCloseTag.length;
+    offersInChunk += 1;
+
+    if (offersInChunk < yandexFeedSplitOfferCount) {
+      continue;
+    }
+
+    yield `${header}${xml.slice(chunkStart, cursor)}</realty-feed>`;
+    chunkStart = cursor;
+    offersInChunk = 0;
+  }
+
+  if (offersInChunk > 0) {
+    yield `${header}${xml.slice(chunkStart, cursor)}</realty-feed>`;
+  }
+}
+
+function canSplitYandexFeedXml(xml: string, firstOfferAt: number) {
+  // Splitting on </offer> is only safe while the tag cannot appear as text: a raw `<` is
+  // illegal in XML content, but CDATA and comments may carry one. Self-closing offers
+  // have no closing tag at all, so the counts must line up before cutting anything.
+  if (xml.includes('<![CDATA[') || xml.includes('<!--')) {
+    return false;
+  }
+
+  if (!xml.slice(0, firstOfferAt).includes('<realty-feed')) {
+    return false;
+  }
+
+  return countXmlMatches(xml, /<offer[\s>]/gu) === countXmlMatches(xml, /<\/offer>/gu);
+}
+
+function countXmlMatches(xml: string, pattern: RegExp) {
+  return (xml.match(pattern) ?? []).length;
+}
+
+export class YandexRealtyFeedParser implements FeedParser {
+  parse(xml: string): FeedParseResult {
+    const units: NormalizedFeedUnit[] = [];
     const warnings: FeedParserWarning[] = [];
-    const units = toArray(feed.offer)
-      .map(asRecord)
-      .filter((offer): offer is XmlRecord => offer !== null)
-      .flatMap((offer, index) => {
+    let offerIndex = 0;
+
+    for (const document of splitYandexFeedXmlIntoDocuments(xml)) {
+      const feed = asRecord(parseXml(document)['realty-feed']);
+
+      if (!feed) {
+        throw new Error('Yandex Realty feed must contain <realty-feed>');
+      }
+
+      for (const offer of toArray(feed.offer).map(asRecord)) {
+        if (offer === null) {
+          continue;
+        }
+
+        const index = offerIndex;
         const externalId = getText(offer['@_internal-id']);
+
+        offerIndex += 1;
 
         if (!externalId) {
           warnings.push({
@@ -211,11 +284,12 @@ export class YandexRealtyFeedParser implements FeedParser {
             field: 'externalId',
             message: `Yandex offer at index ${index} is missing internal-id`,
           });
-          return [];
+          continue;
         }
 
-        return [this.normalizeOffer(offer, externalId, warnings)];
-      });
+        units.push(this.normalizeOffer(offer, externalId, warnings));
+      }
+    }
 
     return { units, warnings };
   }
@@ -3086,9 +3160,24 @@ export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser 
   throw new Error(`Unsupported feed format: ${format satisfies never}`);
 }
 
+// Detection only reads the root element and the shape of its first children, so a feed of a
+// few hundred megabytes does not need a full parse. The prefix must end on a finished tag,
+// otherwise the parser stops on the half-written one; elements left open are fine.
+const feedFormatDetectionPrefixLength = 8 * 1024 * 1024;
+
+function createFeedFormatDetectionXml(xml: string) {
+  if (xml.length <= feedFormatDetectionPrefixLength) {
+    return xml;
+  }
+
+  const lastTagEnd = xml.lastIndexOf('>', feedFormatDetectionPrefixLength);
+
+  return lastTagEnd < 0 ? xml : xml.slice(0, lastTagEnd + 1);
+}
+
 export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
   try {
-    const root = parseXml(xml);
+    const root = parseXml(createFeedFormatDetectionXml(xml));
     const yandexFeed = asRecord(root['realty-feed']);
 
     if (yandexFeed) {
@@ -3676,10 +3765,12 @@ async function fetchFeedText(url: string, xmlFetcher?: (url: string) => Promise<
 
 export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedParseResult): FeedSourceAnalysis {
   const groups = new Map<string, FeedSourceAnalysisObject>();
+  const groupsWithAddresslessUnits = new Set<string>();
 
   for (const unit of parsed.units) {
     const groupKey = getFeedAnalysisGroupKey(unit);
     const group = groups.get(groupKey) ?? createFeedAnalysisObject(unit);
+    const address = unit.address ?? getText(unit.rawPayload.Address);
 
     group.unitsCount += 1;
     pushUniqueText(group.feedIndexSourceUrls, getText(unit.rawPayload.__feedIndexSourceUrl));
@@ -3689,14 +3780,18 @@ export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedP
     pushUniqueText(group.yandexBuildingIds, getText(unit.rawPayload['yandex-building-id']));
     pushUniqueText(group.yandexHouseIds, getText(unit.rawPayload['yandex-house-id']));
     pushUniqueText(group.avitoDevelopmentIds, getText(unit.rawPayload.NewDevelopmentId));
-    pushUniqueText(group.addresses, unit.address ?? getText(unit.rawPayload.Address));
+    pushUniqueText(group.addresses, address);
     groups.set(groupKey, group);
+
+    if (address === null) {
+      groupsWithAddresslessUnits.add(groupKey);
+    }
   }
 
-  const objects = [...groups.values()]
-    .map((object) => ({
+  const objects = [...groups.entries()]
+    .map(([groupKey, object]) => ({
       ...object,
-      filterJson: createFeedAnalysisFilterJson(format, object),
+      filterJson: createFeedAnalysisFilterJson(format, object, !groupsWithAddresslessUnits.has(groupKey)),
     }))
     .sort((left, right) => right.unitsCount - left.unitsCount || left.title.localeCompare(right.title, 'ru'));
 
@@ -3756,6 +3851,7 @@ function getFeedAnalysisGroupKey(unit: NormalizedFeedUnit) {
 function createFeedAnalysisFilterJson(
   format: FeedSourceFormat,
   object: FeedSourceAnalysisObject,
+  hasAddressForEveryUnit: boolean,
 ): Record<string, string[]> | null {
   if (object.feedIndexSourceUrls.length > 0) {
     return {
@@ -3764,7 +3860,7 @@ function createFeedAnalysisFilterJson(
   }
 
   if (format === 'YANDEX_REALTY') {
-    return createYandexAnalysisFilterJson(object);
+    return createYandexAnalysisFilterJson(object, hasAddressForEveryUnit);
   }
 
   if (format === 'AVITO_XML') {
@@ -3774,7 +3870,10 @@ function createFeedAnalysisFilterJson(
   return createGenericAnalysisFilterJson(object);
 }
 
-function createYandexAnalysisFilterJson(object: FeedSourceAnalysisObject): Record<string, string[]> | null {
+function createYandexAnalysisFilterJson(
+  object: FeedSourceAnalysisObject,
+  hasAddressForEveryUnit: boolean,
+): Record<string, string[]> | null {
   const filter: Record<string, string[]> = {};
 
   if (object.buildingNames.length > 0) {
@@ -3789,7 +3888,9 @@ function createYandexAnalysisFilterJson(object: FeedSourceAnalysisObject): Recor
     filter.yandexHouseIds = object.yandexHouseIds;
   }
 
-  if (object.addresses.length === 1) {
+  // A Profitbase export leaves <address> empty for part of a project, and an address filter
+  // drops every lot that has none, so it may only be suggested when they all carry one.
+  if (object.addresses.length === 1 && hasAddressForEveryUnit) {
     filter.addressIncludes = object.addresses;
   }
 

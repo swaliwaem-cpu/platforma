@@ -29,6 +29,9 @@ const feedAutoImportIntervalMs = 1000 * 60 * 60 * 2;
 const feedPreviewCommandTimeoutMs = 1000 * 60 * 30;
 const feedRunCommandTimeoutMs = 1000 * 60 * 180;
 const supportedFeedSourceKinds = ['URL', 'FILE', 'INDEX_URL'] as const;
+// A developer-wide Profitbase export is a few hundred megabytes, and V8 sizes its default
+// heap from host memory, so the import process must not be left to guess.
+const feedImportMaxOldSpaceMb = 2048;
 const supportedFeedSourceFormats = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML', 'TEKTA_XML'] as const;
 
 type FeedImportCommand = 'preview' | 'run';
@@ -916,6 +919,16 @@ export class FeedsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private createFeedImportCommandEnv() {
+    const maxOldSpaceMb = this.parsePositiveInteger(process.env.FEED_IMPORT_MAX_OLD_SPACE_MB, feedImportMaxOldSpaceMb);
+
+    return {
+      ...process.env,
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=${maxOldSpaceMb}`.trim(),
+      PRISMA_HIDE_UPDATE_MESSAGE: 'true',
+    };
+  }
+
   async runFeedImportCli(mode: FeedImportCommand, sourceId: string, runId?: string | null) {
     const args = ['--filter', '@platforma/feed-import', '--fail-if-no-match', 'run', mode, '--source', sourceId];
 
@@ -931,10 +944,7 @@ export class FeedsService implements OnModuleInit, OnModuleDestroy {
       const childProcess = spawn('pnpm', args, {
         cwd: findWorkspaceRoot(),
         detached: isDetachedRun,
-        env: {
-          ...process.env,
-          PRISMA_HIDE_UPDATE_MESSAGE: 'true',
-        },
+        env: this.createFeedImportCommandEnv(),
         stdio: isDetachedRun ? 'ignore' : ['ignore', 'pipe', 'pipe'],
       });
       const appendCommandOutput = (chunk: Buffer) => {
@@ -1016,10 +1026,7 @@ export class FeedsService implements OnModuleInit, OnModuleDestroy {
 
       await execFileAsync('pnpm', args, {
         cwd: findWorkspaceRoot(),
-        env: {
-          ...process.env,
-          PRISMA_HIDE_UPDATE_MESSAGE: 'true',
-        },
+        env: this.createFeedImportCommandEnv(),
         maxBuffer: 1024 * 1024 * 50,
         timeout: 1000 * 60 * 5,
       });

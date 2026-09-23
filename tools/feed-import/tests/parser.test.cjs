@@ -1788,6 +1788,10 @@ test('normalizeFeedUnitStatus maps known feed statuses and reports unknown value
   assert.equal(normalizeFeedUnitStatus('sold').status, 'SOLD');
   assert.equal(normalizeFeedUnitStatus('archived').status, 'ARCHIVED');
   assert.equal(normalizeFeedUnitStatus('unavailable').status, 'ARCHIVED');
+  assert.equal(normalizeFeedUnitStatus('EXECUTION').status, 'RESERVED');
+  assert.equal(normalizeFeedUnitStatus('UNAVAILABLE_amo_68c3e49f74052').status, 'ARCHIVED');
+  assert.equal(normalizeFeedUnitStatus('EXECUTION').warning, undefined);
+  assert.equal(normalizeFeedUnitStatus('UNAVAILABLE_amo_68c3e49f74052').warning, undefined);
   assert.deepEqual(normalizeFeedUnitStatus('mystery'), {
     status: 'UNKNOWN',
     warning: {
@@ -1823,4 +1827,102 @@ test('loadXmlFromUrl downloads XML text and rejects failed responses', async () 
     () => loadXmlFromUrl('https://example.com/feed.xml', failedFetch),
     /Failed to download feed XML from https:\/\/example\.com\/feed\.xml: 503 Service Unavailable/,
   );
+});
+
+test('YandexRealtyFeedParser parses a feed larger than the single-pass threshold in chunks', () => {
+  const offerCount = 1200;
+  const offers = Array.from({ length: offerCount }, (unused, index) => {
+    const padding = 'ф'.repeat(16 * 1024);
+
+    return `<offer internal-id="pb-${index}">
+        <object><name>Страна.Парковая</name><location><address>Комарова 17</address></location></object>
+        <house><name>Дом Перов ГП-1</name></house>
+        <status>AVAILABLE</status>
+        <price><value>${10000000 + index}</value><currency>RUB</currency></price>
+        <area><value>40</value></area>
+        <description>${padding}</description>
+      </offer>`;
+  }).join('\n');
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <realty-feed xmlns="http://webmaster.yandex.ru/schemas/feed/realty/2010-06" type="profitbase_xml">
+      <generation-date>2026-09-23T10:32:30+05:00</generation-date>
+      ${offers}
+    </realty-feed>`;
+
+  assert(xml.length > 16 * 1024 * 1024, 'fixture must exceed the split threshold');
+
+  const result = new YandexRealtyFeedParser().parse(xml);
+
+  assert.equal(result.units.length, offerCount);
+  assert.equal(result.warnings.length, 0);
+  assert.equal(result.units[0].externalId, 'pb-0');
+  assert.equal(result.units[offerCount - 1].externalId, `pb-${offerCount - 1}`);
+  assert.equal(result.units[offerCount - 1].projectName, 'Страна.Парковая');
+  assert.equal(result.units[offerCount - 1].status, 'AVAILABLE');
+  assert.equal(result.units[offerCount - 1].price, `${(10000000 + offerCount - 1).toFixed(2)}`);
+});
+
+test('YandexRealtyFeedParser keeps offer indexes global when a large feed is split', () => {
+  const padding = 'ф'.repeat(16 * 1024);
+  const offers = Array.from({ length: 1200 }, (unused, index) => {
+    const id = index === 900 ? '' : ` internal-id="pb-${index}"`;
+
+    return `<offer${id}><description>${padding}</description></offer>`;
+  }).join('\n');
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <realty-feed type="profitbase_xml">${offers}</realty-feed>`;
+
+  assert(xml.length > 16 * 1024 * 1024, 'fixture must exceed the split threshold');
+
+  const result = new YandexRealtyFeedParser().parse(xml);
+
+  assert.equal(result.units.length, 1199);
+  assert.deepEqual(
+    result.warnings.map((warning) => warning.message),
+    ['Yandex offer at index 900 is missing internal-id'],
+  );
+});
+
+test('createFeedSourceAnalysis does not suggest an address filter that drops addressless lots', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <realty-feed type="profitbase_xml">
+      <offer internal-id="pb-1">
+        <object><name>Страна.Парковая</name><location><address>Комарова 17</address></location></object>
+        <price><value>10000000</value><currency>RUB</currency></price>
+        <area><value>40</value></area>
+      </offer>
+      <offer internal-id="pb-2">
+        <object><name>Страна.Парковая</name><location><address/></location></object>
+        <price><value>12000000</value><currency>RUB</currency></price>
+        <area><value>42</value></area>
+      </offer>
+    </realty-feed>`;
+
+  const analysis = createFeedSourceAnalysis('YANDEX_REALTY', parser.parse(xml));
+
+  assert.equal(analysis.objects.length, 1);
+  assert.equal(analysis.objects[0].unitsCount, 2);
+  assert.deepEqual(analysis.objects[0].addresses, ['Комарова 17']);
+  assert.deepEqual(analysis.objects[0].filterJson, {
+    buildingNames: ['Страна.Парковая'],
+  });
+});
+
+test('detectFeedFormatFromXml detects a feed whose detection prefix ends inside a tag', () => {
+  const prefixLength = 8 * 1024 * 1024;
+  const header =
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<realty-feed xmlns="http://webmaster.yandex.ru/schemas/feed/realty/2010-06" type="profitbase_xml">' +
+    '<offer internal-id="pb-1"><value>';
+  const trailingTag = '<custom-field-with-a-deliberately-long-name>';
+  const xml = `${header}${'ф'.repeat(prefixLength - header.length - 10)}</value>${trailingTag}</custom-field-with-a-deliberately-long-name></offer></realty-feed>`;
+
+  assert(xml.length > prefixLength, 'fixture must exceed the detection prefix');
+  assert(
+    xml.lastIndexOf('<', prefixLength) > xml.lastIndexOf('>', prefixLength),
+    'fixture must cut the detection prefix inside a tag',
+  );
+
+  assert.equal(detectFeedFormatFromXml(xml), 'YANDEX_REALTY');
 });
