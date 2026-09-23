@@ -92,12 +92,6 @@ const AssistantChat = lazy(() =>
   })),
 );
 
-const AssistantAuditAdminPage = lazy(() =>
-  import('./admin/AssistantAuditAdminPage').then((module) => ({
-    default: module.AssistantAuditAdminPage,
-  })),
-);
-
 const userStatusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',
   BLOCKED: 'Заблокирован',
@@ -229,7 +223,7 @@ export function App() {
 }
 
 function AppRoutes() {
-  const { pathname, search, navigate } = usePathname();
+  const { pathname, navigate } = usePathname();
   const { accessToken, user, isLoading, logout, hasPermission } = useAuth();
   const sidebarRef = useRef<HTMLElement | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -477,21 +471,8 @@ function AppRoutes() {
               ) : (
                 <AccessDenied />
               )
-            ) : pathname.startsWith('/admin/assistant-audit') ? (
-              hasPermission('assistant:audit:read') ? (
-                <Suspense fallback={<ObjectRouteLoading />}>
-                  <AssistantAuditAdminPage
-                    navigate={navigate}
-                    pathname={pathname}
-                    onBack={() => navigate('/admin')}
-                  />
-                </Suspense>
-              ) : (
-                <AccessDenied />
-              )
             ) : (
               <AdminHome
-                onOpenAssistantAudit={() => navigate('/admin/assistant-audit')}
                 onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
                 onOpenFeeds={() => navigate('/admin/feeds')}
                 onOpenImport={() => navigate('/admin/import')}
@@ -568,7 +549,6 @@ function AppRoutes() {
             accessToken={accessToken}
             logoUrl={platformLogoUrl}
             pathname={pathname}
-            search={search}
             userId={user.id}
           />
         </Suspense>
@@ -1261,7 +1241,6 @@ function getProfileInitials(user: AuthUser) {
 }
 
 function AdminHome({
-  onOpenAssistantAudit,
   onOpenCatalogLinks,
   onOpenFeeds,
   onOpenImport,
@@ -1270,7 +1249,6 @@ function AdminHome({
   trainingEnabled,
   onOpenUsers,
 }: {
-  onOpenAssistantAudit: () => void;
   onOpenCatalogLinks: () => void;
   onOpenFeeds: () => void;
   onOpenImport: () => void;
@@ -1281,13 +1259,6 @@ function AdminHome({
 }) {
   const { hasPermission } = useAuth();
   const actions = [
-    {
-      label: 'Аудит ИИ-помощника',
-      description: 'Feedback, evidence trail, источники и provider telemetry.',
-      tone: 'primary',
-      canAccess: hasPermission('assistant:audit:read'),
-      onClick: onOpenAssistantAudit,
-    },
     {
       label: 'Обучение',
       description: 'Проекты, попытки и результаты обучения.',

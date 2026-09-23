@@ -11,7 +11,6 @@ pnpm-debug.log
 .worktrees/
 backups/
 .superpowers/
-.assistant-source-discovery/
 tools/wp-import/uploads/*
 !tools/wp-import/uploads/.gitkeep
 .md

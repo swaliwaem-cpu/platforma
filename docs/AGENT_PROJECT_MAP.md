@@ -19,12 +19,12 @@ pnpm-монорепозиторий (pnpm@10):
 - `docker-compose.yml` + `docker/postgres` — локальный стек; `docker-compose.production.yml` — override для прода.
 
 Сценарии продукта: авторизация/кабинет, каталог объектов, карта, карточка объекта,
-админка (объекты/пользователи/фиды/импорт), подборки и презентации, обучение, AI-ассистент.
+админка (объекты/пользователи/фиды/импорт), подборки и презентации, обучение, AI-ассистент подбора лотов.
 
 ## Backend: apps/api (~14 модулей в AppModule)
 
 Точки входа: `src/main.ts` (HTTP, порт 3000, без глобального /api префикса),
-`src/training-voice-worker.main.ts`, `src/assistant-source-worker.main.ts` — отдельные процессы-воркеры.
+`src/training-voice-worker.main.ts` — отдельный процесс-воркер.
 
 | Модуль | Путь | Назначение |
 |---|---|---|
@@ -41,7 +41,7 @@ pnpm-монорепозиторий (pnpm@10):
 | ProjectPresentationsModule | `src/project-presentations/` | презентации проектов: draft → async PDF, polling-воркер в API-процессе |
 | TrainingModule | `src/training/` | учебно-экзаменационный модуль (~50 файлов) |
 | WordpressImportModule | `src/wordpress-import/` | preview/run/repair WP-импорта |
-| AssistantModule | `src/assistant/` | AI-ассистент (~27k строк, см. ниже) |
+| AssistantModule | `src/assistant/` | AI-ассистент подбора лотов (см. ниже) |
 | HealthController | `src/health/` | health-check |
 
 ### Auth / RBAC
@@ -69,56 +69,22 @@ pnpm-монорепозиторий (pnpm@10):
 ### Интеграции backend
 
 S3/MinIO (самописный SigV4 на fetch/HMAC), OpenRouteService (пешеходные маршруты, PG-кэш),
-OpenAI (training + assistant), Telegram Bot API, nodemailer (email-коды), ffmpeg (аудио),
+OpenAI (training), Alibaba DashScope + Yandex Search API (assistant), Telegram Bot API, nodemailer (email-коды), ffmpeg (аудио),
 sharp (variants), pdfkit/pdfjs-dist, playwright-core (рендер презентаций), cheerio.
 Внешней очереди нет — везде in-process polling-воркеры с PG-claim (lock_owner/heartbeat/stale-recovery).
 
-## AI-ассистент: apps/api/src/assistant/ (~27k строк)
+## AI-ассистент: apps/api/src/assistant/ (v2, подбор лотов)
 
-Entry: `assistant.module.ts`, `assistant.controller.ts`, воркер `assistant-source-worker.main.ts`.
+Задача одна — находить лоты: сначала в Platforma (feed_units), если в проекте лотов нет — на сайтах застройщиков и агрегаторах.
+Старый модуль v1 (спека `docs/helpar/speka.md`, геопоиск, RAG, eval) снят 2026-09-23 и лежит целиком в ветке `archive/assistant-v1` и теге `assistant-v1-archive`; его таблицы (`assistant_*`) и миграции остались в БД и Prisma schema нетронутыми.
 
-### Структура
-
-- Корень: `assistant.service.ts` (1138 строк — conversations/messages/runs), `assistant-run.processor.ts` (in-process очередь, lease 30 с), `assistant-execution.module.ts` (единый seam `execute(runId)`), `assistant-query-planner.ts` + `assistant-planner-gateway.ts`, `assistant-logical-plan.ts` (FIX-GEO2 предикаты), `assistant-plan-grounding.ts`, `assistant-search.service.ts` + ranking (3 точных + 2 альтернативы), `assistant-answer.service.ts`, dialog/comparison.
-- `geo/` — place resolver (1511 строк, детерминированный), LocationIQ provider, Overpass collector, landmarks POINT/LINE/AREA (PostGIS), metro travel time (справочник входов из OSM: `scripts/assistant-metro-osm-geojson.cjs` → `assets/assistant/*.geojson` → `assistant:metro:refresh`; полный пересчёт через матричный прогрев `MapRoutingService.warmWalkingRoutes`, ORS free = 50 матриц/сутки), geo-alias, usage ledger.
-- `sources/` — knowledge base: registry, discovery (~3.5k строк), ingestion, официальные источники (HTML connector/extractor), retrieval, embeddings (pgvector), current-fact refresh, worker.
-- `catalog/` — ответы-каталоги объектов платформы.
-- `operations/` — cost/budget: каталог цен, атомарный reserve/settlement дневного USD-бюджета, model usage policy, retention (30 дней история, 180 дней агрегаты).
-- `rollout/` — rollout stage service + preflight (822 строки).
-- `eval/` — evaluator (1912 строк).
-- `audit/`, `feedback/` — evidence trail, review queue, like/dislike.
-
-Prisma-модели ассистента (~25): Conversation/Message/Run, Geo*, MetroAccessPoint, ObjectMetroRouteFact,
-KnowledgeSource/SourceRevision/SourceFact/SourceChunk/SourceJob, AiDailyBudget/UsageAttempt/ExecutionFence,
-RolloutEvent, Feedback/ReviewItem.
-
-### Pipeline запроса
-
-1. UI → Place Resolver (детерминированный, без LLM) → message endpoint; прямой вызов с geo без canonical geo → HTTP 400 `ASSISTANT_GEO_CONTEXT_REQUIRED`.
-2. Создание message + `AssistantRun` (PENDING), idempotency key.
-3. RunProcessor подхватывает run; прогресс-шаги для UI.
-4. Planner: модели Luna/Terra (`qwen-flash` / `qwen3.8-max`), Alibaba DashScope compatible-mode `/chat/completions` с `enable_thinking:false`, strict JSON schema (`assistant-logical-plan-v1`). Intent: taskType SEARCH/OBJECT/COMPARE/FACT/LEGAL_TAX, hardFilters, предикаты SPATIAL/INSIDE/PLACE + TRAVEL_TIME/WALK/NEAREST_METRO/LTE. Backend проверяет grounding.
-5. Исполнение: PostGIS (`ST_DWithin`/`ST_Covers` по полной геометрии), материализованные факты «N мин пешком до метро» (on-demand максимум 3 объекта), knowledge retrieval, current-fact refresh (максимум 1 bounded refresh на run).
-6. Ответ: SEARCH_RESULTS / OBJECT_RESULTS / COMPARISON / KNOWLEDGE / CLARIFICATION / UNAVAILABLE / REFUSAL / SAFE_BOUNDARY; карточки со ссылками, freshness labels; юр./налоговые — safe boundary.
-
-Маршрутизация моделей: обычные → Luna medium, сложные → Luna high, ровно один fallback на Terra после валидационного отказа. Платные вызовы fail-closed: нужны `ASSISTANT_QUERY_PLANNER_LIVE=true` + `ASSISTANT_PAID_CALLS_CONFIRMED=true` + ключ. Web Search tool — только в source discovery (admin/background lane).
-
-### Хронология итераций (docs/helpar/)
-
-speka (канон-спека) → t01 chat shell → t02 grounded поиск/сравнение → t03 источники/knowledge →
-t04 миграция карт Yandex→MapLibre/OpenFreeMap → t05 геопоиск PostGIS+LocationIQ →
-t06 feedback/audit/retention/бюджеты → t07 E2E приёмка + eval 200 кейсов + rollout stages (приёмка 26.08.2026) →
-fix-token/tk1 (Luna-first экономия, fail-closed учёт) → pidafix1–3 (локальный canary, geo smoke, сквозная приёмка) →
-fix-geo1 (полная геометрия ориентиров) → zaebal1–6 (релизная готовность: canonical geo, студии rooms=0, grounded сравнения, fail-closed Web Search, реальная геометрия Москвы, 200-case eval, RC gate) →
-**fix-geo2 — ТЕКУЩАЯ ГОРЯЧАЯ РАБОТА**: `AssistantLogicalPlanV1`, единый ExecutionModule, предикаты SPATIAL/INSIDE/PLACE + TRAVEL_TIME, справочники MetroAccessPoint/ObjectMetroRouteFact, `INSIDE` через `ST_Covers`, `NO_RESULTS` как нормальный исход.
-
-### Eval и rollout
-
-- `eval:assistant:run` — ровно 200 кейсов из frozen dataset `tests/fixtures/assistant/assistant-eval-v1.json`, isolated conversation на кейс, product path.
-- `eval:assistant` — verdicts; RC-пороги: overall ≥ 90%, category ≥ 80%, quality ≥ 85%, p95 ≤ 15 с, attempts ≤ 1.1, tokens ≤ 2500, geo calls ≤ 0.25; zero tolerance к auth/hard-filter/source-priority нарушениям и выдуманным ценам/ссылкам.
-- Feature flags: `ASSISTANT_MODULE_ENABLED`, `ASSISTANT_GEO_PROVIDER_ENABLED`, `ASSISTANT_EXTERNAL_CONNECTORS_ENABLED`, `ASSISTANT_CURRENT_FACT_REFRESH_MODE`.
-- Rollout: `ASSISTANT_ROLLOUT_STAGE` = ADMINS → PILOT → ALL строго последовательно; сейчас pre-PILOT, перевод запрещён без отдельной команды.
-- `docker-compose.assistant-pidafix3.yml` / `-geo-live.yml` — одноразовые приёмочные контуры.
+- `assistant.controller.ts` — `GET /assistant/config`, `POST /assistant/jobs` (вся переписка + `pageObjectSlug`), `GET /assistant/jobs/:id` (polling). Доступ: `objects:read` + `ASSISTANT_MODULE_ENABLED` + `ASSISTANT_ROLLOUT_STAGE` (ADMINS/PILOT/ALL).
+- `assistant.service.ts` — задания в памяти процесса (один активный на пользователя, дедлайн 150 с, TTL 15 мин). Историю хранит браузер (sessionStorage), в БД ничего не пишется.
+- `assistant-agent.ts` — цикл модели (по умолчанию `deepseek-v4.1-flash` через Alibaba) с инструментами `find_projects`, `search_lots`, `web_search`, `open_page`, `give_answer`; системный промпт; проверка ответа: лоты Platforma — только id из `search_lots`, веб-лоты — только с открытых сайтов, цена — только если число есть на странице.
+- `assistant-catalog.tools.ts` — поиск проекта (тот же `findCatalogSearchObjectIds`, что строка поиска каталога) и SQL по доступным лотам.
+- `assistant-web.tools.ts` — поиск: Yandex Search API, если заданы `YANDEX_SEARCH_API_KEY` + `YANDEX_SEARCH_FOLDER_ID`, иначе headless-браузер читает выдачу Startpage → Brave → Yahoo (Google/Bing/Яндекс/Mojeek дают капчу; выключается `ASSISTANT_BROWSER_SEARCH_ENABLED=false`). Чтение страницы Playwright’ом: текст, ссылки на подбор квартир и лоты из JSON, который грузит страница. Агрегаторы (m2.ru, ЦИАН) часто отдают headless-браузеру заглушку.
+- `assistant-llm.client.ts` — DashScope compatible-mode `/chat/completions` с function calling (`ALIBABA_API_KEY`, `ASSISTANT_MODEL`, по умолчанию `deepseek-v4.1-flash`; на ключе есть qwen3.x, deepseek-v4*, kimi/glm — последние два отвергают параметры запроса). Встроенный веб-поиск DashScope на intl-аккаунте не работает (проверено 2026-09-23).
+- Тесты: `apps/api/tests/assistant.test.cjs` (фейковые LLM/каталог/веб).
 
 ## Frontend: apps/web (~86 файлов src)
 
@@ -127,7 +93,7 @@ fix-geo1 (полная геометрия ориентиров) → zaebal1–6 
 - **Auth**: `auth/AuthProvider.tsx` — refresh через httpOnly cookie при mount, access token в памяти, single-flight refresh на 401, события `platforma-auth-updated/cleared`.
 - **API client — `admin/api.ts`** (имя обманчиво, это ОБЩИЙ клиент; не дублировать): `apiRequest`, Bearer, `credentials: include`, перевод ошибок на русский.
 - **Карта** (`src/map/`): MapLibre GL 6, стиль OpenFreeMap Liberty; фасад `PlatformMap.tsx` (155 строк: points/geometries/fullscreen/measurement/fallback-состояния); runtime config через `window.__PLATFORMA_RUNTIME_CONFIG__` (`/runtime-config.js`, можно выключить карту без ребилда); OpenMapTiles-специфика: amenity-слои, локализация подписей на ru, метро/МЦД фильтры. Миграция с Яндекс.Карт завершена (тест проверяет отсутствие YandexMap).
-- **Ассистент** (`src/assistant/`): плавающий draggable/resizable чат-виджет поверх shell (для `objects:read`), page context из pathname, гео-пикер, polling run'ов, feedback.
+- **Ассистент** (`src/assistant/`): плавающий draggable/resizable чат-виджет поверх shell (для `objects:read`), slug проекта из pathname, polling заданий раз в секунду, карточки лотов Platforma и сайтов.
 - **UI**: гибрид — глобальный `styles.css` (11k строк предметных классов) + Tailwind/shadcn точечно; темы светлая/`dark-premium`; i18n нет, всё жёстко на русском; lucide-react.
 - Production-статика: собственный `server.mjs` (gzip/brotli, SPA-fallback, runtime-config из env).
 - Большие файлы (styles.css 11k, ObjectDetailPage 2.9k, CatalogPage 2.8k, App.tsx 1.5k) — осознанная политика «цельный читаемый файл».
@@ -142,7 +108,7 @@ PostgreSQL + PostGIS (`searchPoint` geography(Point,4326)) + pgvector. Доме�
 - Файлы: File (LOCAL/MINIO), FileVariant (THUMBNAIL/CARD/DETAIL), ObjectImage, ObjectFile.
 - Презентации: LotPresentation*, ProjectPresentation*.
 - Training (~20 моделей): Project/KnowledgeVersion/Assignment, Question/Fact/Criterion, Attempt→AttemptQuestion→Answer→AnswerSegment, AiUsageEvent, Material(+Revision/Operation), AudioStorageEntry, DeletionManifest, TelegramAccount/LinkToken/Outbox.
-- Ассистент (~25 моделей) — см. выше.
+- Ассистент v1 (~25 моделей `Assistant*`) — архивные таблицы, новый код их не использует.
 - Аудит: AuditLog, ImportReport (wp-import журнал).
 
 ## Импорты
@@ -173,7 +139,7 @@ PostgreSQL + PostGIS (`searchPoint` geography(Point,4326)) + pgvector. Доме�
 - Раннер — `node --test` поверх CJS (НЕ Jest). `apps/api/tests/run-tests.cjs` (~95 файлов) одним процессом, все AI/внешние провайдеры в fake.
 - Слои: `*-domain.test.cjs` (чистая логика), `*-http.test.cjs` (Nest, guards/routes), `*-postgres.test.cjs` (реальный PG: транзакции, race, locks), `*.cjs` без `.test` — ручные e2e/smoke.
 - Web: `node --test tests/*.test.mjs` (~68 файлов, unit/контрактные), `*.browser.mjs` — Playwright, отдельными скриптами.
-- Команды: корневые `pnpm test`, `pnpm build`; масса targeted `test:assistant:*`, `test:training-*`, `benchmark:*`.
+- Команды: корневые `pnpm test`, `pnpm build`; targeted `test:training-*`, `benchmark:*`.
 - После изменений: targeted tests + workspace build; при cross-cutting — `pnpm test` + `pnpm build`.
 
 ## Правила игры (из AGENTS.md)
@@ -191,7 +157,7 @@ PostgreSQL + PostGIS (`searchPoint` geography(Point,4326)) + pgvector. Доме�
 - Активная работа: FIX-GEO2 в ассистенте (logical plans, metro walking facts, hardening границ). Последние коммиты: classify cancelled geo2 metro fixture requests, harden geo2 boundaries, supported union in planner structured output.
 - Незакоммичено: `AGENTS.md` (modified), рабочие заметки `docs/helpar/*.md` (fix-geo2, fix-tk1, pidafix1-3, zaebal1-6).
 - Training V2: Stage 5 Part 4, final acceptance pending.
-- Ассистент: rollout stage pre-PILOT; перевод в PILOT/ALL запрещён без отдельной команды.
+- Ассистент: переписан заново 2026-09-23 (v1 в `archive/assistant-v1`); rollout ADMINS, перевод в PILOT/ALL — только по команде.
 
 ---
 

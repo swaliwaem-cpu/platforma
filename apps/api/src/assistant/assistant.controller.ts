@@ -1,23 +1,35 @@
 import {
   Body,
+  CanActivate,
   Controller,
+  ExecutionContext,
   Get,
-  Headers,
   HttpCode,
   HttpStatus,
+  Injectable,
   Param,
+  ParseUUIDPipe,
   Post,
-  Query,
+  ServiceUnavailableException,
   UseGuards,
 } from '@nestjs/common';
+import type { AssistantAskInput, AssistantJobResponse } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
-import { AuthenticatedUser } from '../auth/auth.types';
+import type { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
-import { AssistantFeatureGuard, isAssistantEnabledForActor } from './assistant-runtime-config';
-import { AssistantService } from './assistant.service';
+import { AssistantService, isAssistantEnabledForActor } from './assistant.service';
+
+@Injectable()
+export class AssistantFeatureGuard implements CanActivate {
+  canActivate(context: ExecutionContext) {
+    const request = context.switchToHttp().getRequest<RequestWithAuth>();
+    if (isAssistantEnabledForActor(request.user)) return true;
+    throw new ServiceUnavailableException('ASSISTANT_UNAVAILABLE');
+  }
+}
 
 @Controller('assistant')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -27,66 +39,25 @@ export class AssistantController {
 
   @Get('config')
   getConfig(@CurrentUser() actor: AuthenticatedUser) {
-    return { enabled: isAssistantEnabledForActor(actor) };
+    return this.assistant.getConfig(actor);
   }
 
-  @Get('eval/runtime')
-  @UseGuards(AssistantFeatureGuard)
-  @RequirePermissions('objects:read', 'assistant:audit:read')
-  getEvalRuntime() {
-    return this.assistant.getEvalRuntimeContract();
-  }
-
-  @Get('conversations')
-  @UseGuards(AssistantFeatureGuard)
-  listConversations(
-    @CurrentUser() actor: AuthenticatedUser,
-    @Query('cursor') cursor?: string,
-  ) {
-    return this.assistant.listConversations(actor.id, cursor);
-  }
-
-  @Post('conversations')
-  @UseGuards(AssistantFeatureGuard)
-  createConversation(
-    @Headers('Idempotency-Key') idempotencyKey: string | undefined,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.assistant.createConversation(actor.id, idempotencyKey);
-  }
-
-  @Get('conversations/:conversationId')
-  @UseGuards(AssistantFeatureGuard)
-  getConversation(
-    @Param('conversationId') conversationId: string,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.assistant.getConversation(conversationId, actor.id);
-  }
-
-  @Post('conversations/:conversationId/messages')
-  @UseGuards(AssistantFeatureGuard)
+  @Post('jobs')
   @HttpCode(HttpStatus.ACCEPTED)
-  sendMessage(
-    @Param('conversationId') conversationId: string,
-    @Headers('Idempotency-Key') idempotencyKey: string | undefined,
-    @Body() body: unknown,
+  @UseGuards(AssistantFeatureGuard)
+  async startJob(
     @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.assistant.startRun({
-      conversationId,
-      ownerUserId: actor.id,
-      idempotencyKey,
-      body,
-    });
+    @Body() body: AssistantAskInput,
+  ): Promise<AssistantJobResponse> {
+    return { job: await this.assistant.startJob(actor, body) };
   }
 
-  @Get('runs/:runId')
+  @Get('jobs/:jobId')
   @UseGuards(AssistantFeatureGuard)
-  getRun(
-    @Param('runId') runId: string,
+  getJob(
     @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.assistant.getRun(runId, actor.id);
+    @Param('jobId', new ParseUUIDPipe()) jobId: string,
+  ): AssistantJobResponse {
+    return { job: this.assistant.getJob(actor, jobId) };
   }
 }

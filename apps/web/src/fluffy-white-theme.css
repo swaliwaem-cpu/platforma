@@ -524,7 +524,6 @@
   .training-page-header,
   .training-audio-storage-header,
   .training-project-editor-header,
-  .assistant-audit-header,
   .object-detail-header,
   .object-lot-header,
   .project-presentations-header,
@@ -545,7 +544,6 @@
   .training-page-header,
   .training-audio-storage-header,
   .training-project-editor-header,
-  .assistant-audit-header,
   .object-detail-header,
   .object-lot-header,
   .project-presentations-header,
@@ -564,7 +562,6 @@
   .training-page-header,
   .training-audio-storage-header,
   .training-project-editor-header,
-  .assistant-audit-header,
   .object-detail-header,
   .object-lot-header,
   .project-presentations-header,
@@ -583,7 +580,6 @@
     .training-page-header,
     .training-audio-storage-header,
     .training-project-editor-header,
-    .assistant-audit-header,
     .object-detail-header,
     .object-lot-header,
     .project-presentations-header,
@@ -619,7 +615,6 @@
   .object-image-carousel,
   .object-lot-media-carousel,
   .training-telegram-strip,
-  .assistant-audit-panel,
   .lot-presentations-documents-panel,
   .training-results-table-panel,
   .training-results-filter-panel,
@@ -743,7 +738,6 @@
   .training-review-panel,
   .training-assignments-panel,
   .training-access-mode-panel,
-  .assistant-audit-panel,
   .assistant-result-card,
   .project-presentation-step-panel
 ) {
@@ -1620,7 +1614,7 @@
  * Tabs (.fw-tabs) and segmented sort (.fw-segmented).
  * ------------------------------------------------------------------------- */
 
-:root[data-app-theme] body :is(.lot-presentations-tabs, .project-presentations-tabs, .assistant-audit-tabs [data-slot="tabs-list"], .login-mode-toggle) {
+:root[data-app-theme] body :is(.lot-presentations-tabs, .project-presentations-tabs, .login-mode-toggle) {
   gap: 10px;
   border-bottom: 0;
   background: transparent;
