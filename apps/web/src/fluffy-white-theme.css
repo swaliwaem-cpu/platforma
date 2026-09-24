@@ -462,35 +462,45 @@
 }
 
 /*
- * Phones: the bottom bar from styles.css. `aside.sidebar[aria-label]` outranks the
- * rail rules above (ties resolve to this later block), so the bar looks the same
- * whether or not the menu was left open on a wider screen.
+ * Phones: the bottom tab bar and the full-screen menu from styles.css take the
+ * floating-menu surface, which stays opaque in the dark theme too.
+ * `aside.sidebar[aria-label]` outranks the rail rules above, so the menu keeps
+ * its labels whatever width the sidebar was left at.
  */
 @media (max-width: 760px) {
-  /*
-   * The bar floats over content. The reference keeps the 52% dark panel here and its
-   * dark bar shows text through the icons, so the bar takes the floating-menu surface.
-   */
   :root[data-app-theme] body .app-shell aside.sidebar[aria-label] {
-    border-radius: 20px;
+    border-radius: 0;
+    background: var(--fw-menu-bg);
+    box-shadow: none;
+    -webkit-backdrop-filter: blur(34px) saturate(150%);
+    backdrop-filter: blur(34px) saturate(150%);
+  }
+
+  :root[data-app-theme] body .mobile-tabbar {
+    border-top-color: var(--fw-line);
     background: var(--fw-menu-bg);
     -webkit-backdrop-filter: blur(34px) saturate(150%);
     backdrop-filter: blur(34px) saturate(150%);
   }
 
-  :root[data-app-theme] body .app-shell aside.sidebar[aria-label] .nav-item,
-  :root[data-app-theme] body .app-shell aside.sidebar[aria-label] .sidebar-bottom :is(.sidebar-user, .theme-toggle, .secondary-button.sidebar-logout) {
-    width: auto;
-    min-width: 0;
-    height: 50px;
-    justify-content: center;
-    padding: 0;
+  :root[data-app-theme] body .mobile-tabbar-item {
+    color: var(--fw-muted);
   }
 
-  :root[data-app-theme] body .app-shell aside.sidebar[aria-label] .sidebar-avatar {
-    width: 18px;
-    height: 18px;
+  :root[data-app-theme] body .mobile-tabbar-item.is-active {
+    color: var(--fw-text);
+  }
+
+  :root[data-app-theme] body .catalog-page .catalog-map-layout .catalog-map-panel {
     border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  :root[data-app-theme] body .catalog-map-close {
+    border-color: var(--fw-line);
+    background: var(--fw-menu-bg);
+    color: var(--fw-text);
   }
 }
 

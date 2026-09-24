@@ -27,7 +27,35 @@ test('sidebar opens with the residential catalog in place of the cabinet', () =>
 });
 
 test('cabinet stays reachable from the sidebar user card', () => {
-  assert.match(appSource, /className="sidebar-user"[\s\S]*?onClick=\{\(\) => navigate\('\/cabinet'\)\}/);
+  assert.match(appSource, /className="sidebar-user"[\s\S]*?onClick=\{\(\) => navigateFromMenu\('\/cabinet'\)\}/);
+});
+
+test('phone tab bar lists real estate, presentations, search, profile and then the menu', () => {
+  const tabBarSource = readFileSync(resolve(currentDir, '../src/navigation/MobileTabBar.tsx'), 'utf8');
+  const mobileTabsStart = appSource.indexOf('const mobileTabs: MobileTab[] = [');
+  const mobileTabsSource = appSource.slice(mobileTabsStart, appSource.indexOf('\n  ];', mobileTabsStart));
+  const tabIds = Array.from(mobileTabsSource.matchAll(/id: '([^']+)', label: '([^']+)'|id: '([^']+)',\n\s+label: '([^']+)'/g), (match) => [
+    match[1] ?? match[3],
+    match[2] ?? match[4],
+  ]);
+
+  assert.deepEqual(tabIds, [
+    ['catalog', 'Недвижимость'],
+    ['presentations', 'Подборки'],
+    ['search', 'Поиск'],
+    ['profile', 'Профиль'],
+  ]);
+  assert.match(tabBarSource, /\{tabs\.map\([\s\S]*?\)\}\s*<button\s+aria-controls="main-sidebar-content"\s+aria-expanded=\{isMenuOpen\}[\s\S]*?<span>Меню<\/span>/);
+  assert.match(appSource, /<MobileTabBar[\s\S]*?onToggleMenu=\{\(\) => setIsSidebarOpen\(\(isOpen\) => !isOpen\)\}/);
+});
+
+test('phone search tab opens the catalog with the search field focused', () => {
+  const catalogSource = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
+
+  assert.match(appSource, /setIsCatalogSearchFocusRequested\(true\);\s*if \(!isCatalogSearchPathname\(pathname\)\) \{\s*navigate\(catalogNavItem\.path\);/);
+  assert.match(appSource, /isSearchFocusRequested=\{isCatalogSearchFocusRequested\}/);
+  assert.match(catalogSource, /useLayoutEffect\(\(\) => \{\s*if \(!isSearchFocusRequested\) \{\s*return;\s*\}\s*searchInputRef\.current\?\.focus\(\);\s*onSearchFocused\(\);/);
+  assert.match(catalogSource, /ref=\{searchInputRef\}\s*placeholder="Название, адрес, застройщик"/);
 });
 
 test('roles are rendered with russian labels, including the marketing role', () => {

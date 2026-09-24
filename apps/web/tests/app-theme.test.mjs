@@ -208,7 +208,7 @@ test('sidebar exposes an icon-only theme toggle wired to app theme helpers', () 
   assert.match(themeStyles, /:is\([^)]*\.theme-toggle[^)]*\)/);
 });
 
-test('collapsed sidebar reserves a rail, the expanded panel overlays the workspace, phones get a bottom bar', () => {
+test('collapsed sidebar reserves a rail, the expanded panel overlays the workspace, phones get a bottom tab bar', () => {
   const appSource = readFileSync(resolve(srcDir, 'App.tsx'), 'utf8');
   const styles = readFileSync(resolve(srcDir, 'styles.css'), 'utf8');
 
@@ -227,16 +227,18 @@ test('collapsed sidebar reserves a rail, the expanded panel overlays the workspa
     styles,
     /\.sidebar--open\s*\{[\s\S]*?width:\s*var\(--sidebar-width\);[\s\S]*?\}/,
   );
+  assert.match(styles, /\.mobile-tabbar \{\s*display: none;\s*\}/);
   assert.match(
     styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.sidebar,\s*\.sidebar--open \{\s*top: auto;\s*right: 10px;\s*bottom: calc\(10px \+ env\(safe-area-inset-bottom, 0px\)\);\s*left: 10px;\s*width: auto;/,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.mobile-tabbar \{\s*position: fixed;[\s\S]*?right: 0;\s*bottom: 0;\s*left: 0;\s*display: grid;/,
+  );
+  assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.mobile-tabbar\.is-hidden:not\(:focus-within\) \{\s*transform: translateY\(100%\);/);
+  assert.match(
+    styles,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.sidebar \{\s*display: none;\s*\}\s*\.sidebar--open \{\s*top: 0;\s*right: 0;\s*bottom: calc\(var\(--mobile-tabbar-height\) \+ env\(safe-area-inset-bottom, 0px\)\);\s*left: 0;\s*display: flex;/,
   );
   assert.match(
     styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.sidebar-content \{\s*display: grid;\s*grid-auto-columns: minmax\(0, 1fr\);\s*grid-auto-flow: column;/,
-  );
-  assert.match(
-    styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.workspace:has\(\.catalog-page\)[\s\S]*?padding: 12px 14px calc\(94px \+ env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?\}/,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.workspace:has\(\.catalog-page\)[\s\S]*?padding: 12px 14px calc\(var\(--mobile-tabbar-height\) \+ 24px \+ env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?\}/,
   );
 });

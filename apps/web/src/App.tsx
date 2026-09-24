@@ -18,6 +18,7 @@ import {
   LogOut,
   MenuIcon,
   MoonIcon,
+  SearchIcon,
   ShieldCheck,
   SunIcon,
   UserRound,
@@ -40,6 +41,7 @@ import { canAccessLotPresentations, canAccessProjectPresentations } from './pres
 import { ProjectPresentationEditorPage } from './presentations/projects/ProjectPresentationEditorPage';
 import { ProjectPresentationsPage } from './presentations/projects/ProjectPresentationsPage';
 import { TrainingAdminRoutes, TrainingEmployeeRoutes } from './training/TrainingRoutes';
+import { MobileTabBar, type MobileTab } from './navigation/MobileTabBar';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
@@ -97,6 +99,9 @@ const userStatusLabels: Record<UserStatus, string> = {
   INVITED: 'Приглашён',
   DEACTIVATED: 'Отключён',
 };
+
+// Matches the phone breakpoint in styles.css where the sidebar becomes a full-screen menu.
+const mobileNavigationMediaQuery = '(max-width: 760px)';
 
 const navItems: readonly NavItem[] = [
   {
@@ -203,6 +208,7 @@ function AppRoutes() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [appTheme, setAppThemeState] = useState(() => getAppliedAppTheme());
   const [trainingEnabled, setTrainingEnabled] = useState(false);
+  const [isCatalogSearchFocusRequested, setIsCatalogSearchFocusRequested] = useState(false);
   const isDarkTheme = appTheme === 'dark-premium';
   const themeToggleLabel = isDarkTheme ? 'Включить светлую тему' : 'Включить темную тему';
 
@@ -240,7 +246,8 @@ function AppRoutes() {
         return;
       }
 
-      if (sidebarRef.current.contains(event.target)) {
+      // The phone tab bar toggles the menu itself.
+      if (sidebarRef.current.contains(event.target) || (event.target instanceof Element && event.target.closest('.mobile-tabbar'))) {
         return;
       }
 
@@ -283,6 +290,55 @@ function AppRoutes() {
       (item.id !== 'training' || trainingEnabled) &&
       canAccessNavigationItem(hasPermission, item),
   );
+  // On phones the sidebar is a full-screen menu, so picking a page closes it.
+  const navigateFromMenu = (path: string) => {
+    if (window.matchMedia(mobileNavigationMediaQuery).matches) {
+      setIsSidebarOpen(false);
+    }
+
+    navigate(path);
+  };
+  const openMobileTab = (path: string) => {
+    setIsSidebarOpen(false);
+    navigate(path);
+  };
+  const catalogNavItem = visibleNavItems.find((item) => item.id === 'catalog');
+  const presentationsNavItem = visibleNavItems.find((item) => item.id === 'presentations');
+  const mobileTabs: MobileTab[] = [
+    ...(catalogNavItem
+      ? [{ id: 'catalog', label: 'Недвижимость', icon: House, onSelect: () => openMobileTab(catalogNavItem.path) }]
+      : []),
+    ...(presentationsNavItem
+      ? [
+          {
+            id: 'presentations',
+            label: 'Подборки',
+            icon: Layers,
+            onSelect: () => openMobileTab(getNavigationPath(user, presentationsNavItem)),
+          },
+        ]
+      : []),
+    ...(catalogNavItem
+      ? [
+          {
+            id: 'search',
+            label: 'Поиск',
+            icon: SearchIcon,
+            onSelect: () => {
+              setIsSidebarOpen(false);
+              setIsCatalogSearchFocusRequested(true);
+
+              if (!isCatalogSearchPathname(pathname)) {
+                navigate(catalogNavItem.path);
+              }
+            },
+          },
+        ]
+      : []),
+    { id: 'profile', label: 'Профиль', icon: UserRound, onSelect: () => openMobileTab('/cabinet') },
+  ];
+  const activeMobileTabId =
+    activeSection === 'catalog' ? 'catalog' : activeSection === 'cabinet' ? 'profile' : activeSection;
 
   return (
     <main className="app-shell">
@@ -316,7 +372,7 @@ function AppRoutes() {
                     className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
                     type="button"
                     title={item.label}
-                    onClick={() => navigate(item.path)}
+                    onClick={() => navigateFromMenu(item.path)}
                   >
                     <item.icon aria-hidden="true" />
                     <span>{item.label}</span>
@@ -328,7 +384,7 @@ function AppRoutes() {
                         className={pathname === child.path ? 'nav-subitem nav-subitem--active' : 'nav-subitem'}
                         role="menuitem"
                         type="button"
-                        onClick={() => navigate(child.path)}
+                        onClick={() => navigateFromMenu(child.path)}
                       >
                         {child.label}
                       </button>
@@ -341,7 +397,7 @@ function AppRoutes() {
                   className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
                   type="button"
                   title={item.label}
-                  onClick={() => navigate(getNavigationPath(user, item))}
+                  onClick={() => navigateFromMenu(getNavigationPath(user, item))}
                 >
                   <item.icon aria-hidden="true" />
                   <span>{item.label}</span>
@@ -356,7 +412,7 @@ function AppRoutes() {
               type="button"
               aria-label="Открыть профиль"
               title="Профиль"
-              onClick={() => navigate('/cabinet')}
+              onClick={() => navigateFromMenu('/cabinet')}
             >
               <span className="sidebar-avatar">
                 <UserRound aria-hidden="true" />
@@ -508,7 +564,12 @@ function AppRoutes() {
         ) : activeSection === 'catalog' ? (
           hasPermission('objects:read') ? (
             <ObjectRouteChunk pathname={pathname}>
-              <CatalogPage navigate={navigate} pathname={pathname} />
+              <CatalogPage
+                isSearchFocusRequested={isCatalogSearchFocusRequested}
+                navigate={navigate}
+                pathname={pathname}
+                onSearchFocused={() => setIsCatalogSearchFocusRequested(false)}
+              />
             </ObjectRouteChunk>
           ) : (
             <AccessDenied />
@@ -517,6 +578,12 @@ function AppRoutes() {
           <CabinetHome />
         )}
       </section>
+      <MobileTabBar
+        activeTabId={activeMobileTabId}
+        isMenuOpen={isSidebarOpen}
+        tabs={mobileTabs}
+        onToggleMenu={() => setIsSidebarOpen((isOpen) => !isOpen)}
+      />
       {accessToken && hasPermission('objects:read') ? (
         <Suspense fallback={null}>
           <AssistantChat
@@ -529,6 +596,11 @@ function AppRoutes() {
       ) : null}
     </main>
   );
+}
+
+// Every catalog page except the map shows the search field.
+function isCatalogSearchPathname(pathname: string) {
+  return (pathname === '/catalog' || pathname.startsWith('/catalog/')) && pathname !== '/catalog/map';
 }
 
 function isAppRoute(pathname: string) {

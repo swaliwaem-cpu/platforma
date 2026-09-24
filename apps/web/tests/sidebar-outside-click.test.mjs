@@ -14,7 +14,7 @@ test('sidebar closes when clicking outside of the menu panel', () => {
   assert.match(source, /const sidebarRef = useRef<HTMLElement \| null>\(null\);/);
   assert.match(source, /document\.addEventListener\('pointerdown', handleDocumentPointerDown\);/);
   assert.match(source, /document\.removeEventListener\('pointerdown', handleDocumentPointerDown\);/);
-  assert.match(source, /if \(sidebarRef\.current\.contains\(event\.target\)\) \{/);
+  assert.match(source, /if \(sidebarRef\.current\.contains\(event\.target\) \|\| \(event\.target instanceof Element && event\.target\.closest\('\.mobile-tabbar'\)\)\) \{/);
   assert.match(source, /setIsSidebarOpen\(false\);/);
   assert.match(source, /<aside[\s\S]*?ref=\{sidebarRef\}/);
 });

@@ -276,6 +276,7 @@ button {
 .app-shell {
   --sidebar-width: 238px;
   --sidebar-rail-width: 78px;
+  --mobile-tabbar-height: 60px;
   display: grid;
   min-height: 100vh;
   grid-template-columns: minmax(0, 1fr);
@@ -315,6 +316,11 @@ button {
 
 .sidebar--open {
   width: var(--sidebar-width);
+}
+
+/* Phone-only navigation; the 760px block below turns it on. */
+.mobile-tabbar {
+  display: none;
 }
 
 .sidebar-content {
@@ -5024,6 +5030,11 @@ tr.user-row--deactivated .text-button {
   min-height: 640px;
 }
 
+/* Only phones open the map full screen and need a way back. */
+.catalog-map-close {
+  display: none;
+}
+
 .catalog-map-list {
   position: absolute;
   z-index: 20;
@@ -9479,42 +9490,155 @@ tr.user-row--deactivated .text-button {
 
 @media (max-width: 760px) {
   /*
-   * Phones: like the reference .fw-sidebar, the navigation is a floating bar
-   * along the bottom edge — one row of equal icon cells, no brand, no labels.
-   * The platform has no top bar, so profile, theme and logout close the row.
+   * Phones: navigation is the solid .mobile-tabbar along the bottom edge, like
+   * most mobile sites. It slides away on scroll down (MobileTabBar adds
+   * .is-hidden) and stays put while it holds focus.
    */
-  .sidebar,
-  .sidebar--open {
-    top: auto;
-    right: 10px;
-    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-    left: 10px;
-    width: auto;
-    border-radius: 20px;
-  }
-
-  .sidebar-content {
+  .mobile-tabbar {
+    position: fixed;
+    z-index: 70;
+    right: 0;
+    bottom: 0;
+    left: 0;
     display: grid;
+    height: calc(var(--mobile-tabbar-height) + env(safe-area-inset-bottom, 0px));
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: column;
+    border-top: 1px solid #c3bbb4;
+    background: #faf8f5;
+    padding: 0 2px env(safe-area-inset-bottom, 0px);
+    transition: transform 280ms cubic-bezier(0.22, 0.75, 0.18, 1);
+  }
+
+  .mobile-tabbar.is-hidden:not(:focus-within) {
+    transform: translateY(100%);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mobile-tabbar {
+      transition: none;
+    }
+  }
+
+  .mobile-tabbar-item {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     gap: 4px;
-    padding: 8px 8px 10px;
+    border: 0;
+    background: transparent;
+    color: #66635f;
+    cursor: pointer;
+    font: inherit;
+    /* Shrinks on narrow phones so «Недвижимость» still fits a fifth of the width. */
+    font-size: clamp(9px, 2.65vw, 10px);
+    letter-spacing: -0.01em;
+    line-height: 12px;
+    padding: 6px 0;
+    -webkit-tap-highlight-color: transparent;
   }
 
-  .sidebar :is(.nav-list, .nav-group, .sidebar-bottom, .sidebar-actions) {
-    display: contents;
+  .mobile-tabbar-item svg {
+    width: 22px;
+    height: 22px;
+    flex: none;
+    stroke-width: 1.8;
   }
 
-  .sidebar :is(.sidebar-brand, .nav-submenu, .nav-item span, .sidebar-user-text, .theme-toggle span, .sidebar-logout span) {
+  .mobile-tabbar-item span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-tabbar-item.is-active {
+    color: #0e0d0c;
+  }
+
+  .mobile-tabbar-item:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: -4px;
+    border-radius: 12px;
+  }
+
+  /*
+   * The sidebar only appears when «Меню» in the tab bar opens it: a full-screen
+   * menu above the bar with every section, theme and logout, labels included.
+   */
+  .sidebar {
     display: none;
   }
 
-  .sidebar :is(.nav-item, .sidebar-user, .theme-toggle, .secondary-button) {
+  .sidebar--open {
+    top: 0;
+    right: 0;
+    bottom: calc(var(--mobile-tabbar-height) + env(safe-area-inset-bottom, 0px));
+    left: 0;
+    display: flex;
     width: auto;
-    min-width: 0;
-    height: 50px;
-    justify-content: center;
-    padding: 0;
+    border-width: 0 0 1px;
+    border-radius: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /*
+   * The catalog map opens over the whole screen, tab bar included; the round
+   * close button returns to the list.
+   */
+  .catalog-map-layout {
+    position: fixed;
+    z-index: 80;
+    inset: 0;
+  }
+
+  body:has(.catalog-map-layout) {
+    overflow: hidden;
+  }
+
+  .app-shell:is(:has(.catalog-map-layout), :has(.sidebar--open)) .assistant-launcher {
+    display: none;
+  }
+
+  .catalog-map-layout .catalog-map-panel {
+    height: 100%;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .catalog-map-layout :is(.platform-map-shell, .platform-map-canvas, .map-fallback) {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .catalog-map-layout .maplibregl-ctrl-fullscreen {
+    display: none;
+  }
+
+  .catalog-map-close {
+    position: absolute;
+    z-index: 40;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: 12px;
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border: 1px solid #c3bbb4;
+    border-radius: 50%;
+    background: #faf8f5;
+    color: #0e0d0c;
+    box-shadow: 0 6px 18px rgb(45 38 32 / 16%);
+    cursor: pointer;
+  }
+
+  .catalog-map-close svg {
+    width: 20px;
+    height: 20px;
   }
 
   .workspace,
@@ -9526,7 +9650,7 @@ tr.user-row--deactivated .text-button {
   .workspace:has(.admin-catalog-links),
   .workspace:has(.admin-feeds),
   .workspace:has(.admin-import) {
-    padding: 12px 14px calc(94px + env(safe-area-inset-bottom, 0px));
+    padding: 12px 14px calc(var(--mobile-tabbar-height) + 24px + env(safe-area-inset-bottom, 0px));
   }
 
   .login-panel,

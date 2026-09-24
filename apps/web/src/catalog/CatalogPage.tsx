@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   SearchIcon,
+  XIcon,
 } from 'lucide-react';
 import type {
   CatalogLinksResponse,
@@ -78,8 +80,10 @@ import aerotourIconUrl from '../../../../aerotour-icon.png';
 import floorPlanIconUrl from '../../../../floor-plan.svg';
 
 type CatalogPageProps = {
+  isSearchFocusRequested: boolean;
   navigate: (nextPathname: string) => void;
   pathname: string;
+  onSearchFocused: () => void;
 };
 
 type BooleanFilter = '' | 'true' | 'false';
@@ -190,7 +194,7 @@ const objectStatusLabels: Record<ObjectStatus, string> = {
   ARCHIVED: 'Архивный',
 };
 
-export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
+export function CatalogPage({ isSearchFocusRequested, navigate, pathname, onSearchFocused }: CatalogPageProps) {
   const { accessToken, hasPermission } = useAuth();
   const [queryString, setQueryString] = useState(window.location.search);
   const routeObjectType = getCatalogRouteObjectType(pathname);
@@ -579,8 +583,10 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
         directories={directories}
         filters={filters}
         isDirectoriesLoading={isDirectoriesLoading}
+        isSearchFocusRequested={isSearchFocusRequested}
         onChange={updateFilters}
         onReset={resetFilters}
+        onSearchFocused={onSearchFocused}
       />
 
       <CatalogResultsBar
@@ -606,6 +612,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           metroStations={directories.metroStations}
           objects={mapObjects}
           total={mapTotal}
+          onClose={() => openCatalogViewMode(viewMode)}
         />
       ) : (
         <CatalogListView
@@ -739,17 +746,33 @@ function CatalogFilters({
   directories,
   filters,
   isDirectoriesLoading,
+  isSearchFocusRequested,
   onChange,
   onReset,
+  onSearchFocused,
 }: {
   directories: DirectoryState;
   filters: CatalogFilters;
   isDirectoriesLoading: boolean;
+  isSearchFocusRequested: boolean;
   onChange: (patch: Partial<CatalogFilters>, options?: { resetPage: boolean }) => void;
   onReset: () => void;
+  onSearchFocused: () => void;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const isStuck = useCatalogStickyPanel(panelRef);
+
+  // «Поиск» in the phone tab bar. A layout effect keeps the focus inside the tap,
+  // which iOS needs to raise the keyboard when the catalog is already open.
+  useLayoutEffect(() => {
+    if (!isSearchFocusRequested) {
+      return;
+    }
+
+    searchInputRef.current?.focus();
+    onSearchFocused();
+  }, [isSearchFocusRequested, onSearchFocused]);
   const selectedObjectType = catalogObjectTypeOptions.find((option) => option.value === filters.objectType);
   const selectedRoomValues = getRoomFilterValues(filters.lotRooms);
   const priceValue = formatCatalogPriceFilterValue(filters);
@@ -787,6 +810,7 @@ function CatalogFilters({
           <span className="catalog-filter-search-field">
             <SearchIcon aria-hidden="true" />
             <input
+              ref={searchInputRef}
               placeholder="Название, адрес, застройщик"
               type="search"
               value={filters.search}
@@ -1631,6 +1655,7 @@ function CatalogMapView({
   metroStations,
   objects,
   total,
+  onClose,
 }: {
   accessToken: string;
   canRefreshWalkingRoutes: boolean;
@@ -1640,10 +1665,12 @@ function CatalogMapView({
   metroStations: ObjectMetroStation[];
   objects: MapObject[];
   total: number;
+  onClose: () => void;
 }) {
   const [visibleBounds, setVisibleBounds] = useState<MapBounds | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
-  const [isListVisible, setIsListVisible] = useState(true);
+  // On phones the map is full screen, so the object list starts folded.
+  const [isListVisible, setIsListVisible] = useState(() => !window.matchMedia('(max-width: 760px)').matches);
   const [mapStatus, setMapStatus] = useState<MapStatus>('loading');
   const [nearbyTransit, setNearbyTransit] = useState<MapNearbyTransitResult>({
     pointId: null,
@@ -1851,6 +1878,11 @@ function CatalogMapView({
         </PlatformMap>
 
         {shouldRenderOverlayInsideMap ? null : mapOverlay}
+
+        {/* Phones open the map full screen; this is the way back to the list. */}
+        <button aria-label="Закрыть карту" className="catalog-map-close" title="Закрыть карту" type="button" onClick={onClose}>
+          <XIcon aria-hidden="true" />
+        </button>
       </div>
     </section>
   );
