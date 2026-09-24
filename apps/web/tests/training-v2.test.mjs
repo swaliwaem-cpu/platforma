@@ -132,7 +132,9 @@ test('admin projects overview renders an accessible responsive operations dashbo
   assert.match(adminProjectsSource, /aria-label=\{`Открыть проект «\$\{project\.title\}»`\}/u);
   assert.match(adminProjectsSource, /required[\s\S]*?autoComplete="off"[\s\S]*?disabled=\{isCreating\}/u);
   assert.match(dashboardStylesSource, /\.training-dashboard-project-panel\s*\{[\s\S]*?width:\s*100%;/u);
-  assert.match(dashboardStylesSource, /data-app-theme='dark-premium'[\s\S]*?training-dashboard-metric-icon[\s\S]*?training-dashboard-project-name svg[\s\S]*?color:\s*var\(--app-theme-ink-900\);/u);
+  assert.match(dashboardStylesSource, /\.training-dashboard-metric-icon\s*\{[^}]*color:\s*var\(--catalog-ink-700\);/u);
+  assert.match(dashboardStylesSource, /\.training-dashboard-project-name svg\s*\{[^}]*color:\s*var\(--catalog-ink-700\);/u);
+  assert.doesNotMatch(dashboardStylesSource, /data-app-theme='dark-premium'/u);
   assert.doesNotMatch(dashboardStylesSource, /data-tone='success'\] \.training-dashboard-metric-icon/u);
   assert.match(dashboardStylesSource, /\.training-page\.training-admin-dashboard\s*\{[\s\S]*?width:\s*85vw;/u);
   assert.match(dashboardStylesSource, /\.training-dashboard-project-name strong[\s\S]*?white-space:\s*normal;/u);

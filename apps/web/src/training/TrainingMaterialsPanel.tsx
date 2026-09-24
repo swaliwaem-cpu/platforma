@@ -24,7 +24,6 @@ import {
   SparklesIcon,
   XIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
 } from 'lucide-react';
 
 import { AdminAlert, AdminButton } from '../admin/AdminUi';
@@ -49,14 +48,6 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SelectDropdown } from '@/components/SelectDropdown';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   applyTrainingMaterialSuggestions,
   archiveTrainingMaterial,
@@ -86,6 +77,7 @@ type TrainingMaterialsPanelProps = {
 };
 
 type CreatableTrainingMaterialType = Exclude<TrainingMaterialType, 'OBJECT_SNAPSHOT'>;
+type InspectorView = 'text' | 'diff' | 'history';
 type MaterialCreateError = {
   field: 'title' | 'file' | 'url' | 'form';
   message: string;
@@ -188,6 +180,7 @@ export function TrainingMaterialsPanel({
   const [refreshText, setRefreshText] = useState('');
   const [refreshFile, setRefreshFile] = useState<File | null>(null);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
+  const [inspectorView, setInspectorView] = useState<InspectorView>('text');
   const [objectOptions, setObjectOptions] = useState<TrainingObjectOption[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState(linkedObjectId ?? '');
   const [objectSearch, setObjectSearch] = useState('');
@@ -201,6 +194,11 @@ export function TrainingMaterialsPanel({
     ?? selected?.revisions[0]
     ?? null;
   const hasActiveOperations = operations.some(isActiveMaterialOperation);
+  const inspectorViews: Array<[InspectorView, string, number | null]> = [
+    ['text', 'Текст', null],
+    ['diff', 'Изменения', selectedRevision ? selectedRevision.diff.added.length + selectedRevision.diff.removed.length : null],
+    ['history', 'Версии', selected ? selected.revisions.length : null],
+  ];
 
   useEffect(() => {
     const controller = new AbortController();
@@ -574,9 +572,6 @@ export function TrainingMaterialsPanel({
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       {operationsError ? <AdminAlert tone="error">{operationsError}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
-      {disabled ? (
-        <AdminAlert tone="notice">Закройте проект перед изменением материалов. Предпросмотр и история доступны для чтения.</AdminAlert>
-      ) : null}
       {hasActiveOperations ? (
         <AdminAlert tone="notice">
           Идёт обработка источника. Новые операции создания временно недоступны, чтобы не перезаписать более свежую редакцию проекта.
@@ -804,29 +799,16 @@ export function TrainingMaterialsPanel({
               </Empty>
             ) : null}
             {!isLoading && visibleMaterials.length > 0 ? (
-              <div className="training-material-table-shell">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Источник</TableHead>
-                      <TableHead>Тип</TableHead>
-                      <TableHead>Обновлён</TableHead>
-                      <TableHead>Статус</TableHead>
-                      <TableHead><span className="sr-only">Открыть</span></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visibleMaterials.map((material) => (
-                      <MaterialRow
-                        active={selected?.id === material.id}
-                        key={material.id}
-                        material={material}
-                        onOpen={() => void openMaterial(material.id)}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <ul className="training-material-table-shell" aria-label="Источники проекта">
+                {visibleMaterials.map((material) => (
+                  <MaterialRow
+                    active={selected?.id === material.id}
+                    key={material.id}
+                    material={material}
+                    onOpen={() => void openMaterial(material.id)}
+                  />
+                ))}
+              </ul>
             ) : null}
             <p className="training-material-count">Показано {visibleMaterials.length} из {materials.length}</p>
           </section>
@@ -870,8 +852,23 @@ export function TrainingMaterialsPanel({
                     <div><dt>Выбрано полей</dt><dd>{Array.isArray(selectedRevision.extractionMetadata.fieldCodes) ? selectedRevision.extractionMetadata.fieldCodes.length : 0}</dd></div>
                   </dl>
                 ) : null}
-                <section className="training-material-preview">
-                  <h4>Извлечённый текст</h4>
+                <div className="training-material-inspector-tabs" role="tablist" aria-label="Содержимое источника">
+                  {inspectorViews.map(([view, label, count]) => (
+                    <button
+                      key={view}
+                      type="button"
+                      role="tab"
+                      aria-selected={inspectorView === view}
+                      className="training-material-inspector-tab"
+                      data-active={inspectorView === view || undefined}
+                      onClick={() => setInspectorView(view)}
+                    >
+                      {label}{count === null ? null : <small>{count}</small>}
+                    </button>
+                  ))}
+                </div>
+                {inspectorView === 'text' ? <section className="training-material-preview">
+                  <h4 className="sr-only">Извлечённый текст</h4>
                   {selectedRevision.segments.length ? (
                     <ol className="training-material-segments">
                       {selectedRevision.segments.map((segment) => (
@@ -882,9 +879,9 @@ export function TrainingMaterialsPanel({
                       ))}
                     </ol>
                   ) : <p className="muted-text">Извлечённого текста нет.</p>}
-                </section>
-                <section className="training-material-diff">
-                  <h4>Изменения</h4>
+                </section> : null}
+                {inspectorView === 'diff' ? <section className="training-material-diff">
+                  <h4 className="sr-only">Изменения</h4>
                   <div>
                     <span>Добавлено: {selectedRevision.diff.added.length}</span>
                     <span>Удалено: {selectedRevision.diff.removed.length}</span>
@@ -892,9 +889,9 @@ export function TrainingMaterialsPanel({
                   </div>
                   {selectedRevision.diff.added.length ? <DiffList title="Добавленные фрагменты" items={selectedRevision.diff.added} /> : null}
                   {selectedRevision.diff.removed.length ? <DiffList title="Удалённые фрагменты" items={selectedRevision.diff.removed} /> : null}
-                </section>
-                <section className="training-material-history">
-                  <h4>История версий</h4>
+                </section> : null}
+                {inspectorView === 'history' ? <section className="training-material-history">
+                  <h4 className="sr-only">История версий</h4>
                   <ol>{selected.revisions.map((revision) => (
                     <li key={revision.id}>
                       <button
@@ -908,7 +905,7 @@ export function TrainingMaterialsPanel({
                       </button>
                     </li>
                   ))}</ol>
-                </section>
+                </section> : null}
                 {selectedRevision.status === 'READY' ? <section className="training-material-suggestions">
                   <div className="training-subsection-heading">
                     <div><h4>Дополнительные факты из материала</h4><p className="muted-text">Можно дополнить автоматически созданные ответы; новые сгенерированные факты не участвуют в публикации до ручного применения.</p></div>
@@ -1325,30 +1322,26 @@ function formatMaterialCreateError(error: unknown) {
 
 function MaterialRow({ active, material, onOpen }: { active: boolean; material: TrainingMaterial; onOpen: () => void }) {
   const Icon = typeIcons[material.type];
+  const status = material.latestRevision?.status;
   return (
-    <TableRow className="training-material-row" data-state={active ? 'selected' : undefined}>
-      <TableCell>
-        <button type="button" className="training-material-title-button" onClick={onOpen}>
-          <span className="training-material-type-icon"><Icon aria-hidden="true" /></span>
-          <span>
-            <strong>{material.title}</strong>
-            <small>Версия {material.latestRevision?.revisionNumber ?? 0}</small>
-          </span>
-        </button>
-      </TableCell>
-      <TableCell><Badge variant="outline">{typeLabels[material.type]}</Badge></TableCell>
-      <TableCell>{new Date(material.updatedAt).toLocaleDateString('ru-RU')}</TableCell>
-      <TableCell>
-        <Badge variant={material.latestRevision?.status === 'FAILED' ? 'destructive' : 'secondary'}>
+    <li>
+      <button
+        type="button"
+        className="training-material-row"
+        data-state={active ? 'selected' : undefined}
+        aria-current={active ? 'true' : undefined}
+        onClick={onOpen}
+      >
+        <span className="training-material-type-icon"><Icon aria-hidden="true" /></span>
+        <span className="training-material-row-copy">
+          <strong>{material.title}</strong>
+          <small>{typeLabels[material.type]} · версия {material.latestRevision?.revisionNumber ?? 0} · {new Date(material.updatedAt).toLocaleDateString('ru-RU')}</small>
+        </span>
+        <Badge variant={status === 'FAILED' ? 'destructive' : 'secondary'}>
           {material.latestRevision ? revisionStatusLabels[material.latestRevision.status] : 'Нет версии'}
         </Badge>
-      </TableCell>
-      <TableCell>
-        <button type="button" className="training-material-open-button" aria-label={`Открыть ${material.title}`} onClick={onOpen}>
-          <ChevronRightIcon aria-hidden="true" />
-        </button>
-      </TableCell>
-    </TableRow>
+      </button>
+    </li>
   );
 }
 

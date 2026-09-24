@@ -42,45 +42,6 @@
   padding-inline: 16px;
 }
 
-html[data-app-theme='minimal-luxury'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action {
-  border-color: var(--app-theme-primary);
-  background: var(--app-theme-primary);
-  color: var(--app-theme-primary-foreground);
-}
-
-html[data-app-theme='minimal-luxury'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:hover,
-html[data-app-theme='minimal-luxury'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:focus-visible {
-  border-color: var(--app-theme-primary-deep);
-  background: var(--app-theme-primary-deep);
-  color: var(--app-theme-primary-foreground);
-}
-
-html[data-app-theme='dark-premium'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action {
-  border-color: var(--app-theme-border);
-  background: var(--app-theme-surface);
-  color: var(--app-theme-ink-900);
-}
-
-html[data-app-theme='dark-premium'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:hover,
-html[data-app-theme='dark-premium'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:focus-visible {
-  border-color: var(--app-theme-border-strong);
-  background: var(--app-theme-surface-muted);
-  color: var(--app-theme-ink-900);
-}
-
-html[data-app-theme] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-create-action {
-  border-color: var(--app-theme-accent);
-  background: var(--app-theme-accent);
-  color: var(--app-theme-primary-foreground);
-}
-
-html[data-app-theme] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-create-action:hover,
-html[data-app-theme] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-create-action:focus-visible {
-  border-color: color-mix(in srgb, var(--app-theme-accent) 82%, var(--app-theme-ink-900));
-  background: color-mix(in srgb, var(--app-theme-accent) 82%, var(--app-theme-ink-900));
-  color: var(--app-theme-primary-foreground);
-}
-
 .training-dashboard-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -94,55 +55,49 @@ html[data-app-theme] .training-admin-dashboard .training-admin-dashboard-actions
   padding: 18px 20px;
   flex-direction: row;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
 .training-dashboard-metric-icon {
   display: inline-flex;
+  width: 44px;
+  height: 44px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--catalog-border-strong);
-  border-radius: var(--catalog-radius-md);
-  color: var(--catalog-blue-deep);
+  border: 0;
+  border-radius: 13px;
+  color: var(--catalog-ink-700);
   background: var(--catalog-panel-soft);
 }
 
-.training-dashboard-metric-icon {
-  width: 48px;
-  height: 48px;
-}
-
 .training-dashboard-metric-icon svg {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   stroke-width: 1.8;
-}
-
-html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboard-metric-icon,
-html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboard-project-name svg {
-  color: var(--app-theme-ink-900);
 }
 
 .training-dashboard-metric-copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .training-dashboard-metric-copy small {
   color: var(--catalog-ink-700);
-  font-size: 0.82rem;
-  font-weight: 650;
-  line-height: 1.25;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
 }
 
 .training-dashboard-metric-copy strong {
   color: var(--catalog-ink-900);
-  font-size: 1.8rem;
+  font-size: 29px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  line-height: 1;
+  letter-spacing: -0.6px;
+  line-height: 30px;
 }
 
 .training-dashboard-metric[data-tone='success'] .training-dashboard-metric-copy strong {
@@ -166,7 +121,7 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 .training-dashboard-panel-heading {
   display: flex;
   min-height: 88px;
-  padding: 20px 22px;
+  padding: 22px 24px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -178,11 +133,18 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
   margin: 0;
 }
 
+.training-dashboard-panel-heading h3 {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.44px;
+  line-height: 26px;
+}
+
 .training-dashboard-panel-heading p {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   color: var(--catalog-ink-700);
-  font-size: 0.86rem;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .training-dashboard-project-head,
@@ -195,18 +157,19 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
     minmax(72px, 0.48fr)
     minmax(180px, 1.25fr)
     minmax(70px, 0.48fr)
-    24px;
+    40px;
   align-items: center;
   gap: 12px;
 }
 
 .training-dashboard-project-head {
-  min-height: 46px;
-  padding: 0 20px;
-  color: var(--catalog-ink-600);
+  min-height: 40px;
+  padding: 0 24px;
+  color: var(--catalog-ink-700);
   background: var(--catalog-panel-soft);
-  font-size: 0.72rem;
-  font-weight: 750;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
 }
 
 .training-dashboard-project-list {
@@ -216,8 +179,8 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 
 .training-dashboard-project-row {
   width: 100%;
-  min-height: 76px;
-  padding: 14px 20px;
+  min-height: 68px;
+  padding: 14px 24px;
   border: 0;
   border-bottom: 1px solid var(--catalog-border-soft);
   border-radius: 0;
@@ -250,18 +213,19 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 }
 
 .training-dashboard-project-name svg {
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
-  color: var(--catalog-blue-deep);
+  color: var(--catalog-ink-700);
   stroke-width: 1.8;
 }
 
 .training-dashboard-project-name strong {
   min-width: 0;
   color: var(--catalog-ink-900);
-  font-size: 0.9rem;
-  line-height: 1.35;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
   overflow-wrap: anywhere;
   white-space: normal;
 }
@@ -277,9 +241,9 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 
 .training-dashboard-project-cell {
   min-width: 0;
-  font-size: 0.82rem;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
-  line-height: 1.35;
+  line-height: 20px;
   overflow-wrap: anywhere;
 }
 
@@ -289,21 +253,15 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 
 .training-dashboard-project-arrow {
   display: inline-flex;
+  width: 40px;
+  height: 40px;
   align-items: center;
-  justify-content: flex-end;
-  color: var(--catalog-ink-600);
+  justify-content: center;
 }
 
 .training-dashboard-project-arrow svg {
-  width: 18px;
-  height: 18px;
-  transition: transform 180ms ease, color 180ms ease;
-}
-
-.training-dashboard-project-row:hover .training-dashboard-project-arrow svg,
-.training-dashboard-project-row:focus-visible .training-dashboard-project-arrow svg {
-  color: var(--catalog-blue-deep);
-  transform: translateX(2px);
+  width: 20px;
+  height: 20px;
 }
 
 .training-dashboard-list-skeleton {
@@ -315,36 +273,68 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
   padding: 20px;
 }
 
-.training-create-dialog {
-  width: min(480px, calc(100% - 32px));
-  max-width: 480px;
+.training-create-dialog[data-slot='dialog-content'] {
+  display: flex;
+  width: min(440px, calc(100% - 32px));
+  max-width: 440px;
+  padding: 24px;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.training-create-dialog [data-slot='dialog-header'] {
+  gap: 6px;
+  padding-right: 40px;
+}
+
+html[data-app-theme] .training-create-dialog [data-slot='dialog-title'] {
+  font-size: 22px;
+  letter-spacing: -0.44px;
+  line-height: 26px;
+}
+
+.training-create-dialog [data-slot='dialog-description'] {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+html[data-app-theme] .training-create-dialog [data-slot='dialog-close'] {
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+}
+
+.training-create-dialog [data-slot='dialog-close'] svg {
+  width: 18px;
+  height: 18px;
 }
 
 .training-create-dialog form {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
 }
 
 .training-create-dialog [data-slot='input'] {
   min-height: 46px;
 }
 
-.training-dashboard-retake-field {
-  min-height: 48px;
-  align-items: flex-start;
-  cursor: pointer;
+.training-create-dialog [data-slot='dialog-footer'] {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.training-dashboard-retake-field > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.training-dashboard-retake-field label {
-  cursor: pointer;
+.training-create-dialog [data-slot='dialog-footer'] [data-slot='button'] {
+  width: 100%;
+  min-height: 44px;
 }
 
 @media (max-width: 1120px) {
@@ -417,10 +407,10 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
   .training-dashboard-project-cell::before {
     display: block;
     margin-bottom: 3px;
-    color: var(--catalog-ink-600);
+    color: var(--catalog-ink-700);
     content: attr(data-label);
-    font-size: 0.7rem;
-    font-weight: 700;
+    font-size: 11px;
+    font-weight: 400;
   }
 
   .training-dashboard-project-arrow {
@@ -452,6 +442,10 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 }
 
 @media (max-width: 420px) {
+  .training-create-dialog [data-slot='dialog-footer'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .training-dashboard-metric {
     min-height: 126px;
     flex-direction: column;
@@ -478,8 +472,7 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .training-dashboard-project-row,
-  .training-dashboard-project-arrow svg {
+  .training-dashboard-project-row {
     transition: none;
   }
 }

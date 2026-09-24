@@ -18,7 +18,8 @@ const stylesSource = source('training/training.css');
 
 test('Stage 4 stays inside the existing admin editor and adds the explicit Platforma object import flow', () => {
   assert.match(editorSource, /EditorStageTrigger value="materials"[^\n]*label="Материалы"/);
-  assert.match(editorSource, /orientation="vertical"/);
+  assert.match(editorSource, /orientation="horizontal"[\s\S]*?className="training-editor-stepper"/);
+  assert.match(editorSource, /value="params"[\s\S]*?value="questions"[\s\S]*?value="criteria"/);
   assert.match(editorSource, /EditorStageTrigger value="materials"[\s\S]*?EditorStageTrigger value="questions"[\s\S]*?EditorStageTrigger value="assignments"/);
   assert.match(editorSource, /TrainingMaterialsPanel/);
   assert.match(editorSource, /Эталонный ответ · проверяемые факты/);

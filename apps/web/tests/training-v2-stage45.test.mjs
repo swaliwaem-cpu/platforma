@@ -28,7 +28,7 @@ test('Stage 4.5 access panel covers modes, warnings and bounded bulk selection',
   assert.match(panel, /data-selected=\{project\.accessMode === 'ASSIGNED_USERS'\}/);
   assert.match(panel, /data-selected=\{project\.accessMode === 'ALL_PARTICIPANTS'\}/);
   assert.match(panel, /training-access-mode-radio/);
-  assert.match(panel, />Выбрано<\/Badge>/);
+  assert.doesNotMatch(panel, />Выбрано<\/Badge>/);
   assert.match(panel, /нет активных назначений/iu);
   assert.match(panel, /server|Имя или электронная почта/iu);
   assert.match(panel, /assigned/);
@@ -62,6 +62,6 @@ test('Stage 4.5 employee UI shows the exact safe active-attempt message', () => 
   assert.match(styles, /training-access-modes/);
   assert.match(styles, /training-access-mode-option\[data-selected='true'\]/);
   assert.match(styles, /training-access-mode-radio\[data-state='checked'\]/);
-  assert.match(styles, /training-access-mode-selected/);
+  assert.match(styles, /\.training-access-mode-option \{[\s\S]*?width:\s*fit-content;/);
   assert.match(styles, /training-assignment-pagination/);
 });

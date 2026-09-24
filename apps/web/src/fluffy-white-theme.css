@@ -583,6 +583,13 @@
   line-height: 21px;
 }
 
+/* Project editor: a working screen, so its title sits one step down the scale. */
+:root[data-app-theme] body .training-project-editor-header h2 {
+  font-size: 29px;
+  letter-spacing: -0.6px;
+  line-height: 32px;
+}
+
 @media (max-width: 560px) {
   :root[data-app-theme] body :is(
     .page-header,
@@ -638,6 +645,9 @@
   .training-review-panel,
   .training-assignments-panel,
   .training-access-mode-panel,
+  .training-material-browser,
+  .training-editor-stepper,
+  .training-editor-bottombar,
   .project-presentation-step-panel
 ) {
   border: 0;
@@ -984,9 +994,7 @@
   .empty-detail-block,
   .admin-empty-state,
   .object-layouts-cta,
-  .training-material-row,
   .training-material-create-card,
-  .training-object-import-card,
   .lot-presentations-empty,
   .project-presentations-empty
 ) {
@@ -1013,7 +1021,6 @@
   .feed-source-discovery-platform,
   .detail-file-list li,
   .metro-list li,
-  .training-fact-row,
   .training-metrics > div,
   .object-feed-media-carousel-thumb
 ) {
@@ -1341,8 +1348,7 @@
   .gallery-tile-remove-button,
   .gallery-tile-open-original,
   .gallery-modal-header-save,
-  .lot-finish-modal-option,
-  .training-dashboard-project-arrow
+  .lot-finish-modal-option
 ) {
   border: 1px solid transparent;
   border-radius: 12px;
@@ -1361,8 +1367,7 @@
   .gallery-tile-remove-button,
   .gallery-tile-open-original,
   .gallery-modal-header-save,
-  .lot-finish-modal-option,
-  .training-dashboard-project-arrow
+  .lot-finish-modal-option
 ):not(:disabled, [aria-disabled="true"]):is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
@@ -1379,8 +1384,7 @@
   .gallery-tile-remove-button,
   .gallery-tile-open-original,
   .gallery-modal-header-save,
-  .lot-finish-modal-option,
-  .training-dashboard-project-arrow
+  .lot-finish-modal-option
 ):not(:disabled, [aria-disabled="true"]):active {
   transform: translateY(var(--fw-press));
 }
@@ -1498,6 +1502,75 @@
   background: var(--fw-hover-bg);
   color: var(--fw-text);
   outline: none;
+}
+
+/* Training project row arrow: carousel nav shape on a panel, so the control fill stands in for the glass. */
+:root[data-app-theme] body .training-dashboard-project-arrow {
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: var(--fw-control);
+  color: var(--fw-text);
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme] body .training-dashboard-project-row:is(:hover, :focus-visible) .training-dashboard-project-arrow {
+  border-color: var(--fw-hover-line);
+  background: var(--fw-hover-bg);
+}
+
+/* Training option tile with a switch (create dialog, project parameters) and solid graphite step CTAs. */
+:root[data-app-theme] body .training-option-toggle {
+  gap: 14px;
+  background: var(--fw-control-hover);
+  color: var(--fw-text);
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme] body .training-option-toggle:not([data-disabled]):hover {
+  background: var(--fw-hover-bg);
+}
+
+:root[data-app-theme] body .training-option-toggle-hint {
+  color: var(--fw-muted);
+}
+
+:root[data-app-theme] body .training-switch {
+  background: var(--fw-line-strong);
+  transition: background-color 0.18s;
+}
+
+:root[data-app-theme] body .training-switch::after {
+  background: #ffffff;
+}
+
+:root[data-app-theme] body .training-switch:checked {
+  background: var(--fw-text);
+}
+
+:root[data-app-theme] body .training-switch:checked::after {
+  background: var(--fw-canvas);
+}
+
+:root[data-app-theme] body .training-switch:focus-visible {
+  outline: 2px solid var(--fw-text);
+  outline-offset: 2px;
+}
+
+:root[data-app-theme] body :is(.training-create-dialog .training-create-submit, .training-editor-bottombar .training-editor-next-step) {
+  border-color: var(--fw-solid);
+  background: var(--fw-solid);
+  color: var(--fw-solid-text);
+}
+
+:root[data-app-theme] body :is(.training-create-dialog .training-create-submit, .training-editor-bottombar .training-editor-next-step):not(:disabled):is(:hover, :focus-visible) {
+  border-color: var(--fw-solid-hover);
+  background: var(--fw-solid-hover);
+  color: var(--fw-solid-text);
+}
+
+:root[data-app-theme] body :is(.training-create-dialog .training-create-submit, .training-editor-bottombar .training-editor-next-step):not(:disabled):active {
+  background: var(--fw-solid-pressed);
+  color: var(--fw-solid-text);
 }
 
 :root[data-app-theme] body :is(
@@ -1635,6 +1708,7 @@
   .lot-presentations-tab,
   .project-presentations-tabs > button,
   [data-slot="tabs-trigger"],
+  .training-material-inspector-tab,
   .login-mode-button
 ) {
   min-height: 46px;
@@ -1659,6 +1733,7 @@
   .project-presentations-tabs > button.is-active,
   [data-slot="tabs-trigger"][data-state="active"],
   [data-slot="tabs-trigger"][data-active],
+  .training-material-inspector-tab[data-active],
   .login-mode-button.login-mode-button--active
 ) {
   border-color: var(--fw-line);
@@ -1671,6 +1746,7 @@
   .lot-presentations-tab,
   .project-presentations-tabs > button,
   [data-slot="tabs-trigger"],
+  .training-material-inspector-tab,
   .login-mode-button
 ):is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
@@ -1687,6 +1763,7 @@
   .project-presentations-tabs > button.is-active,
   [data-slot="tabs-trigger"][data-state="active"],
   [data-slot="tabs-trigger"][data-active],
+  .training-material-inspector-tab[data-active],
   .login-mode-button.login-mode-button--active
 ):is(:hover, :focus-visible) {
   border-color: transparent;
@@ -1697,6 +1774,7 @@
   .lot-presentations-tab,
   .project-presentations-tabs > button,
   [data-slot="tabs-trigger"],
+  .training-material-inspector-tab,
   .login-mode-button
 ):active {
   transform: translateY(var(--fw-press));

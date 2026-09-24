@@ -6,6 +6,7 @@ import {
   ArrowRightIcon,
   BadgeCheckIcon,
   BarChart3Icon,
+  ChevronRightIcon,
   ClipboardCheckIcon,
   FilePenLineIcon,
   FolderKanbanIcon,
@@ -23,7 +24,7 @@ import {
   AdminStatusBadge,
 } from '../admin/AdminUi';
 import { useAuth } from '../auth/AuthProvider';
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -333,7 +334,7 @@ export function TrainingAdminProjectsPage({
                         {project.timeLimitSeconds / 60} мин
                       </span>
                       <span className="training-dashboard-project-arrow" aria-hidden="true">
-                        <ArrowRightIcon />
+                        <ChevronRightIcon />
                       </span>
                     </button>
                   ))}
@@ -367,7 +368,7 @@ export function TrainingAdminProjectsPage({
               <DialogHeader>
                 <DialogTitle>Создать проект</DialogTitle>
                 <DialogDescription>
-                  Создайте черновик и перейдите к материалам, вопросам и настройкам доступа.
+                  Черновик. Материалы, вопросы и доступ настроите на следующем шаге.
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={(event) => void handleCreate(event)}>
@@ -389,25 +390,25 @@ export function TrainingAdminProjectsPage({
                     />
                     {!title.trim() && createError ? <FieldError>{createError}</FieldError> : null}
                   </Field>
-                  <Field
-                    className="training-dashboard-retake-field"
+                  <label
+                    className="training-option-toggle"
+                    htmlFor="training-project-retake"
                     data-disabled={isCreating || undefined}
-                    orientation="horizontal"
                   >
+                    <span className="training-option-toggle-copy">
+                      <span className="training-option-toggle-title">Пересдача после успешного результата</span>
+                      <span className="training-option-toggle-hint">Общий лимит попыток продолжает действовать.</span>
+                    </span>
                     <input
                       id="training-project-retake"
+                      className="training-switch"
                       type="checkbox"
+                      role="switch"
                       checked={allowRetakeAfterPass}
                       disabled={isCreating}
                       onChange={(event) => setAllowRetakeAfterPass(event.target.checked)}
                     />
-                    <div>
-                      <FieldLabel htmlFor="training-project-retake">
-                        Разрешить пересдачу после успешного результата
-                      </FieldLabel>
-                      <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
-                    </div>
-                  </Field>
+                  </label>
                 </FieldGroup>
                 {createError && title.trim() ? <AdminAlert tone="error">{createError}</AdminAlert> : null}
                 <DialogFooter>
@@ -419,7 +420,7 @@ export function TrainingAdminProjectsPage({
                   >
                     Отмена
                   </AdminButton>
-                  <AdminButton type="submit" tone="primary" disabled={isCreating}>
+                  <AdminButton className="training-create-submit" type="submit" tone="primary" disabled={isCreating}>
                     {isCreating ? 'Создание…' : 'Создать и настроить'}
                     {!isCreating ? <ArrowRightIcon data-icon="inline-end" /> : null}
                   </AdminButton>

@@ -152,8 +152,6 @@ try {
   assert.equal(await allParticipantsMode.getAttribute('data-selected'), 'false');
   assert.equal(await assignedRadio.getAttribute('data-state'), 'checked');
   assert.equal(await allParticipantsRadio.getAttribute('data-state'), 'unchecked');
-  assert.equal(await assignedMode.getByText('Выбрано', { exact: true }).count(), 1);
-  assert.ok(await contrastRatio(assignedMode.getByText('Выбрано', { exact: true })) >= 4.5);
   const assignedRadioBox = await assignedRadio.boundingBox();
   assert.ok(assignedRadioBox && assignedRadioBox.width >= 24 && assignedRadioBox.height >= 24);
   const [assignedModeStyles, allParticipantsModeStyles] = await Promise.all([
@@ -179,7 +177,7 @@ try {
   assert.equal(project.isOpen, true);
   assert.equal(await assignedMode.getAttribute('data-selected'), 'false');
   assert.equal(await allParticipantsMode.getAttribute('data-selected'), 'true');
-  assert.equal(await allParticipantsMode.getByText('Выбрано', { exact: true }).count(), 1);
+  assert.equal(await allParticipantsRadio.getAttribute('data-state'), 'checked');
 
   await page.getByText('Только назначенные сотрудники').click();
 
@@ -235,8 +233,8 @@ try {
   await page.getByRole('tab', { name: 'Назначения' }).click();
   const lightAssignedMode = page.locator('.training-access-mode-option').filter({ hasText: 'Только назначенные сотрудники' });
   const lightAllParticipantsMode = page.locator('.training-access-mode-option').filter({ hasText: 'Все участники обучения' });
-  await lightAssignedMode.getByText('Выбрано', { exact: true }).waitFor();
-  assert.ok(await contrastRatio(lightAssignedMode.getByText('Выбрано', { exact: true })) >= 4.5);
+  await lightAssignedMode.getByRole('radio').waitFor();
+  assert.equal(await lightAssignedMode.getByRole('radio').getAttribute('data-state'), 'checked');
   const [lightAssignedBackground, lightAllBackground] = await Promise.all([
     lightAssignedMode.evaluate((element) => getComputedStyle(element).backgroundColor),
     lightAllParticipantsMode.evaluate((element) => getComputedStyle(element).backgroundColor),
@@ -282,25 +280,6 @@ async function json(route, body, status = 200) {
     status,
     contentType: 'application/json',
     body: JSON.stringify(body),
-  });
-}
-
-async function contrastRatio(locator) {
-  return locator.evaluate((element) => {
-    const parseRgb = (value) => value.match(/[\d.]+/gu)?.slice(0, 3).map(Number) ?? [0, 0, 0];
-    const luminance = (rgb) => {
-      const channels = rgb.map((channel) => {
-        const normalized = channel / 255;
-        return normalized <= 0.03928
-          ? normalized / 12.92
-          : ((normalized + 0.055) / 1.055) ** 2.4;
-      });
-      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-    };
-    const styles = getComputedStyle(element);
-    const foreground = luminance(parseRgb(styles.color));
-    const background = luminance(parseRgb(styles.backgroundColor));
-    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
   });
 }
 

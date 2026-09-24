@@ -168,7 +168,7 @@ export function TrainingProjectAccessPanel({
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
       <AdminPanel className="training-editor-section training-access-mode-panel">
-        <div>
+        <div className="training-editor-section-heading">
           <p className="eyebrow">Режим доступа</p>
           <h3>Кто может начать новую попытку</h3>
           <p className="muted-text">
@@ -190,9 +190,6 @@ export function TrainingProjectAccessPanel({
             <span className="training-access-mode-copy">
               <span className="training-access-mode-title">
                 <strong>Только назначенные сотрудники</strong>
-                {project.accessMode === 'ASSIGNED_USERS' ? (
-                  <Badge className="training-access-mode-selected" aria-hidden="true">Выбрано</Badge>
-                ) : null}
               </span>
               <small>Нужны право участия в обучении и активное назначение.</small>
             </span>
@@ -205,9 +202,6 @@ export function TrainingProjectAccessPanel({
             <span className="training-access-mode-copy">
               <span className="training-access-mode-title">
                 <strong>Все участники обучения</strong>
-                {project.accessMode === 'ALL_PARTICIPANTS' ? (
-                  <Badge className="training-access-mode-selected" aria-hidden="true">Выбрано</Badge>
-                ) : null}
               </span>
               <small>Доступ получают все активные сотрудники с правом участия.</small>
             </span>
@@ -222,7 +216,7 @@ export function TrainingProjectAccessPanel({
 
       <AdminPanel className="training-editor-section training-assignments-panel">
         <div className="training-assignment-heading">
-          <div>
+          <div className="training-editor-section-heading">
             <p className="eyebrow">Назначения</p>
             <h3>Сотрудники</h3>
           </div>
