@@ -3,6 +3,10 @@
   gap: 18px;
 }
 
+.assistant-admin-usage {
+  padding: 18px 20px 8px;
+}
+
 .assistant-admin-usage h3 {
   margin: 0 0 12px;
   font-size: 16px;
@@ -47,6 +51,7 @@
 
 .assistant-admin-filter {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
   cursor: pointer;

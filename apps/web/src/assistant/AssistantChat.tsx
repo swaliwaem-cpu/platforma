@@ -587,7 +587,9 @@ function formatNumber(value: number) {
 
 function formatShortDate(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow' });
 }
 
 function shortProjectTitle(title: string) {

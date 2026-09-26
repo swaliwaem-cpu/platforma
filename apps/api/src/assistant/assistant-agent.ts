@@ -418,8 +418,13 @@ function describeFacts(facts: AssistantProjectFacts) {
   return {
     ...rest,
     nearestMetroWalk: facts.nearestMetroWalk ?? 'нет данных о времени пешком до метро',
-    updated: { card: cardUpdatedAt.slice(0, 10), feed: feedUpdatedAt?.slice(0, 10) ?? null },
+    updated: { card: moscowDate(cardUpdatedAt), feed: feedUpdatedAt ? moscowDate(feedUpdatedAt) : null },
   };
+}
+
+// Brokers read dates in Moscow time, like the source chips under the answer.
+function moscowDate(iso: string) {
+  return new Date(iso).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' });
 }
 
 const propertyClassList = 'Комфорт-класс, Бизнес-класс, Премиум-класс, Делюкс';
