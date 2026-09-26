@@ -10,6 +10,11 @@
       "import": "./src/search-normalization.mjs",
       "require": "./src/search-normalization.cjs"
     },
+    "./property-class": {
+      "types": "./src/property-class.d.cts",
+      "import": "./src/property-class.mjs",
+      "require": "./src/property-class.cjs"
+    },
     "./project-presentation-template": {
       "types": "./src/project-presentation-template.d.mts",
       "import": "./src/project-presentation-template.mjs"

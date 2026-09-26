@@ -411,3 +411,39 @@ test('eval checks compare tool arguments, projects and answer words', () => {
 
   assert.deepEqual(checks.map((check) => check.passed), [true, true, false, false, true, false, true, true, true, false, true]);
 });
+
+test('property class synonyms map to the four canonical classes', () => {
+  const { PROPERTY_CLASSES, normalizePropertyClass } = require('@platforma/shared/property-class');
+
+  assert.deepEqual(PROPERTY_CLASSES, ['Комфорт-класс', 'Бизнес-класс', 'Премиум-класс', 'Делюкс']);
+  for (const [input, expected] of [
+    ['Премиум-класс', 'Премиум-класс'],
+    ['премиум', 'Премиум-класс'],
+    ['класс премиум', 'Премиум-класс'],
+    ['бизнес класс', 'Бизнес-класс'],
+    ['Business', 'Бизнес-класс'],
+    ['комфорт', 'Комфорт-класс'],
+    ['элитка', 'Делюкс'],
+    ['Элит', 'Делюкс'],
+    ['элитный', 'Делюкс'],
+    ['de luxe', 'Делюкс'],
+    ['Де люкс', 'Делюкс'],
+    ['Делюкс', 'Делюкс'],
+    ['эконом', null],
+    ['', null],
+    [null, null],
+  ]) {
+    assert.equal(normalizePropertyClass(input), expected, String(input));
+  }
+});
+
+test('class suggestion CSV survives quotes, separators and Excel semicolons', () => {
+  const { parseCsv, toCsv } = require('../scripts/assistant-class-suggestions.cjs');
+  const rows = [{ object_id: 'a', title: 'ЖК «Дом, "Сад"»', reason: 'цена; локация\nи потолки', final: 'Делюкс' }];
+  const columns = ['object_id', 'title', 'reason', 'final'];
+
+  assert.deepEqual(parseCsv(toCsv(rows, columns)), rows);
+  assert.deepEqual(parseCsv('﻿object_id;title;final\r\nb;Веер 2;премиум\r\n'), [
+    { object_id: 'b', title: 'Веер 2', final: 'премиум' },
+  ]);
+});

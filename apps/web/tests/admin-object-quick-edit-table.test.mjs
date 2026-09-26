@@ -81,7 +81,8 @@ test('quick edit table exposes inline editors for text, status, class, developer
   assert.match(tableSource, /editor:\s*'developer'/);
   assert.match(tableSource, /editor:\s*'metro'/);
   assert.match(tableSource, /const statusQuickEditOptions = \[[\s\S]*label: 'Опубликован'[\s\S]*label: 'Архив'/);
-  assert.match(tableSource, /const propertyClassOptions = \[[\s\S]*Комфорт-класс[\s\S]*Бизнес-класс[\s\S]*Премиум-класс[\s\S]*Делюкс/);
+  assert.match(tableSource, /import \{ PROPERTY_CLASSES \} from '@platforma\/shared\/property-class';/);
+  assert.match(tableSource, /\.\.\.PROPERTY_CLASSES\.map\(/);
   assert.match(tableSource, /function EditableTextCell/);
   assert.match(tableSource, /function StatusSelectEditor/);
   assert.match(tableSource, /function PropertyClassSelectEditor/);
@@ -122,6 +123,15 @@ test('quick edit transform helpers normalize search, completion and apartment ar
   assert.equal(helpers.normalizeCeilingHeight('3,1 метра'), 'от 3,1 м');
   assert.equal(helpers.normalizeCeilingHeight('от 3,1 м'), 'от 3,1 м');
   assert.equal(helpers.normalizeCeilingHeight(''), '');
+});
+
+test('shared property classes are the four canonical classes in ESM', async () => {
+  const { PROPERTY_CLASSES, normalizePropertyClass } = await import('@platforma/shared/property-class');
+
+  assert.deepEqual(PROPERTY_CLASSES, ['Комфорт-класс', 'Бизнес-класс', 'Премиум-класс', 'Делюкс']);
+  assert.equal(normalizePropertyClass('элитка'), 'Делюкс');
+  assert.equal(sharedPackage.exports['./property-class'].import, './src/property-class.mjs');
+  assert.equal(sharedPackage.exports['./property-class'].require, './src/property-class.cjs');
 });
 
 test('shared search normalization exposes browser-safe named ESM exports', () => {

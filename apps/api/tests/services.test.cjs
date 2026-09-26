@@ -4843,3 +4843,58 @@ test('AuthService.refresh accepts repeated refreshes from the same browser sessi
   assert.equal(second.refreshToken, currentToken);
   assert.equal(await argon2.verify(session.refreshTokenHash, currentToken), true);
 });
+
+test('ObjectsService.create normalizes class synonyms and rejects unknown classes', async () => {
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findUnique: async () => null,
+      create: async (args) => {
+        calls.create = args;
+        return objectRecord();
+      },
+      findFirst: async () => objectRecord({ propertyClass: 'Делюкс' }),
+    },
+    objectLocation: { deleteMany: async () => {} },
+    objectMetroStation: { deleteMany: async () => {} },
+    auditLog: { create: async () => {} },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.create({ title: 'ЖК Элитка', propertyClass: ' элитка ' }, actor, request);
+  assert.equal(calls.create.data.propertyClass, 'Делюкс');
+
+  await assert.rejects(
+    () => service.create({ title: 'ЖК Эконом', propertyClass: 'Эконом-класс' }, actor, request),
+    (error) => error instanceof BadRequestException && /Property class must be one of/.test(error.message),
+  );
+});
+
+test('ObjectsService.update accepts only known classes but keeps an untouched legacy value', async () => {
+  const calls = { updates: [] };
+  const existingObject = objectRecord({ propertyClass: 'Старый класс' });
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => existingObject,
+      update: async (args) => {
+        calls.updates.push(args);
+        return existingObject;
+      },
+    },
+    auditLog: { create: async () => {} },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.update(existingObject.id, { propertyClass: 'Старый класс' }, actor, request);
+  assert.equal(calls.updates.length, 0);
+
+  await assert.rejects(
+    () => service.update(existingObject.id, { propertyClass: 'Эконом' }, actor, request),
+    BadRequestException,
+  );
+
+  await service.update(existingObject.id, { propertyClass: 'премиум' }, actor, request);
+  assert.equal(calls.updates[0].data.propertyClass, 'Премиум-класс');
+});

@@ -45,6 +45,7 @@ import {
   RealEstateObjectSummary,
   type RealEstateObjectType,
 } from '@platforma/shared';
+import { PROPERTY_CLASSES } from '@platforma/shared/property-class';
 
 import { Input } from '@/components/ui/input';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
@@ -1737,13 +1738,18 @@ function ObjectEditor(props: ObjectEditorProps) {
 
                   <Field>
                     <FieldLabel htmlFor="object-property-class">Класс недвижимости</FieldLabel>
-                    <Input
+                    <SelectDropdown
                       id="object-property-class"
-                      maxLength={120}
-                      placeholder="Премиум-класс"
-                      type="text"
+                      options={[
+                        { value: '', label: 'Не указан' },
+                        // A class saved before the list existed stays selectable until it is changed.
+                        ...(props.form.propertyClass && !PROPERTY_CLASSES.some((option) => option === props.form.propertyClass)
+                          ? [{ value: props.form.propertyClass, label: props.form.propertyClass }]
+                          : []),
+                        ...PROPERTY_CLASSES.map((option) => ({ value: option, label: option })),
+                      ]}
                       value={props.form.propertyClass}
-                      onChange={(event) => props.onFormChange({ ...props.form, propertyClass: event.target.value })}
+                      onChange={(propertyClass) => props.onFormChange({ ...props.form, propertyClass })}
                     />
                   </Field>
 

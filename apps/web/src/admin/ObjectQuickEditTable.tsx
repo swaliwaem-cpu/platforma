@@ -6,6 +6,7 @@ import {
   ObjectStatus,
   RealEstateObjectSummary,
 } from '@platforma/shared';
+import { PROPERTY_CLASSES } from '@platforma/shared/property-class';
 
 import {
   Table,
@@ -85,13 +86,6 @@ const statusQuickEditOptions = [
   { value: 'PUBLISHED', label: 'Опубликован' },
   { value: 'ARCHIVED', label: 'Архив' },
 ] satisfies Array<{ value: Exclude<ObjectStatus, 'DRAFT'>; label: string }>;
-
-const propertyClassOptions = [
-  'Комфорт-класс',
-  'Бизнес-класс',
-  'Премиум-класс',
-  'Делюкс',
-] as const;
 
 type ObjectQuickEditTableProps = {
   developers: ObjectDeveloper[];
@@ -431,7 +425,7 @@ function PropertyClassSelectEditor({
       defaultOpen
       options={[
         { value: '', label: 'Не указан' },
-        ...propertyClassOptions.map((option) => ({ value: option, label: option })),
+        ...PROPERTY_CLASSES.map((option) => ({ value: option, label: option })),
       ]}
       value={value}
       onChange={onCommit}

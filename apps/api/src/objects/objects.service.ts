@@ -14,6 +14,7 @@ import {
   Prisma,
   RealEstateObjectType,
 } from '@prisma/client';
+import { normalizePropertyClass, PROPERTY_CLASSES } from '@platforma/shared/property-class';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { IMAGE_MIME_TYPES } from '../files/file-upload.constants';
@@ -829,7 +830,7 @@ export class ObjectsService {
     const krtName = this.parseNullableText(body.krtName, 'KRT name', 240);
     const apartmentAreaRange = this.parseNullableText(body.apartmentAreaRange, 'Apartment area range', 120);
     const ceilingHeight = this.parseNullableText(body.ceilingHeight, 'Ceiling height', 120);
-    const propertyClass = this.parseNullableText(body.propertyClass, 'Property class', 120);
+    const propertyClass = this.parsePropertyClass(body.propertyClass);
     const floorRange = this.parseNullableText(body.floorRange, 'Floor range', 120);
     const apartmentsCountText = this.parseNullableText(body.apartmentsCountText, 'Apartments count text', 120);
     const priceFrom = this.parseNullableDecimal(body.priceFrom, 'Price from', 14, 2);
@@ -1071,7 +1072,11 @@ export class ObjectsService {
     }
 
     if ('propertyClass' in body) {
-      const propertyClass = this.parseNullableText(body.propertyClass, 'Property class', 120) ?? null;
+      const rawPropertyClass = this.parseNullableText(body.propertyClass, 'Property class', 120) ?? null;
+      // A class saved before the list existed survives while nobody changes it.
+      const propertyClass = rawPropertyClass === object.propertyClass
+        ? rawPropertyClass
+        : this.parsePropertyClass(rawPropertyClass) ?? null;
 
       if (propertyClass !== object.propertyClass) {
         data.propertyClass = propertyClass;
@@ -2391,6 +2396,16 @@ export class ObjectsService {
     }
 
     return result;
+  }
+
+  private parsePropertyClass(value: unknown) {
+    const text = this.parseNullableText(value, 'Property class', 120);
+    if (!text) return text;
+    const propertyClass = normalizePropertyClass(text);
+    if (!propertyClass) {
+      throw new BadRequestException(`Property class must be one of: ${PROPERTY_CLASSES.join(', ')}`);
+    }
+    return propertyClass;
   }
 
   private parseNullableUrl(value: unknown, fieldName: string, maxLength: number) {
