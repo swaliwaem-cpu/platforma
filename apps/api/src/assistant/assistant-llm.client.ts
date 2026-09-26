@@ -35,7 +35,8 @@ export type AssistantLlmRequest = {
 export type AssistantLlmResponse = {
   content: string | null;
   toolCalls: AssistantLlmToolCall[];
-  usage: { inputTokens: number; outputTokens: number };
+  /** cachedTokens is part of inputTokens; 0 when the provider does not report it. */
+  usage: { inputTokens: number; cachedTokens: number; outputTokens: number };
 };
 
 export interface AssistantLlm {
@@ -84,10 +85,7 @@ export class AssistantLlmClient implements AssistantLlm {
         toolCalls: (message?.tool_calls ?? []).flatMap((call) => call.function?.name
           ? [{ id: call.id ?? call.function.name, name: call.function.name, arguments: call.function.arguments ?? '{}' }]
           : []),
-        usage: {
-          inputTokens: body.usage?.prompt_tokens ?? 0,
-          outputTokens: body.usage?.completion_tokens ?? 0,
-        },
+        usage: readUsage(body.usage),
       };
     } catch (error) {
       if (error instanceof AssistantLlmError) throw error;
@@ -112,12 +110,31 @@ type ChatCompletionBody = {
       tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
     };
   }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: ChatCompletionUsage;
 };
+
+type ChatCompletionUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+};
+
+export function readUsage(usage: ChatCompletionUsage | undefined): AssistantLlmResponse['usage'] {
+  const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0);
+  return {
+    inputTokens: count(usage?.prompt_tokens),
+    cachedTokens: count(usage?.prompt_tokens_details?.cached_tokens),
+    outputTokens: count(usage?.completion_tokens),
+  };
+}
+
+export function resolveAssistantModel() {
+  return process.env.ASSISTANT_MODEL?.trim() || defaultModel;
+}
 
 export function createRequestBody(request: AssistantLlmRequest) {
   return {
-    model: process.env.ASSISTANT_MODEL?.trim() || defaultModel,
+    model: resolveAssistantModel(),
     temperature: 0.2,
     // Hybrid Qwen models otherwise spend seconds on hidden reasoning before every tool call.
     enable_thinking: false,

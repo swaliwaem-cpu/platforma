@@ -70,7 +70,18 @@ function scriptedLlm(steps) {
       requests.push(structuredClone({ ...request, signal: undefined }));
       const step = steps[requests.length - 1];
       if (!step) throw new Error(`unexpected model call ${requests.length}`);
-      return { content: step.content ?? null, toolCalls: step.toolCalls ?? [], usage: { inputTokens: 10, outputTokens: 5 } };
+      return { content: step.content ?? null, toolCalls: step.toolCalls ?? [], usage: { inputTokens: 10, cachedTokens: 4, outputTokens: 5 } };
+    },
+  };
+}
+
+function fakeTurnLog({ fail = false } = {}) {
+  const entries = [];
+  return {
+    entries,
+    async record(entry) {
+      if (fail) throw new Error('db down');
+      entries.push(structuredClone(entry));
     },
   };
 }
@@ -401,7 +412,8 @@ test('assistant jobs belong to their owner and one runs at a time per user', asy
     },
   };
   const prisma = { realEstateObject: { findFirst: async () => ({ id: 'p-veer', title: 'Веер 2' }) } };
-  const service = new AssistantService(prisma, llm, fakeCatalog(), fakeWeb());
+  const turnLog = fakeTurnLog();
+  const service = new AssistantService(prisma, llm, fakeCatalog(), fakeWeb(), turnLog);
   const owner = { id: 'owner', permissions: ['objects:read'] };
   const stranger = { id: 'stranger', permissions: ['objects:read'] };
 
@@ -418,6 +430,9 @@ test('assistant jobs belong to their owner and one runs at a time per user', asy
   const finished = service.getJob(owner, job.id);
   assert.equal(finished.status, 'COMPLETED');
   assert.equal(finished.answer.text, 'Готово');
+  assert.equal(finished.answer.turnId, job.id);
+  assert.equal(finished.turnId, job.id);
+  assert.equal(turnLog.entries.length, 1);
   service.onModuleDestroy();
 });
 
@@ -603,4 +618,196 @@ test('sources list the project cards read, the projects of shown lots and opened
     { kind: 'PLATFORMA_PROJECT', title: 'Жилой комплекс Веер 2', url: '/objects/veer-2', date: '2026-09-25T07:00:00.000Z' },
     { kind: 'WEB', title: 'mr-group.ru', url: pageUrl, date: '2026-09-23T10:00:00.000Z' },
   ]);
+});
+
+test('phones and e-mails are masked in any common spelling', () => {
+  const { maskPersonalData, maskValue } = require('../dist/assistant/assistant-turn-log.service.js');
+
+  assert.equal(
+    maskPersonalData('Клиент +7 (916) 123-45-67, 8 916 123 45 67, 89161234567, +79161234567, почта Ivan.Petrov@mail.ru'),
+    'Клиент [телефон], [телефон], [телефон], [телефон], почта [почта]',
+  );
+  assert.equal(maskPersonalData('Бюджет 18 229 960 ₽, 89 500 000 ₽, лот 8-12'), 'Бюджет 18 229 960 ₽, 89 500 000 ₽, лот 8-12');
+  assert.deepEqual(maskValue({ query: 'звонить 8(916)1234567', rooms: [1], nested: { note: 'a@b.ru' } }), {
+    query: 'звонить [телефон]',
+    rooms: [1],
+    nested: { note: '[почта]' },
+  });
+});
+
+test('the agent keeps a tool trace and token usage that survive a failed turn', async () => {
+  const { createAssistantAgentTelemetry } = require('../dist/assistant/assistant-agent.js');
+  const llm = scriptedLlm([
+    { toolCalls: [call('find_projects', { query: 'Веер' }, 'a'), call('get_project_facts', { projectId: 'p-none' }, 'b')] },
+  ]);
+  const catalog = fakeCatalog({ projects: [{ projectId: 'p-veer', title: 'Веер 2', slug: 'veer-2', developer: null, district: null, metro: [], address: null, propertyClass: null, nearestMetroWalk: null, availableLots: 1, priceFromRub: 1, roomsAvailable: [] }] });
+  const telemetry = createAssistantAgentTelemetry();
+
+  await assert.rejects(
+    runAssistantAgent({ llm, catalog, web: fakeWeb() }, context('Веер', { telemetry })),
+    /unexpected model call 2/,
+  );
+
+  assert.equal(telemetry.modelCalls, 1);
+  assert.equal(telemetry.inputTokens, 10);
+  assert.equal(telemetry.cachedTokens, 4);
+  assert.deepEqual(telemetry.trace.map(({ durationMs: _durationMs, ...step }) => step), [
+    { tool: 'find_projects', args: { query: 'Веер' }, result: { found: 1, ids: ['p-veer'] } },
+    { tool: 'get_project_facts', args: { projectId: 'p-none' }, result: { error: 'Проект не найден в Platforma. Проверь projectId через find_projects.' } },
+  ]);
+});
+
+test('a finished and a failed job are both logged; a failed log write only turns rating off', async () => {
+  const prisma = { realEstateObject: { findFirst: async () => null } };
+  const owner = { id: 'owner', permissions: ['objects:read'] };
+  const waitFor = async (service, jobId) => {
+    for (let attempt = 0; attempt < 100 && service.getJob(owner, jobId).status === 'RUNNING'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return service.getJob(owner, jobId);
+  };
+  const conversationId = '44444444-4444-4444-8444-444444444444';
+
+  const turnLog = fakeTurnLog();
+  const failing = new AssistantService(prisma, { isConfigured: () => true, complete: async () => { throw new Error('boom'); } }, fakeCatalog(), fakeWeb(), turnLog);
+  const failedJob = await failing.startJob(owner, { messages: [{ role: 'user', content: 'Мой телефон +7 916 123-45-67' }], conversationId });
+  const failed = await waitFor(failing, failedJob.id);
+  assert.equal(failed.status, 'FAILED');
+  assert.equal(failed.turnId, failedJob.id);
+  assert.equal(turnLog.entries[0].answer, null);
+  assert.equal(turnLog.entries[0].errorCode, 'boom');
+  assert.equal(turnLog.entries[0].conversationId, conversationId);
+  assert.equal(turnLog.entries[0].question, 'Мой телефон +7 916 123-45-67');
+
+  const answering = new AssistantService(prisma, scriptedLlm([{ toolCalls: [call('give_answer', { text: 'ok' })] }]), fakeCatalog(), fakeWeb(), fakeTurnLog({ fail: true }));
+  const job = await answering.startJob(owner, { messages: [{ role: 'user', content: 'привет' }], conversationId: 'not-a-uuid' });
+  const done = await waitFor(answering, job.id);
+  assert.equal(done.status, 'COMPLETED');
+  assert.equal(done.answer.text, 'ok');
+  assert.equal(done.answer.turnId, null);
+  failing.onModuleDestroy();
+  answering.onModuleDestroy();
+});
+
+test('turn log masks what it stores and lets only the owner rate a turn', async () => {
+  const { AssistantTurnLogService } = require('../dist/assistant/assistant-turn-log.service.js');
+  const created = [];
+  const updates = [];
+  const prisma = {
+    assistantTurn: {
+      create: async (args) => { created.push(args.data); },
+      updateMany: async (args) => {
+        updates.push(args);
+        return { count: args.where.userId === 'owner' ? 1 : 0 };
+      },
+    },
+  };
+  const log = new AssistantTurnLogService(prisma);
+
+  await log.record({
+    id: '55555555-5555-4555-8555-555555555555',
+    userId: 'owner',
+    conversationId: null,
+    question: 'позвони 89161234567',
+    answer: { text: 'Пишите на a@b.ru', lots: [veerLot], sources: [], historyNote: '', turnId: null },
+    telemetry: { modelCalls: 2, inputTokens: 1_000_000, cachedTokens: 0, outputTokens: 1_000_000, webSearches: 0, openedPages: 0, trace: [{ tool: 'search_lots', args: { developer: 'x@y.ru' }, result: { found: 1 }, durationMs: 3 }] },
+    model: 'deepseek-v4.1-flash',
+    durationMs: 1200,
+    errorCode: null,
+    occurredAt: new Date('2026-09-26T10:00:00Z'),
+  });
+  assert.equal(created[0].question, 'позвони [телефон]');
+  assert.equal(created[0].answerText, 'Пишите на [почта]');
+  assert.equal(created[0].traceJson[0].args.developer, '[почта]');
+  assert.equal(created[0].status, 'COMPLETED');
+  assert.equal(created[0].estimatedCostUsd, '1.50000000');
+  assert.equal(created[0].pricingVersion, 'alibaba-dashscope-intl-pricing-2026-09-23');
+
+  await log.rate({ id: 'owner' }, 'turn', { rating: 'DOWN', comment: ' не тот ЖК, звоните 8 916 123 45 67 ' });
+  assert.equal(updates[0].data.rating, 'DOWN');
+  assert.equal(updates[0].data.ratingComment, 'не тот ЖК, звоните [телефон]');
+  await assert.rejects(log.rate({ id: 'stranger' }, 'turn', { rating: 'UP' }), /ASSISTANT_TURN_NOT_FOUND/);
+  await assert.rejects(log.rate({ id: 'owner' }, 'turn', { rating: 'MEH' }), /ASSISTANT_RATING_INVALID/);
+});
+
+test('assistant admin endpoints answer only admin:access; feedback needs the assistant', { concurrency: false }, async () => {
+  const { Module } = require('@nestjs/common');
+  const { NestFactory } = require('@nestjs/core');
+  const { JwtService } = require('@nestjs/jwt');
+  const { JwtAuthGuard } = require('../dist/auth/jwt-auth.guard.js');
+  const { PermissionsGuard } = require('../dist/auth/permissions.guard.js');
+  const { PrismaService } = require('../dist/prisma/prisma.service.js');
+  const { AssistantAdminController, AssistantController, AssistantFeatureGuard } = require('../dist/assistant/assistant.controller.js');
+  const { AssistantTurnLogService } = require('../dist/assistant/assistant-turn-log.service.js');
+
+  const previous = { secret: process.env.JWT_ACCESS_SECRET, enabled: process.env.ASSISTANT_MODULE_ENABLED };
+  process.env.JWT_ACCESS_SECRET = 'assistant-http-secret';
+  process.env.ASSISTANT_MODULE_ENABLED = 'true';
+  const makeUser = (id, permissions) => ({
+    id,
+    email: `${id}@example.test`,
+    name: id,
+    brokerPhone: null,
+    brokerEmail: null,
+    status: 'ACTIVE',
+    role: { id: `${id}-role`, name: 'role', permissions: permissions.map((key) => ({ permission: { key } })) },
+    profilePhotoFile: null,
+  });
+  const users = new Map([
+    ['admin', makeUser('admin', ['objects:read', 'admin:access'])],
+    ['broker', makeUser('broker', ['objects:read'])],
+  ]);
+  const turnId = '66666666-6666-4666-8666-666666666666';
+  const prisma = {
+    user: { findFirst: async ({ where }) => users.get(where.id) ?? null },
+    assistantTurn: {
+      findMany: async () => [],
+      updateMany: async ({ where }) => ({ count: where.userId === 'admin' ? 1 : 0 }),
+    },
+  };
+
+  class AssistantHttpTestModule {}
+  Module({
+    controllers: [AssistantController, AssistantAdminController],
+    providers: [
+      JwtService,
+      JwtAuthGuard,
+      PermissionsGuard,
+      AssistantFeatureGuard,
+      AssistantTurnLogService,
+      { provide: PrismaService, useValue: prisma },
+      { provide: AssistantService, useValue: {} },
+    ],
+  })(AssistantHttpTestModule);
+
+  const jwt = new JwtService();
+  const token = (sub) => jwt.sign({ sub, email: `${sub}@example.test`, type: 'access' }, { secret: process.env.JWT_ACCESS_SECRET, expiresIn: '5m' });
+  let app;
+  try {
+    app = await NestFactory.create(AssistantHttpTestModule, { logger: false });
+    await app.listen(0, '127.0.0.1');
+    const baseUrl = `http://127.0.0.1:${app.getHttpServer().address().port}`;
+    const send = async (path, userId, init = {}) => (await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(userId ? { authorization: `Bearer ${token(userId)}` } : {}) },
+    })).status;
+
+    assert.equal(await send('/assistant/admin/turns', null), 401);
+    assert.equal(await send('/assistant/admin/turns', 'broker'), 403);
+    assert.equal(await send('/assistant/admin/usage', 'broker'), 403);
+    assert.equal(await send(`/assistant/admin/turns/${turnId}`, 'broker'), 403);
+    assert.equal(await send('/assistant/admin/turns?rating=DOWN', 'admin'), 200);
+    assert.equal(await send('/assistant/admin/turns?rating=BAD', 'admin'), 400);
+
+    const feedback = (userId) => send(`/assistant/turns/${turnId}/feedback`, userId, { method: 'POST', body: JSON.stringify({ rating: 'UP' }) });
+    assert.equal(await feedback('admin'), 204);
+    process.env.ASSISTANT_MODULE_ENABLED = 'false';
+    assert.equal(await feedback('admin'), 503);
+  } finally {
+    await app?.close();
+    for (const [name, value] of [['JWT_ACCESS_SECRET', previous.secret], ['ASSISTANT_MODULE_ENABLED', previous.enabled]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 });

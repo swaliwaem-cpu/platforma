@@ -10,6 +10,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type {
+  AssistantAnswer,
   AssistantAskInput,
   AssistantChatTurn,
   AssistantConfigResponse,
@@ -19,9 +20,10 @@ import { ObjectStatus } from '@prisma/client';
 
 import type { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { runAssistantAgent } from './assistant-agent';
+import { createAssistantAgentTelemetry, runAssistantAgent } from './assistant-agent';
 import { AssistantCatalogTools } from './assistant-catalog.tools';
-import { AssistantLlmClient, AssistantLlmError } from './assistant-llm.client';
+import { AssistantLlmClient, AssistantLlmError, resolveAssistantModel } from './assistant-llm.client';
+import { AssistantTurnLogService } from './assistant-turn-log.service';
 import { AssistantWebTools } from './assistant-web.tools';
 
 // Assistant turns run in the background inside the api process; the browser polls them.
@@ -48,6 +50,7 @@ export class AssistantService implements OnModuleDestroy {
     private readonly llm: AssistantLlmClient,
     private readonly catalog: AssistantCatalogTools,
     private readonly web: AssistantWebTools,
+    private readonly turnLog: AssistantTurnLogService,
   ) {}
 
   onModuleDestroy() {
@@ -77,12 +80,16 @@ export class AssistantService implements OnModuleDestroy {
       answer: null,
       error: null,
       createdAt: new Date().toISOString(),
+      turnId: null,
       finishedAt: null,
       controller: new AbortController(),
     };
     this.jobs.set(job.id, job);
     const pageProject = await this.findPageProject(input.pageObjectSlug);
-    void this.run(job, history, pageProject);
+    const conversationId = typeof input.conversationId === 'string' && uuidPattern.test(input.conversationId)
+      ? input.conversationId
+      : null;
+    void this.run(job, history, pageProject, conversationId);
     return toPublicJob(job);
   }
 
@@ -96,26 +103,55 @@ export class AssistantService implements OnModuleDestroy {
     job: StoredJob,
     history: AssistantChatTurn[],
     pageProject: { title: string; projectId: string } | null,
+    conversationId: string | null,
   ) {
     const startedAt = Date.now();
+    const occurredAt = new Date(startedAt);
     const deadline = setTimeout(() => job.controller.abort(), jobDeadlineMs);
+    const telemetry = createAssistantAgentTelemetry();
+    const logTurn = async (answer: AssistantAnswer | null, failure: string | null) => {
+      try {
+        await this.turnLog.record({
+          id: job.id,
+          userId: job.ownerId,
+          conversationId,
+          question: history.at(-1)?.content ?? '',
+          answer,
+          telemetry,
+          model: resolveAssistantModel(),
+          durationMs: Date.now() - startedAt,
+          errorCode: failure,
+          occurredAt,
+        });
+        return job.id;
+      } catch (error) {
+        // The broker still gets the answer; only rating it is off.
+        this.logger.warn(`assistant turn ${job.id} was not logged: ${errorCode(error)}`);
+        return null;
+      }
+    };
     try {
       const result = await runAssistantAgent(
         { llm: this.llm, catalog: this.catalog, web: this.web },
         {
           history,
           pageProject,
-          now: new Date(),
+          now: occurredAt,
           signal: job.controller.signal,
+          telemetry,
           onStep: (label) => {
             if (job.steps.at(-1) !== label) job.steps.push(label);
           },
         },
       );
-      job.answer = result.answer;
+      const turnId = await logTurn(result.answer, null);
+      job.answer = { ...result.answer, turnId };
+      job.turnId = turnId;
       job.status = 'COMPLETED';
-      this.logger.log(`assistant job ${job.id} done in ${Date.now() - startedAt} ms: ${JSON.stringify(result.usage)}`);
+      const { trace: _trace, ...usage } = telemetry;
+      this.logger.log(`assistant job ${job.id} done in ${Date.now() - startedAt} ms: ${JSON.stringify(usage)}`);
     } catch (error) {
+      job.turnId = await logTurn(null, job.controller.signal.aborted ? 'ASSISTANT_JOB_DEADLINE' : errorCode(error));
       job.status = 'FAILED';
       job.error = describeFailure(error, job.controller.signal.aborted);
       this.logger.warn(`assistant job ${job.id} failed in ${Date.now() - startedAt} ms: ${errorCode(error)}`);
@@ -182,6 +218,7 @@ function toPublicJob(job: StoredJob): AssistantJob {
     answer: job.answer,
     error: job.error,
     createdAt: job.createdAt,
+    turnId: job.turnId,
   };
 }
 
@@ -199,3 +236,5 @@ function errorCode(error: unknown) {
   if (error instanceof AssistantLlmError) return error.message;
   return error instanceof Error ? error.message.slice(0, 200) : 'UNKNOWN';
 }
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;

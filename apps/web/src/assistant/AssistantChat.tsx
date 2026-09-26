@@ -4,9 +4,18 @@ import type {
   AssistantJob,
   AssistantLot,
   AssistantPlatformLot,
+  AssistantTurnRating,
   AssistantWebLot,
 } from '@platforma/shared';
-import { MessageCircleIcon, PlusIcon, RotateCcwIcon, SendIcon, XIcon } from 'lucide-react';
+import {
+  MessageCircleIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  SendIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
+  XIcon,
+} from 'lucide-react';
 import {
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
@@ -17,7 +26,7 @@ import {
   useState,
 } from 'react';
 
-import { getAssistantConfig, getAssistantJob, startAssistantJob } from './assistantApi';
+import { getAssistantConfig, getAssistantJob, rateAssistantTurn, startAssistantJob } from './assistantApi';
 import './assistant.css';
 
 type AssistantChatProps = {
@@ -32,6 +41,8 @@ type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   answer?: AssistantAnswer;
+  rating?: AssistantTurnRating;
+  ratingCommentSent?: boolean;
 };
 
 type AssistantGeometry = {
@@ -61,6 +72,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
   const [enabled, setEnabled] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() => readMessages(userId));
+  const [conversationId, setConversationId] = useState(() => readConversationId(userId));
   const [draft, setDraft] = useState('');
   const [runningSteps, setRunningSteps] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -135,6 +147,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
       let { job } = await startAssistantJob(accessToken, {
         messages: history.map(toChatTurn),
         pageObjectSlug: readPageObjectSlug(pathname),
+        conversationId,
       }, controller.signal);
       while (job.status === 'RUNNING') {
         setRunningSteps(job.steps);
@@ -163,7 +176,11 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
       }
       setError(job.error ?? 'Не получилось выполнить поиск. Попробуйте ещё раз.');
     }
-  }, [accessToken, pathname]);
+  }, [accessToken, conversationId, pathname]);
+
+  const updateMessage = useCallback((messageId: string, patch: Partial<ChatMessage>) => {
+    setMessages((current) => current.map((message) => (message.id === messageId ? { ...message, ...patch } : message)));
+  }, []);
 
   const submit = (content: string) => {
     const text = content.trim();
@@ -196,6 +213,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
     setRunningSteps(null);
     setError(null);
     setMessages([]);
+    setConversationId(writeNewConversationId(userId));
     composerRef.current?.focus();
   };
 
@@ -306,7 +324,12 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
               </div>
             ) : null}
             {messages.map((message) => (
-              <AssistantMessageView key={message.id} message={message} />
+              <AssistantMessageView
+                key={message.id}
+                accessToken={accessToken}
+                message={message}
+                onUpdate={updateMessage}
+              />
             ))}
             {runningSteps ? (
               <div className="assistant-progress" role="status">
@@ -348,7 +371,15 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
   );
 }
 
-function AssistantMessageView({ message }: { message: ChatMessage }) {
+function AssistantMessageView({
+  accessToken,
+  message,
+  onUpdate,
+}: {
+  accessToken: string;
+  message: ChatMessage;
+  onUpdate: (messageId: string, patch: Partial<ChatMessage>) => void;
+}) {
   if (message.role === 'user') {
     return (
       <div className="assistant-message assistant-message--user">
@@ -392,6 +423,85 @@ function AssistantMessageView({ message }: { message: ChatMessage }) {
           ))}
         </ul>
       ) : null}
+      {answer?.turnId ? (
+        <AnswerFeedback accessToken={accessToken} message={message} turnId={answer.turnId} onUpdate={onUpdate} />
+      ) : null}
+    </div>
+  );
+}
+
+function AnswerFeedback({
+  accessToken,
+  message,
+  turnId,
+  onUpdate,
+}: {
+  accessToken: string;
+  message: ChatMessage;
+  turnId: string;
+  onUpdate: (messageId: string, patch: Partial<ChatMessage>) => void;
+}) {
+  const [comment, setComment] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const send = async (rating: AssistantTurnRating, text: string | null) => {
+    if (isSending) return;
+    setIsSending(true);
+    setError(null);
+    try {
+      await rateAssistantTurn(accessToken, turnId, { rating, comment: text });
+      onUpdate(message.id, { rating, ratingCommentSent: Boolean(text) });
+    } catch {
+      setError('Не удалось отправить оценку');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <div className="assistant-feedback">
+      <div className="assistant-feedback-buttons" role="group" aria-label="Оценка ответа">
+        <button
+          aria-label="Хороший ответ"
+          aria-pressed={message.rating === 'UP'}
+          disabled={isSending}
+          type="button"
+          onClick={() => void send('UP', null)}
+        >
+          <ThumbsUpIcon aria-hidden="true" />
+        </button>
+        <button
+          aria-label="Плохой ответ"
+          aria-pressed={message.rating === 'DOWN'}
+          disabled={isSending}
+          type="button"
+          onClick={() => void send('DOWN', null)}
+        >
+          <ThumbsDownIcon aria-hidden="true" />
+        </button>
+        {message.ratingCommentSent ? <span>Спасибо, передали</span> : null}
+      </div>
+      {message.rating === 'DOWN' && !message.ratingCommentSent ? (
+        <form
+          className="assistant-feedback-comment"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (comment.trim()) void send('DOWN', comment.trim());
+          }}
+        >
+          <label htmlFor={`assistant-feedback-${message.id}`}>Что не так? (необязательно)</label>
+          <textarea
+            id={`assistant-feedback-${message.id}`}
+            maxLength={1000}
+            rows={2}
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+          />
+          <button disabled={isSending || !comment.trim()} type="submit">Отправить</button>
+        </form>
+      ) : null}
+      {error ? <p className="assistant-feedback-error" role="alert">{error}</p> : null}
     </div>
   );
 }
@@ -538,6 +648,29 @@ function writeMessages(userId: string, messages: ChatMessage[]) {
   } catch {
     // The conversation stays in memory when browser storage is unavailable.
   }
+}
+
+function conversationKey(userId: string) {
+  return `platforma-assistant-conversation:${userId}`;
+}
+
+// The id groups this tab's turns in the admin log; it lives as long as the chat history does.
+function readConversationId(userId: string) {
+  try {
+    return sessionStorage.getItem(conversationKey(userId)) ?? writeNewConversationId(userId);
+  } catch {
+    return createId();
+  }
+}
+
+function writeNewConversationId(userId: string) {
+  const id = createId();
+  try {
+    sessionStorage.setItem(conversationKey(userId), id);
+  } catch {
+    // Without storage every reload starts a new conversation id.
+  }
+  return id;
 }
 
 function geometryKey(userId: string) {

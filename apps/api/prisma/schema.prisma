@@ -460,6 +460,20 @@ enum AssistantGeoConfirmationState {
   @@map("assistant_geo_confirmation_state")
 }
 
+enum AssistantTurnStatus {
+  COMPLETED @map("completed")
+  FAILED    @map("failed")
+
+  @@map("assistant_turn_status")
+}
+
+enum AssistantTurnRating {
+  UP   @map("up")
+  DOWN @map("down")
+
+  @@map("assistant_turn_rating")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -507,6 +521,7 @@ model User {
   assistantFeedback               AssistantFeedback[]            @relation("AssistantFeedbackOwner")
   reviewedAssistantItems          AssistantReviewItem[]          @relation("AssistantReviewItemReviewer")
   assistantGeoOperations          AssistantGeoOperation[]        @relation("AssistantGeoOperationActor")
+  assistantTurns                  AssistantTurn[]
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -1015,6 +1030,39 @@ model AssistantSourceJob {
   @@index([status, availableAt])
   @@index([sourceId, createdAt])
   @@map("assistant_source_jobs")
+}
+
+// One assistant question and answer, kept 90 days. Phones and e-mails are masked before saving.
+model AssistantTurn {
+  id               String               @id @db.Uuid
+  userId           String               @map("user_id") @db.Uuid
+  conversationId   String?              @map("conversation_id") @db.Uuid
+  createdAt        DateTime             @default(now()) @map("created_at")
+  question         String               @db.Text
+  answerText       String?              @map("answer_text") @db.Text
+  lotsJson         Json                 @default("[]") @map("lots_json")
+  sourcesJson      Json                 @default("[]") @map("sources_json")
+  traceJson        Json                 @default("[]") @map("trace_json")
+  model            String               @db.VarChar(160)
+  modelCalls       Int                  @default(0) @map("model_calls")
+  inputTokens      Int                  @default(0) @map("input_tokens")
+  cachedTokens     Int                  @default(0) @map("cached_tokens")
+  outputTokens     Int                  @default(0) @map("output_tokens")
+  estimatedCostUsd Decimal?             @map("estimated_cost_usd") @db.Decimal(18, 8)
+  pricingVersion   String?              @map("pricing_version") @db.VarChar(120)
+  durationMs       Int                  @map("duration_ms")
+  status           AssistantTurnStatus
+  errorCode        String?              @map("error_code") @db.VarChar(120)
+  rating           AssistantTurnRating?
+  ratingComment    String?              @map("rating_comment") @db.VarChar(1000)
+  ratedAt          DateTime?            @map("rated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([rating, createdAt])
+  @@index([userId])
+  @@map("assistant_turns")
 }
 
 model UserSession {

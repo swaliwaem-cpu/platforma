@@ -5,6 +5,7 @@ import type {
   AssistantLot,
   AssistantPlatformLot,
   AssistantSource,
+  AssistantTraceStep,
   AssistantWebLot,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
@@ -35,7 +36,23 @@ export type AssistantAgentContext = {
   now: Date;
   signal?: AbortSignal;
   onStep?: (label: string) => void;
+  /** Filled while the turn runs, so the caller still has usage and trace when the turn fails. */
+  telemetry?: AssistantAgentTelemetry;
 };
+
+export type AssistantAgentTelemetry = {
+  modelCalls: number;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  webSearches: number;
+  openedPages: number;
+  trace: AssistantTraceStep[];
+};
+
+export function createAssistantAgentTelemetry(): AssistantAgentTelemetry {
+  return { modelCalls: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, webSearches: 0, openedPages: 0, trace: [] };
+}
 
 export type AssistantAgentDependencies = {
   llm: AssistantLlm;
@@ -47,14 +64,13 @@ type TurnState = {
   platformLots: Map<string, AssistantPlatformLot>;
   projectFacts: Map<string, AssistantProjectFacts>;
   pages: Map<string, AssistantOpenedPage>;
-  searches: number;
-  inputTokens: number;
-  outputTokens: number;
+  telemetry: AssistantAgentTelemetry;
 };
 
 export type AssistantAgentResult = {
+  /** turnId is null here: the service sets it once the turn is logged. */
   answer: AssistantAnswer;
-  usage: { modelCalls: number; inputTokens: number; outputTokens: number; webSearches: number; openedPages: number };
+  usage: AssistantAgentTelemetry;
 };
 
 export async function runAssistantAgent(
@@ -65,9 +81,7 @@ export async function runAssistantAgent(
     platformLots: new Map(),
     projectFacts: new Map(),
     pages: new Map(),
-    searches: 0,
-    inputTokens: 0,
-    outputTokens: 0,
+    telemetry: context.telemetry ?? createAssistantAgentTelemetry(),
   };
   const webSearchEnabled = dependencies.web.isSearchConfigured();
   const tools = createTools(webSearchEnabled);
@@ -85,13 +99,15 @@ export async function runAssistantAgent(
       requiredTool: isLastCall ? 'give_answer' : undefined,
       signal: context.signal,
     });
-    state.inputTokens += response.usage.inputTokens;
-    state.outputTokens += response.usage.outputTokens;
+    state.telemetry.modelCalls += 1;
+    state.telemetry.inputTokens += response.usage.inputTokens;
+    state.telemetry.cachedTokens += response.usage.cachedTokens ?? 0;
+    state.telemetry.outputTokens += response.usage.outputTokens;
 
     const answerCall = response.toolCalls.find((toolCall) => toolCall.name === 'give_answer');
     if (answerCall) {
       context.onStep?.('Формирую ответ');
-      return finish(buildAnswer(parseArguments(answerCall), state, context.now), state, call);
+      return finish(buildAnswer(parseArguments(answerCall), state, context.now), state);
     }
     if (response.toolCalls.length === 0) {
       // Qwen sometimes writes its answer (or a give_answer call) as plain text; the next call
@@ -102,29 +118,45 @@ export async function runAssistantAgent(
         messages.push({ role: 'user', content: 'Оформи этот ответ вызовом give_answer.' });
         continue;
       }
-      return finish(buildAnswer({ text: stripPseudoToolCalls(response.content ?? '') }, state, context.now), state, call);
+      return finish(buildAnswer({ text: stripPseudoToolCalls(response.content ?? '') }, state, context.now), state);
     }
 
     messages.push({ role: 'assistant', content: response.content, toolCalls: response.toolCalls });
     for (const toolCall of response.toolCalls) {
+      const startedAt = Date.now();
       const result = await executeTool(dependencies, toolCall, state, context);
+      state.telemetry.trace.push({
+        tool: toolCall.name,
+        args: parseArguments(toolCall),
+        result: summarizeToolResult(result),
+        durationMs: Date.now() - startedAt,
+      });
       messages.push({ role: 'tool', toolCallId: toolCall.id, content: JSON.stringify(result) });
     }
   }
   throw new Error('ASSISTANT_AGENT_NO_ANSWER');
 }
 
-function finish(answer: AssistantAnswer, state: TurnState, modelCalls: number): AssistantAgentResult {
-  return {
-    answer,
-    usage: {
-      modelCalls,
-      inputTokens: state.inputTokens,
-      outputTokens: state.outputTokens,
-      webSearches: state.searches,
-      openedPages: state.pages.size,
-    },
-  };
+function finish(answer: AssistantAnswer, state: TurnState): AssistantAgentResult {
+  return { answer, usage: state.telemetry };
+}
+
+// What the turn log keeps of a tool result: how much was found and which ids, or the error.
+function summarizeToolResult(result: unknown): AssistantTraceStep['result'] {
+  if (!result || typeof result !== 'object') return {};
+  const value = result as Record<string, unknown>;
+  if (typeof value.error === 'string') return { error: value.error };
+  const ids = (items: unknown, key: string) => Array.isArray(items)
+    ? items.flatMap((item) => (item && typeof item === 'object' && typeof (item as Record<string, unknown>)[key] === 'string'
+      ? [(item as Record<string, string>)[key]!]
+      : [])).slice(0, 20)
+    : [];
+  if (Array.isArray(value.lots)) return { found: typeof value.total === 'number' ? value.total : value.lots.length, ids: ids(value.lots, 'lotId') };
+  if (Array.isArray(value.projects)) return { found: value.projects.length, ids: ids(value.projects, 'projectId') };
+  if (Array.isArray(value.results)) return { found: value.results.length, ids: ids(value.results, 'url') };
+  if (typeof value.projectId === 'string') return { found: 1, ids: [value.projectId] };
+  if (typeof value.url === 'string') return { found: 1, ids: [value.url] };
+  return {};
 }
 
 async function executeTool(
@@ -208,8 +240,8 @@ async function executeTool(
       case 'web_search': {
         const query = readString(args.query);
         if (!query) return { error: 'Нужен текст запроса в поле query.' };
-        if (state.searches >= maxWebSearches) return { error: 'Лимит поисков исчерпан. Отвечай по найденному.' };
-        state.searches += 1;
+        if (state.telemetry.webSearches >= maxWebSearches) return { error: 'Лимит поисков исчерпан. Отвечай по найденному.' };
+        state.telemetry.webSearches += 1;
         context.onStep?.(`Ищу в интернете: ${query}`);
         return { results: await dependencies.web.search(query, context.signal) };
       }
@@ -220,6 +252,7 @@ async function executeTool(
         context.onStep?.(`Открываю ${hostOf(url) ?? url}`);
         const page = await dependencies.web.openPage(url, context.signal);
         state.pages.set(page.url, page);
+        state.telemetry.openedPages = state.pages.size;
         return page;
       }
       default:
@@ -249,7 +282,13 @@ function buildAnswer(args: Record<string, unknown>, state: TurnState, now: Date)
   }
 
   const shownLots = lots.slice(0, maxLotsInAnswer);
-  return { text, lots: shownLots, sources: collectSources(state, shownLots, now), historyNote: createHistoryNote(text, shownLots) };
+  return {
+    text,
+    lots: shownLots,
+    sources: collectSources(state, shownLots, now),
+    historyNote: createHistoryNote(text, shownLots),
+    turnId: null,
+  };
 }
 
 // Sources are what this turn actually used: project cards it read, the projects of the lots it

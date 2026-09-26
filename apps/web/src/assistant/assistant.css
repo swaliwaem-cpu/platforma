@@ -566,6 +566,93 @@
   color: var(--color-muted-foreground, #756a64);
 }
 
+.assistant-feedback {
+  display: grid;
+  gap: 6px;
+}
+
+.assistant-feedback-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-muted-foreground, #756a64);
+  font-size: 11px;
+}
+
+.assistant-feedback-buttons button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  color: var(--color-muted-foreground, #756a64);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.assistant-feedback-buttons button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.assistant-feedback-buttons button:hover {
+  border-color: rgb(78 49 32 / 18%);
+}
+
+.assistant-feedback-buttons button[aria-pressed="true"] {
+  color: #b94713;
+  background: rgb(232 90 24 / 10%);
+  border-color: rgb(232 90 24 / 30%);
+}
+
+.assistant-feedback-buttons button:focus-visible,
+.assistant-feedback-comment button:focus-visible {
+  outline: 2px solid #e85a18;
+  outline-offset: 2px;
+}
+
+.assistant-feedback-comment {
+  display: grid;
+  gap: 6px;
+}
+
+.assistant-feedback-comment label {
+  color: var(--color-muted-foreground, #756a64);
+  font-size: 11px;
+}
+
+:root[data-app-theme] body .assistant-chat .assistant-feedback-comment textarea {
+  min-height: 52px;
+  padding: 7px 9px;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.assistant-feedback-comment button {
+  justify-self: start;
+  padding: 6px 12px;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  background: #e85a18;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.assistant-feedback-comment button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.assistant-feedback-error {
+  margin: 0;
+  color: #b3261e;
+  font-size: 11px;
+}
+
 @keyframes assistant-pulse {
   70% {
     box-shadow: 0 0 0 7px rgb(232 90 24 / 0%);
@@ -715,6 +802,12 @@ html[data-app-theme="dark-premium"] .assistant-chat .assistant-composer-area {
 html[data-app-theme="dark-premium"] .assistant-chat .assistant-composer {
   background: var(--assistant-dark-fill);
   border-color: var(--assistant-dark-line);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-feedback-buttons button[aria-pressed="true"] {
+  color: var(--assistant-dark-accent-ink);
+  background: var(--assistant-dark-accent-soft);
+  border-color: var(--assistant-dark-accent-line);
 }
 
 html[data-app-theme="dark-premium"] .assistant-chat .assistant-source {

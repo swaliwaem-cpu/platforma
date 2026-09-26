@@ -87,6 +87,12 @@ const ObjectLotDetailPage = lazy(() =>
   })),
 );
 
+const AssistantAdminPage = lazy(() =>
+  import('./admin/AssistantAdminPage').then((module) => ({
+    default: module.AssistantAdminPage,
+  })),
+);
+
 const AssistantChat = lazy(() =>
   import('./assistant/AssistantChat').then((module) => ({
     default: module.AssistantChat,
@@ -495,6 +501,10 @@ function AppRoutes() {
               ) : (
                 <AccessDenied />
               )
+            ) : pathname.startsWith('/admin/assistant') ? (
+              <Suspense fallback={null}>
+                <AssistantAdminPage onBack={() => navigate('/admin')} />
+              </Suspense>
             ) : pathname.startsWith('/admin/import') ? (
               hasPermission('import:preview') ? (
                 <ImportAdminPage onBack={() => navigate('/admin')} />
@@ -505,6 +515,7 @@ function AppRoutes() {
               <AdminHome
                 onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
                 onOpenFeeds={() => navigate('/admin/feeds')}
+                onOpenAssistant={() => navigate('/admin/assistant')}
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenTraining={() => navigate('/admin/training')}
@@ -1287,6 +1298,7 @@ function getProfileInitials(user: AuthUser) {
 }
 
 function AdminHome({
+  onOpenAssistant,
   onOpenCatalogLinks,
   onOpenFeeds,
   onOpenImport,
@@ -1295,6 +1307,7 @@ function AdminHome({
   trainingEnabled,
   onOpenUsers,
 }: {
+  onOpenAssistant: () => void;
   onOpenCatalogLinks: () => void;
   onOpenFeeds: () => void;
   onOpenImport: () => void;
@@ -1340,6 +1353,13 @@ function AdminHome({
       tone: 'secondary',
       canAccess: hasPermission('feeds:read'),
       onClick: onOpenFeeds,
+    },
+    {
+      label: 'ИИ-помощник',
+      description: 'Журнал вопросов, оценки брокеров и расход на нейросеть.',
+      tone: 'secondary',
+      canAccess: hasPermission('admin:access'),
+      onClick: onOpenAssistant,
     },
     {
       label: 'Импорт',
