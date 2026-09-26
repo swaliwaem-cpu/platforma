@@ -387,7 +387,13 @@ function AssistantMessageView({ message }: { message: ChatMessage }) {
 }
 
 function PlatformLotCard({ lot }: { lot: AssistantPlatformLot }) {
-  const facts = [lot.completion ? `сдача ${lot.completion}` : null, lot.developer].filter(Boolean);
+  const facts = [
+    lot.propertyClass,
+    lot.finishing,
+    lot.pricePerM2Rub ? `${formatRub(lot.pricePerM2Rub)}/м²` : null,
+    lot.completion ? `сдача ${lot.completion}` : null,
+    lot.developer,
+  ].filter(Boolean);
   return (
     <section className="assistant-result-card" aria-label={`${lot.projectTitle}, ${formatRub(lot.priceRub)}`}>
       <a className="assistant-result-title" href={lot.href}>{lot.projectTitle}</a>

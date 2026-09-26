@@ -29,6 +29,36 @@ const veerLot = {
   building: null,
   completion: '3 кв. 2030',
   updatedAt: '2026-09-23T07:00:00.000Z',
+  propertyClass: 'Бизнес-класс',
+  pricePerM2Rub: 523_849,
+  finishing: 'white box',
+};
+
+const veerFacts = {
+  projectId: 'p-veer',
+  title: 'Жилой комплекс Веер 2',
+  href: '/objects/veer-2',
+  propertyClass: 'Бизнес-класс',
+  developer: 'MR Group',
+  address: 'Москва, Веерная улица',
+  district: 'Очаково-Матвеевское',
+  metro: ['Озёрная'],
+  nearestMetroWalk: { station: 'Озёрная', minutes: 9 },
+  completion: '3 кв. 2030',
+  availableLots: 69,
+  priceFromRub: 18_229_960,
+  pricePerM2FromRub: 480_000,
+  ceilingHeight: 'от 3 м',
+  lotCeilingHeightM: { min: 3, max: 3.15 },
+  floors: '12-30 этажей',
+  lotFloors: { min: 2, max: 29 },
+  areaRange: null,
+  lotAreaM2: { min: 34.8, max: 120 },
+  finishing: [{ finishing: 'white box', lots: 40 }],
+  lotsWithoutFinishingData: 29,
+  descriptions: { filling: null, architecture: 'Башни с панорамными окнами.', infrastructure: null, general: 'Проект MR Group.' },
+  cardUpdatedAt: '2026-09-20T10:00:00.000Z',
+  feedUpdatedAt: '2026-09-24T07:00:00.000Z',
 };
 
 function scriptedLlm(steps) {
@@ -49,13 +79,17 @@ function call(name, args, id = name) {
   return { id, name, arguments: JSON.stringify(args) };
 }
 
-function fakeCatalog({ projects = [], searches = [] } = {}) {
-  const calls = { findProjects: [], searchLots: [] };
+function fakeCatalog({ projects = [], searches = [], facts = {} } = {}) {
+  const calls = { findProjects: [], searchLots: [], getProjectFacts: [] };
   return {
     calls,
     async findProjects(query) {
       calls.findProjects.push(query);
       return { projects, partialMatch: false };
+    },
+    async getProjectFacts(projectId) {
+      calls.getProjectFacts.push(projectId);
+      return facts[projectId] ?? null;
     },
     async searchLots(input) {
       calls.searchLots.push(input);
@@ -446,4 +480,87 @@ test('class suggestion CSV survives quotes, separators and Excel semicolons', ()
   assert.deepEqual(parseCsv('﻿object_id;title;final\r\nb;Веер 2;премиум\r\n'), [
     { object_id: 'b', title: 'Веер 2', final: 'премиум' },
   ]);
+});
+
+test('search_lots turns class synonyms, finishing words and new limits into catalog filters', async () => {
+  const llm = scriptedLlm([
+    {
+      toolCalls: [call('search_lots', {
+        propertyClasses: ['элитка', 'эконом'],
+        finishing: ['WB', 'чистовая', 'мрамор'],
+        pricePerM2Min: '300 000',
+        pricePerM2Max: 1_500_000,
+        metroWalkMinutesMax: 10,
+        completionYearMin: 2027,
+        completed: true,
+      })],
+    },
+    { toolCalls: [call('give_answer', { text: 'Нашёл.', platformLotIds: [veerLot.unitId] })] },
+  ]);
+  const catalog = fakeCatalog({ searches: [{ total: 1, lots: [veerLot], lotsWithoutFinishingData: 12 }] });
+
+  await runAssistantAgent({ llm, catalog, web: fakeWeb() }, context('элитка с отделкой до 10 минут от метро'));
+
+  const input = catalog.calls.searchLots[0];
+  assert.deepEqual(input.propertyClasses, ['Делюкс']);
+  assert.deepEqual(input.finishing, ['white box', 'с отделкой']);
+  assert.equal(input.pricePerM2Min, 300_000);
+  assert.equal(input.pricePerM2Max, 1_500_000);
+  assert.equal(input.metroWalkMinutesMax, 10);
+  assert.equal(input.completionYearMin, 2027);
+  assert.equal(input.completed, true);
+  const toolResult = JSON.parse(llm.requests[1].messages.at(-1).content);
+  assert.equal(toolResult.lotsWithoutFinishingData, 12);
+  assert.match(toolResult.note, /эконом/);
+  assert.match(toolResult.note, /мрамор/);
+  assert.deepEqual(toolResult.lots[0], {
+    lotId: veerLot.unitId,
+    project: veerLot.projectTitle,
+    propertyClass: 'Бизнес-класс',
+    rooms: 1,
+    areaM2: 34.8,
+    floor: 2,
+    priceRub: 18_229_960,
+    pricePerM2Rub: 523_849,
+    finishing: 'white box',
+    building: null,
+    completion: '3 кв. 2030',
+  });
+});
+
+test('search_lots with only unknown classes asks the model to pick a real class instead of searching everything', async () => {
+  const llm = scriptedLlm([
+    { toolCalls: [call('search_lots', { propertyClasses: ['эконом'] })] },
+    { toolCalls: [call('give_answer', { text: 'Эконом-класса в Platforma нет.' })] },
+  ]);
+  const catalog = fakeCatalog();
+
+  await runAssistantAgent({ llm, catalog, web: fakeWeb() }, context('эконом'));
+
+  assert.equal(catalog.calls.searchLots.length, 0);
+  assert.match(JSON.parse(llm.requests[1].messages.at(-1).content).error, /Комфорт-класс, Бизнес-класс, Премиум-класс, Делюкс/);
+});
+
+test('get_project_facts returns the project card and unknown projects come back as an error', async () => {
+  const llm = scriptedLlm([
+    { toolCalls: [call('get_project_facts', { projectId: 'p-veer' }, 'a'), call('get_project_facts', { projectId: 'p-none' }, 'b')] },
+    { toolCalls: [call('give_answer', { text: 'Веер 2 — бизнес-класс, до метро 9 минут пешком.' })] },
+  ]);
+  const catalog = fakeCatalog({ facts: { 'p-veer': veerFacts } });
+  const steps = [];
+
+  const result = await runAssistantAgent(
+    { llm, catalog, web: fakeWeb() },
+    context('какой класс у Веер 2', { onStep: (step) => steps.push(step) }),
+  );
+
+  assert.deepEqual(catalog.calls.getProjectFacts, ['p-veer', 'p-none']);
+  const [factsResult, missingResult] = llm.requests[1].messages.slice(-2).map((message) => JSON.parse(message.content));
+  assert.equal(factsResult.propertyClass, 'Бизнес-класс');
+  assert.deepEqual(factsResult.nearestMetroWalk, { station: 'Озёрная', minutes: 9 });
+  assert.equal(factsResult.href, undefined);
+  assert.match(missingResult.error, /не найден/);
+  assert.ok(steps.includes('Читаю карточку ЖК в Platforma'));
+  assert.ok(llm.requests[0].tools.some((tool) => tool.name === 'get_project_facts'));
+  assert.equal(result.answer.text, 'Веер 2 — бизнес-класс, до метро 9 минут пешком.');
 });

@@ -19,6 +19,9 @@ export type AssistantAskInput = {
   pageObjectSlug?: string | null;
 };
 
+/** Lot finishing as the assistant reports it; lots without the data have none. */
+export type AssistantFinishing = 'без отделки' | 'white box' | 'с отделкой' | 'с мебелью';
+
 export type AssistantPlatformLot = {
   source: 'PLATFORMA';
   unitId: string;
@@ -26,11 +29,15 @@ export type AssistantPlatformLot = {
   href: string;
   projectHref: string;
   developer: string | null;
+  /** One of the four project classes, null when the project has none. */
+  propertyClass: string | null;
   /** 0 means a studio. */
   rooms: number | null;
   areaM2: number | null;
   floor: number | null;
   priceRub: number;
+  pricePerM2Rub: number | null;
+  finishing: AssistantFinishing | null;
   building: string | null;
   completion: string | null;
   updatedAt: string;

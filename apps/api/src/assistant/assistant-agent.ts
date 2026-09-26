@@ -1,16 +1,19 @@
 import type {
   AssistantAnswer,
   AssistantChatTurn,
+  AssistantFinishing,
   AssistantLot,
   AssistantPlatformLot,
   AssistantWebLot,
   AssistantWebSource,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
-import type {
-  AssistantCatalogTools,
-  AssistantLotSearchInput,
-  AssistantProjectMatch,
+import {
+  type AssistantCatalogTools,
+  type AssistantLotSearchInput,
+  type AssistantProjectFacts,
+  type AssistantProjectMatch,
+  normalizePropertyClasses,
 } from './assistant-catalog.tools';
 import type { AssistantLlm, AssistantLlmMessage, AssistantLlmTool, AssistantLlmToolCall } from './assistant-llm.client';
 import { type AssistantOpenedPage, type AssistantWeb, AssistantWebToolError } from './assistant-web.tools';
@@ -35,12 +38,13 @@ export type AssistantAgentContext = {
 
 export type AssistantAgentDependencies = {
   llm: AssistantLlm;
-  catalog: Pick<AssistantCatalogTools, 'findProjects' | 'searchLots'>;
+  catalog: Pick<AssistantCatalogTools, 'findProjects' | 'searchLots' | 'getProjectFacts'>;
   web: AssistantWeb;
 };
 
 type TurnState = {
   platformLots: Map<string, AssistantPlatformLot>;
+  projectFacts: Map<string, AssistantProjectFacts>;
   pages: Map<string, AssistantOpenedPage>;
   searches: number;
   inputTokens: number;
@@ -58,6 +62,7 @@ export async function runAssistantAgent(
 ): Promise<AssistantAgentResult> {
   const state: TurnState = {
     platformLots: new Map(),
+    projectFacts: new Map(),
     pages: new Map(),
     searches: 0,
     inputTokens: 0,
@@ -144,9 +149,21 @@ async function executeTool(
               : undefined,
         };
       }
+      case 'get_project_facts': {
+        const projectId = readString(args.projectId);
+        if (!projectId) return { error: 'Нужен projectId из find_projects.' };
+        context.onStep?.('Читаю карточку ЖК в Platforma');
+        const facts = await dependencies.catalog.getProjectFacts(projectId);
+        if (!facts) return { error: 'Проект не найден в Platforma. Проверь projectId через find_projects.' };
+        state.projectFacts.set(facts.projectId, facts);
+        return describeFacts(facts);
+      }
       case 'search_lots': {
+        const { input, unknownClasses, unknownFinishing } = readLotSearchInput(args);
+        if (unknownClasses.length && !input.propertyClasses?.length) {
+          return { error: `Неизвестный класс: ${unknownClasses.join(', ')}. В Platforma есть классы: ${propertyClassList}.` };
+        }
         context.onStep?.('Подбираю лоты в Platforma');
-        const input = readLotSearchInput(args);
         const result = await dependencies.catalog.searchLots(input);
         result.lots.forEach((lot) => state.platformLots.set(lot.unitId, lot));
         // The model tends to give up after a timid budget stretch, so an empty budget search
@@ -161,8 +178,20 @@ async function executeTool(
             })
           : null;
         nearest?.lots.forEach((lot) => state.platformLots.set(lot.unitId, lot));
+        const notes = [
+          unknownClasses.length ? `Класс «${unknownClasses.join('», «')}» не распознан и не учтён; классы: ${propertyClassList}.` : null,
+          unknownFinishing.length ? `Отделка «${unknownFinishing.join('», «')}» не распознана и не учтена; варианты: ${assistantFinishingList}.` : null,
+          input.metroWalkMinutesMax !== undefined ? 'ЖК, для которых время пешком до метро не посчитано, в выдачу не попали.' : null,
+        ].filter(Boolean);
         return {
           total: result.total,
+          ...(result.lotsWithoutFinishingData !== undefined
+            ? {
+                lotsWithoutFinishingData: result.lotsWithoutFinishingData,
+                finishingNote: 'Столько лотов подходят под остальные условия, но фид не говорит об их отделке — они не показаны. Упомяни это число в ответе.',
+              }
+            : {}),
+          ...(notes.length ? { note: notes.join(' ') } : {}),
           lots: result.lots.map(describeLot),
           ...(nearest
             ? {
@@ -268,7 +297,7 @@ export function pageMentionsPrice(page: Pick<AssistantOpenedPage, 'text' | 'data
 }
 
 function stripPseudoToolCalls(text: string) {
-  return text.replace(/\b(?:give_answer|search_lots|find_projects|web_search|open_page)\s*\([\s\S]*$/u, '').trim();
+  return text.replace(/\b(?:give_answer|search_lots|find_projects|get_project_facts|web_search|open_page)\s*\([\s\S]*$/u, '').trim();
 }
 
 function createHistoryNote(text: string, lots: AssistantLot[]) {
@@ -298,10 +327,13 @@ function describeLot(lot: AssistantPlatformLot) {
   return {
     lotId: lot.unitId,
     project: lot.projectTitle,
+    propertyClass: lot.propertyClass,
     rooms: lot.rooms,
     areaM2: lot.areaM2,
     floor: lot.floor,
     priceRub: lot.priceRub,
+    pricePerM2Rub: lot.pricePerM2Rub,
+    finishing: lot.finishing,
     building: lot.building,
     completion: lot.completion,
   };
@@ -311,18 +343,58 @@ function describeProject(project: AssistantProjectMatch) {
   return {
     projectId: project.projectId,
     title: project.title,
+    propertyClass: project.propertyClass,
     developer: project.developer,
     district: project.district,
     metro: project.metro,
+    nearestMetroWalk: project.nearestMetroWalk,
     availableLotsInPlatforma: project.availableLots,
     priceFromRub: project.priceFromRub,
     roomsAvailable: project.roomsAvailable,
   };
 }
 
-function readLotSearchInput(args: Record<string, unknown>): AssistantLotSearchInput {
-  const sort = readString(args.sort);
+function describeFacts(facts: AssistantProjectFacts) {
+  const { href: _href, cardUpdatedAt, feedUpdatedAt, ...rest } = facts;
   return {
+    ...rest,
+    nearestMetroWalk: facts.nearestMetroWalk ?? 'нет данных о времени пешком до метро',
+    updated: { card: cardUpdatedAt.slice(0, 10), feed: feedUpdatedAt?.slice(0, 10) ?? null },
+  };
+}
+
+const propertyClassList = 'Комфорт-класс, Бизнес-класс, Премиум-класс, Делюкс';
+const assistantFinishingList = 'без отделки, white box, с отделкой, с мебелью';
+
+// Words brokers and feeds use for finishing, by the start of the word.
+const finishingByWordStart: ReadonlyArray<readonly [string, AssistantFinishing]> = [
+  ['без', 'без отделки'],
+  ['черн', 'без отделки'],
+  ['white', 'white box'],
+  ['whitebox', 'white box'],
+  ['wb', 'white box'],
+  ['вайт', 'white box'],
+  ['предчист', 'white box'],
+  ['мебел', 'с мебелью'],
+  ['смебел', 'с мебелью'],
+  ['сотдел', 'с отделкой'],
+  ['чист', 'с отделкой'],
+  ['отдел', 'с отделкой'],
+  ['подключ', 'с отделкой'],
+  ['дизайн', 'с отделкой'],
+];
+
+function readFinishing(value: string): AssistantFinishing | null {
+  const key = value.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е').replace(/[^a-zа-я]+/gu, '');
+  return finishingByWordStart.find(([start]) => key.startsWith(start))?.[1] ?? null;
+}
+
+function readLotSearchInput(args: Record<string, unknown>) {
+  const sort = readString(args.sort);
+  const rawClasses = readStringArray(args.propertyClasses);
+  const rawFinishing = readStringArray(args.finishing);
+  const finishing = rawFinishing.flatMap((value) => readFinishing(value) ?? []);
+  const input: AssistantLotSearchInput = {
     projectIds: readStringArray(args.projectIds),
     rooms: Array.isArray(args.rooms) ? args.rooms.map(readInteger).filter((value): value is number => value !== null) : [],
     budgetMinRub: readNumber(args.budgetMinRub) ?? undefined,
@@ -331,13 +403,25 @@ function readLotSearchInput(args: Record<string, unknown>): AssistantLotSearchIn
     areaMax: readNumber(args.areaMax) ?? undefined,
     floorMin: readNumber(args.floorMin) ?? undefined,
     floorMax: readNumber(args.floorMax) ?? undefined,
+    completionYearMin: readNumber(args.completionYearMin) ?? undefined,
     completionYearMax: readNumber(args.completionYearMax) ?? undefined,
+    completed: typeof args.completed === 'boolean' ? args.completed : undefined,
     district: readString(args.district) ?? undefined,
     metro: readString(args.metro) ?? undefined,
     developer: readString(args.developer) ?? undefined,
+    propertyClasses: normalizePropertyClasses(rawClasses),
+    finishing: [...new Set(finishing)],
+    pricePerM2Min: readNumber(args.pricePerM2Min) ?? undefined,
+    pricePerM2Max: readNumber(args.pricePerM2Max) ?? undefined,
+    metroWalkMinutesMax: readNumber(args.metroWalkMinutesMax) ?? undefined,
     commercial: args.commercial === true,
     sort: sort === 'price_desc' || sort === 'area_asc' || sort === 'area_desc' ? sort : 'price_asc',
     limit: readNumber(args.limit) ?? undefined,
+  };
+  return {
+    input,
+    unknownClasses: rawClasses.filter((value) => normalizePropertyClasses([value]).length === 0),
+    unknownFinishing: rawFinishing.filter((value) => readFinishing(value) === null),
   };
 }
 
@@ -397,14 +481,38 @@ function createTools(webSearchEnabled: boolean): AssistantLlmTool[] {
           areaMax: { type: 'number', description: 'м²' },
           floorMin: { type: 'integer' },
           floorMax: { type: 'integer' },
+          completionYearMin: { type: 'integer', description: 'Сдача не раньше этого года.' },
           completionYearMax: { type: 'integer', description: 'Сдача не позже этого года.' },
+          completed: { type: 'boolean', description: 'true — только уже сданные («готовые», «сдан»), false — только строящиеся.' },
           district: { type: 'string', description: 'Район, например «Хамовники».' },
           metro: { type: 'string', description: 'Станция метро.' },
           developer: { type: 'string', description: 'Застройщик.' },
+          propertyClasses: {
+            type: 'array',
+            items: { type: 'string', enum: ['Комфорт-класс', 'Бизнес-класс', 'Премиум-класс', 'Делюкс'] },
+            description: 'Класс ЖК. «Элит», «элитка», «de luxe», «люкс» — это Делюкс.',
+          },
+          finishing: {
+            type: 'array',
+            items: { type: 'string', enum: ['без отделки', 'white box', 'с отделкой', 'с мебелью'] },
+            description: 'Отделка лота. «Предчистовая», «WB» — white box; «чистовая», «под ключ» — с отделкой.',
+          },
+          pricePerM2Min: { type: 'number', description: 'Цена за м² от, ₽.' },
+          pricePerM2Max: { type: 'number', description: 'Цена за м² до, ₽.' },
+          metroWalkMinutesMax: { type: 'integer', description: 'Не дальше стольких минут пешком до ближайшего метро.' },
           commercial: { type: 'boolean', description: 'true — коммерческие помещения вместо жилья.' },
           sort: { type: 'string', enum: ['price_asc', 'price_desc', 'area_asc', 'area_desc'] },
           limit: { type: 'integer', description: 'До 15, по умолчанию 10.' },
         },
+      },
+    },
+    {
+      name: 'get_project_facts',
+      description: 'Карточка ЖК из Platforma: класс, застройщик, адрес, метро и минуты пешком, срок сдачи, цены от, цена за м² от, потолки, этажность, площади, отделка лотов, описания (наполнение, архитектура, инфраструктура) и даты обновления. Для любых вопросов о конкретном ЖК.',
+      parameters: {
+        type: 'object',
+        properties: { projectId: { type: 'string', description: 'projectId из find_projects.' } },
+        required: ['projectId'],
       },
     },
     {
