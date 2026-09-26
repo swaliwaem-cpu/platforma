@@ -73,7 +73,7 @@
       "group": "filters",
       "question": "Элитка в ЦАО до 300 млн с отделкой, до 10 минут пешком от метро",
       "expect": {
-        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "finishing": ["с отделкой"], "budgetMaxRub": 300000000, "metroWalkMinutesMax": 10 } }]
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "finishing": ["с отделкой"], "budgetMaxRub": 300000000, "metroWalkMinutesMax": 10, "district": "Центр" } }]
       }
     },
     {

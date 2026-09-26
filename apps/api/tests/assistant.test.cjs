@@ -564,3 +564,14 @@ test('get_project_facts returns the project card and unknown projects come back 
   assert.ok(llm.requests[0].tools.some((tool) => tool.name === 'get_project_facts'));
   assert.equal(result.answer.text, 'Веер 2 — бизнес-класс, до метро 9 минут пешком.');
 });
+
+test('the system prompt carries the market reference and the rules for facts and filters', async () => {
+  const llm = scriptedLlm([{ toolCalls: [call('give_answer', { text: 'ok' })] }]);
+  await runAssistantAgent({ llm, catalog: fakeCatalog(), web: fakeWeb() }, context('что такое эскроу'));
+
+  const prompt = llm.requests[0].messages[0].content;
+  assert.match(prompt, /СПРАВОЧНИК РЫНКА/);
+  assert.match(prompt, /«элитка».*Делюкс/s);
+  assert.match(prompt, /get_project_facts/);
+  assert.match(prompt, /Ставки ипотеки и условия программ не называй/);
+});
