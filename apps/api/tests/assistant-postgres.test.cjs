@@ -124,6 +124,10 @@ if (!databaseUrl) {
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ pricePerM2Min: 2_600_000, pricePerM2Max: 2_850_000 }), now)), ['a3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ metroWalkMinutesMax: 10 }), now)), ['a1', 'a2', 'a3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ metroWalkMinutesMax: 5 }), now)), []);
+    // The business project has no walking time: its two available lots are counted apart.
+    assert.equal((await catalog.searchLots(scoped({ metroWalkMinutesMax: 10 }), now)).lotsWithoutMetroWalkData, 2);
+    assert.equal((await catalog.searchLots(scoped({ propertyClasses: ['Делюкс'], metroWalkMinutesMax: 10 }), now)).lotsWithoutMetroWalkData, 0);
+    assert.equal((await catalog.searchLots(scoped({}), now)).lotsWithoutMetroWalkData, undefined);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completed: true }), now)), ['a1', 'a2', 'a3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completed: false }), now)), ['b1', 'b3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completionYearMin: 2028 }), now)), ['b1', 'b3']);

@@ -214,7 +214,9 @@ async function executeTool(
         const notes = [
           unknownClasses.length ? `Класс «${unknownClasses.join('», «')}» не распознан и не учтён; классы: ${propertyClassList}.` : null,
           unknownFinishing.length ? `Отделка «${unknownFinishing.join('», «')}» не распознана и не учтена; варианты: ${assistantFinishingList}.` : null,
-          input.metroWalkMinutesMax !== undefined ? 'ЖК, для которых время пешком до метро не посчитано, в выдачу не попали.' : null,
+          result.lotsWithoutMetroWalkData
+            ? `Ещё ${result.lotsWithoutMetroWalkData} лотов подходят под остальные условия, но у их ЖК не посчитано время пешком до метро — они не показаны.`
+            : null,
         ].filter(Boolean);
         return {
           total: result.total,

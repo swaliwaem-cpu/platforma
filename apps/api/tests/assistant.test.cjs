@@ -530,6 +530,7 @@ test('search_lots turns class synonyms, finishing words and new limits into cata
   assert.match(toolResult.note, /эконом/);
   assert.match(toolResult.note, /мрамор/);
   assert.match(toolResult.note, /без мебели/);
+  assert.doesNotMatch(toolResult.note, /метро/);
   assert.deepEqual(toolResult.lots[0], {
     lotId: veerLot.unitId,
     project: veerLot.projectTitle,
@@ -543,6 +544,19 @@ test('search_lots turns class synonyms, finishing words and new limits into cata
     building: null,
     completion: '3 кв. 2030',
   });
+});
+
+test('search_lots tells how many lots were dropped for a missing metro walking time', async () => {
+  const llm = scriptedLlm([
+    { toolCalls: [call('search_lots', { metro: 'Шаболовская', metroWalkMinutesMax: 5 })] },
+    { toolCalls: [call('give_answer', { text: 'Ничего нет.' })] },
+  ]);
+  const catalog = fakeCatalog({ searches: [{ total: 0, lots: [], lotsWithoutMetroWalkData: 7 }] });
+
+  await runAssistantAgent({ llm, catalog, web: fakeWeb() }, context('у Шаболовской в 5 минутах от метро'));
+
+  const toolResult = JSON.parse(llm.requests[1].messages.at(-1).content);
+  assert.match(toolResult.note, /Ещё 7 лотов .* не посчитано время пешком до метро/);
 });
 
 test('search_lots with only unknown classes asks the model to pick a real class instead of searching everything', async () => {

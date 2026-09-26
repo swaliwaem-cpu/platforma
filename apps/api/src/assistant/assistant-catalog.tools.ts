@@ -67,6 +67,8 @@ export type AssistantLotSearchResult = {
   lots: AssistantPlatformLot[];
   /** With a finishing filter: lots that match everything else but whose feed says nothing about finishing. */
   lotsWithoutFinishingData?: number;
+  /** With a metro walk filter: lots that match everything else but whose project has no walking time. */
+  lotsWithoutMetroWalkData?: number;
 };
 
 type Range = { min: number; max: number };
@@ -323,11 +325,20 @@ export class AssistantCatalogTools {
     const withoutFinishingFrom = input.finishing?.length
       ? lotSearchFrom([...createLotConditions({ ...input, finishing: undefined }, now), Prisma.sql`${lotFinishing} IS NULL`])
       : null;
+    const withoutMetroWalkFrom = isNumber(input.metroWalkMinutesMax)
+      ? lotSearchFrom([
+          ...createLotConditions({ ...input, metroWalkMinutesMax: undefined }, now),
+          Prisma.sql`NOT EXISTS (SELECT 1 FROM assistant_object_metro_route_facts mf WHERE mf.object_id = o.id)`,
+        ])
+      : null;
 
-    const [countRows, withoutFinishingRows, rows] = await Promise.all([
+    const [countRows, withoutFinishingRows, withoutMetroWalkRows, rows] = await Promise.all([
       this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`SELECT COUNT(*)::bigint AS count ${from}`),
       withoutFinishingFrom
         ? this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`SELECT COUNT(*)::bigint AS count ${withoutFinishingFrom}`)
+        : Promise.resolve(null),
+      withoutMetroWalkFrom
+        ? this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`SELECT COUNT(*)::bigint AS count ${withoutMetroWalkFrom}`)
         : Promise.resolve(null),
       this.prisma.$queryRaw<LotRow[]>(Prisma.sql`
         SELECT
@@ -356,6 +367,7 @@ export class AssistantCatalogTools {
       total: Number(countRows[0]?.count ?? 0),
       lots: rows.map(toPlatformLot),
       ...(withoutFinishingRows ? { lotsWithoutFinishingData: Number(withoutFinishingRows[0]?.count ?? 0) } : {}),
+      ...(withoutMetroWalkRows ? { lotsWithoutMetroWalkData: Number(withoutMetroWalkRows[0]?.count ?? 0) } : {}),
     };
   }
 }
