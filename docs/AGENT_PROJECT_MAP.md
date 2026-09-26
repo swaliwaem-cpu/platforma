@@ -49,7 +49,7 @@ pnpm-монорепозиторий (pnpm@10):
 - `User → Role → RolePermission → Permission`; `UserSession` (refresh hash, 30 дней), `EmailAuthChallenge`.
 - Access JWT 15 мин (Bearer), refresh — httpOnly cookie, media token — cookie ~200 мин (scope `files:read`). Пароли — argon2.
 - Guards: `JwtAuthGuard`, `PermissionsGuard` + `@RequirePermissions(...)` (требует ВСЕ перечисленные), `MediaTokenGuard`, предметные guards (presentations, TrainingFeatureGuard).
-- 27 permission-ключей в `src/prisma/seed.ts` (`admin:access`, `users:*`, `objects:*`, `files:*`, `import:*`, `feeds:*`, `assistant:*`, `training:*`…). Роли: admin (всё), editor, user.
+- 26 permission-ключей в `src/prisma/seed.ts` (`admin:access`, `users:*`, `objects:*`, `files:*`, `import:*`, `feeds:*`, `training:*`…). Роли: admin (всё), editor, user.
 - IDOR/ownership — в сервисах. Backend — единственный источник проверки доступа.
 
 ### Training V2 (`src/training/`)
@@ -76,7 +76,7 @@ sharp (variants), pdfkit/pdfjs-dist, playwright-core (рендер презен�
 ## AI-ассистент: apps/api/src/assistant/ (v2)
 
 Подбирает лоты (сначала Platforma, потом сайты застройщиков и агрегаторы), отвечает на вопросы о конкретном ЖК по его карточке и объясняет термины рынка. План этапа 1 — `docs/helpr2/1st.md`.
-Старый модуль v1 (спека `docs/helpar/speka.md`) снят 2026-09-23, код — в ветке `archive/assistant-v1`. Его таблицы (`assistant_*`) пока в БД и схеме: удаление v1 из этапа 1 не сделано. Новый код читает из v1 только `assistant_object_metro_route_facts` + `assistant_metro_access_points` (минуты пешком до метро). У ЖК, созданных после удаления скрипта пересчёта, этих данных нет.
+Старый модуль v1 (спека `docs/helpar/speka.md`) снят 2026-09-23, код — в ветке `archive/assistant-v1`; его таблицы, enum, триггерные функции и права `assistant:audit:read`/`assistant:sources:manage` удаляет миграция `20260926140000_drop_assistant_v1`. От v1 остались только `assistant_object_metro_route_facts` + `assistant_metro_access_points` (минуты пешком до метро); скрипта пересчёта больше нет, у новых ЖК этих данных не будет.
 
 - `assistant.controller.ts` — `GET /assistant/config`, `POST /assistant/jobs` (вся переписка + `pageObjectSlug` + `conversationId`), `GET /assistant/jobs/:id` (polling), `POST /assistant/turns/:id/feedback` (👍/👎 только своего хода). Доступ: `objects:read` + `ASSISTANT_MODULE_ENABLED` + `ASSISTANT_ROLLOUT_STAGE` (ADMINS/PILOT/ALL). `AssistantAdminController` — `GET /assistant/admin/turns`, `/turns/:id`, `/usage?days=` только с `admin:access`.
 - `assistant.service.ts` — задания в памяти процесса (один активный на пользователя, дедлайн 150 с, TTL 15 мин). Историю переписки хранит браузер (sessionStorage); каждый ход (и упавший) пишется в журнал, `turnId` = id задания.
@@ -112,7 +112,7 @@ PostgreSQL + PostGIS (`searchPoint` geography(Point,4326)) + pgvector. Доме�
 - Файлы: File (LOCAL/MINIO), FileVariant (THUMBNAIL/CARD/DETAIL), ObjectImage, ObjectFile.
 - Презентации: LotPresentation*, ProjectPresentation*.
 - Training (~20 моделей): Project/KnowledgeVersion/Assignment, Question/Fact/Criterion, Attempt→AttemptQuestion→Answer→AnswerSegment, AiUsageEvent, Material(+Revision/Operation), AudioStorageEntry, DeletionManifest, TelegramAccount/LinkToken/Outbox.
-- Ассистент: `AssistantTurn` (журнал v2). Модели v1 (~25 `Assistant*`) — архивные таблицы; новый код читает только `AssistantObjectMetroRouteFact` и `AssistantMetroAccessPoint`.
+- Ассистент: `AssistantTurn` (журнал v2), `AssistantObjectMetroRouteFact` и `AssistantMetroAccessPoint` (минуты до метро, наследие v1).
 - Аудит: AuditLog, ImportReport (wp-import журнал).
 
 ## Импорты

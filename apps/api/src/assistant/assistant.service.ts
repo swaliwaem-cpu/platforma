@@ -186,11 +186,7 @@ export function isAssistantEnabledForActor(
   if (!actor || environment.ASSISTANT_MODULE_ENABLED !== 'true') return false;
   const permissions = new Set(actor.permissions);
   if (!permissions.has('objects:read')) return false;
-  if (
-    permissions.has('admin:access')
-    || permissions.has('assistant:audit:read')
-    || permissions.has('assistant:sources:manage')
-  ) return true;
+  if (permissions.has('admin:access')) return true;
   const stage = (environment.ASSISTANT_ROLLOUT_STAGE ?? 'ADMINS').trim().toUpperCase();
   if (stage === 'ALL') return true;
   if (stage === 'PILOT') {
