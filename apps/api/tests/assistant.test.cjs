@@ -200,7 +200,7 @@ test('web lots survive only for opened sites and keep only prices seen on the pa
     ['WEB', 'sminex.com', 7_087_510_000],
     ['WEB', 'sminex.com', null],
   ]);
-  assert.deepEqual(result.answer.webSources, [{ url: pageUrl, siteName: 'sminex.com', title: 'Подбор' }]);
+  assert.deepEqual(result.answer.sources, [{ kind: 'WEB', title: 'Подбор', url: pageUrl, date: '2026-09-23T10:00:00.000Z' }]);
 });
 
 test('a web lot that duplicates a shown Platforma lot is dropped', async () => {
@@ -265,7 +265,7 @@ test('tool failures are reported to the model instead of failing the turn', asyn
 
   assert.deepEqual(JSON.parse(llm.requests[1].messages.at(-1).content), { error: 'PAGE_UNREACHABLE' });
   assert.equal(result.answer.text, 'Сайт недоступен.');
-  assert.deepEqual(result.answer.webSources, []);
+  assert.deepEqual(result.answer.sources, []);
 });
 
 test('page price check accepts whole rubles and «млн» notation', () => {
@@ -574,4 +574,33 @@ test('the system prompt carries the market reference and the rules for facts and
   assert.match(prompt, /«элитка».*Делюкс/s);
   assert.match(prompt, /get_project_facts/);
   assert.match(prompt, /Ставки ипотеки и условия программ не называй/);
+});
+
+test('sources list the project cards read, the projects of shown lots and opened sites with their dates', async () => {
+  const pageUrl = 'https://www.mr-group.ru/veer/';
+  const otherLot = { ...veerLot, unitId: '22222222-2222-4222-8222-222222222222', updatedAt: '2026-09-25T07:00:00.000Z' };
+  const hiddenLot = {
+    ...veerLot,
+    unitId: '33333333-3333-4333-8333-333333333333',
+    projectTitle: 'Не показанный ЖК',
+    projectHref: '/objects/hidden',
+  };
+  const llm = scriptedLlm([
+    { toolCalls: [call('get_project_facts', { projectId: 'p-veer' })] },
+    { toolCalls: [call('search_lots', { projectIds: ['p-veer'] })] },
+    { toolCalls: [call('open_page', { url: pageUrl })] },
+    { toolCalls: [call('give_answer', { text: 'Нашёл.', platformLotIds: [veerLot.unitId, otherLot.unitId] })] },
+  ]);
+  const catalog = fakeCatalog({
+    facts: { 'p-veer': veerFacts },
+    searches: [{ total: 3, lots: [veerLot, otherLot, hiddenLot] }],
+  });
+  const web = fakeWeb({ pages: { [pageUrl]: { url: pageUrl, title: '', text: 'Веер', links: [], data: [] } } });
+
+  const result = await runAssistantAgent({ llm, catalog, web }, context('расскажи про Веер 2'));
+
+  assert.deepEqual(result.answer.sources, [
+    { kind: 'PLATFORMA_PROJECT', title: 'Жилой комплекс Веер 2', url: '/objects/veer-2', date: '2026-09-25T07:00:00.000Z' },
+    { kind: 'WEB', title: 'mr-group.ru', url: pageUrl, date: '2026-09-23T10:00:00.000Z' },
+  ]);
 });

@@ -4,8 +4,8 @@ import type {
   AssistantFinishing,
   AssistantLot,
   AssistantPlatformLot,
+  AssistantSource,
   AssistantWebLot,
-  AssistantWebSource,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import {
@@ -91,7 +91,7 @@ export async function runAssistantAgent(
     const answerCall = response.toolCalls.find((toolCall) => toolCall.name === 'give_answer');
     if (answerCall) {
       context.onStep?.('Формирую ответ');
-      return finish(buildAnswer(parseArguments(answerCall), state), state, call);
+      return finish(buildAnswer(parseArguments(answerCall), state, context.now), state, call);
     }
     if (response.toolCalls.length === 0) {
       // Qwen sometimes writes its answer (or a give_answer call) as plain text; the next call
@@ -102,7 +102,7 @@ export async function runAssistantAgent(
         messages.push({ role: 'user', content: 'Оформи этот ответ вызовом give_answer.' });
         continue;
       }
-      return finish(buildAnswer({ text: stripPseudoToolCalls(response.content ?? '') }, state), state, call);
+      return finish(buildAnswer({ text: stripPseudoToolCalls(response.content ?? '') }, state, context.now), state, call);
     }
 
     messages.push({ role: 'assistant', content: response.content, toolCalls: response.toolCalls });
@@ -231,7 +231,7 @@ async function executeTool(
   }
 }
 
-function buildAnswer(args: Record<string, unknown>, state: TurnState): AssistantAnswer {
+function buildAnswer(args: Record<string, unknown>, state: TurnState, now: Date): AssistantAnswer {
   const text = readString(stripPseudoToolCalls(readString(args.text) ?? ''))?.slice(0, 3_000)
     ?? 'Не получилось сформулировать ответ. Попробуйте переформулировать запрос.';
   const lots: AssistantLot[] = [];
@@ -249,12 +249,31 @@ function buildAnswer(args: Record<string, unknown>, state: TurnState): Assistant
   }
 
   const shownLots = lots.slice(0, maxLotsInAnswer);
-  const webSources = [...state.pages.values()].map((page): AssistantWebSource => ({
+  return { text, lots: shownLots, sources: collectSources(state, shownLots, now), historyNote: createHistoryNote(text, shownLots) };
+}
+
+// Sources are what this turn actually used: project cards it read, the projects of the lots it
+// shows (not every lot it looked at) and the sites it opened. One entry per project, latest date.
+function collectSources(state: TurnState, shownLots: AssistantLot[], now: Date): AssistantSource[] {
+  const projects = new Map<string, AssistantSource>();
+  const addProject = (title: string, url: string, date: string) => {
+    const existing = projects.get(url);
+    if (!existing || existing.date < date) projects.set(url, { kind: 'PLATFORMA_PROJECT', title, url, date });
+  };
+  for (const facts of state.projectFacts.values()) {
+    const date = facts.feedUpdatedAt && facts.feedUpdatedAt > facts.cardUpdatedAt ? facts.feedUpdatedAt : facts.cardUpdatedAt;
+    addProject(facts.title, facts.href, date);
+  }
+  for (const lot of shownLots) {
+    if (lot.source === 'PLATFORMA') addProject(lot.projectTitle, lot.projectHref, lot.updatedAt);
+  }
+  const sites = [...state.pages.values()].map((page): AssistantSource => ({
+    kind: 'WEB',
+    title: page.title || (hostOf(page.url) ?? page.url),
     url: page.url,
-    siteName: hostOf(page.url) ?? page.url,
-    title: page.title || null,
+    date: now.toISOString(),
   }));
-  return { text, lots: shownLots, webSources, historyNote: createHistoryNote(text, shownLots) };
+  return [...projects.values(), ...sites];
 }
 
 // A web lot is shown only when its link points to a site that was actually opened in this

@@ -58,16 +58,20 @@ export type AssistantWebLot = {
 
 export type AssistantLot = AssistantPlatformLot | AssistantWebLot;
 
-export type AssistantWebSource = {
+/** Where an answer's data came from: a project in Platforma or a site opened in this turn. */
+export type AssistantSource = {
+  kind: 'PLATFORMA_PROJECT' | 'WEB';
+  title: string;
+  /** App path for a Platforma project, absolute URL for a site. */
   url: string;
-  siteName: string;
-  title: string | null;
+  /** ISO time: last card or feed update for a project, the moment a site was opened. */
+  date: string;
 };
 
 export type AssistantAnswer = {
   text: string;
   lots: AssistantLot[];
-  webSources: AssistantWebSource[];
+  sources: AssistantSource[];
   /** Compact summary the browser sends back as this turn's content in later requests. */
   historyNote: string;
 };

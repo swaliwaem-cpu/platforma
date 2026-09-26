@@ -358,6 +358,8 @@ function AssistantMessageView({ message }: { message: ChatMessage }) {
     );
   }
   const answer = message.answer;
+  // Answers saved in the session before sources existed have none.
+  const sources = answer?.sources ?? [];
   return (
     <div className="assistant-message assistant-message--results">
       <span>Помощник</span>
@@ -371,16 +373,24 @@ function AssistantMessageView({ message }: { message: ChatMessage }) {
           </div>
         </div>
       ) : null}
-      {answer && answer.webSources.length > 0 ? (
-        <p className="assistant-web-sources">
-          Смотрел сайты:{' '}
-          {answer.webSources.map((source, index) => (
-            <span key={source.url}>
-              {index > 0 ? ', ' : null}
-              <a href={source.url} rel="noopener noreferrer" target="_blank">{source.siteName}</a>
-            </span>
+      {sources.length > 0 ? (
+        <ul className="assistant-sources" aria-label="Источники">
+          {sources.map((source) => (
+            <li key={`${source.kind}:${source.url}`}>
+              <a
+                className="assistant-source"
+                href={source.url}
+                title={source.title}
+                {...(source.kind === 'WEB' ? { rel: 'noopener noreferrer', target: '_blank' } : {})}
+              >
+                <span className="assistant-source-label">
+                  {source.kind === 'WEB' ? hostOf(source.url) : `Platforma · ${shortProjectTitle(source.title)}`}
+                </span>
+                <span className="assistant-source-date">{formatShortDate(source.date)}</span>
+              </a>
+            </li>
           ))}
-        </p>
+        </ul>
       ) : null}
     </div>
   );
@@ -463,6 +473,23 @@ function formatRub(value: number) {
 
 function formatNumber(value: number) {
   return value.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+}
+
+function shortProjectTitle(title: string) {
+  return title.replace(/^Жилой комплекс\s+/u, 'ЖК ');
+}
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./u, '');
+  } catch {
+    return url;
+  }
 }
 
 function formatUpdatedAt(value: string) {
