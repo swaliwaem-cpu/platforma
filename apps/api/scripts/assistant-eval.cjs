@@ -43,6 +43,8 @@ async function main(argv) {
   const catalog = new AssistantCatalogTools(prisma);
   const web = options.web ? new AssistantWebTools() : disabledWeb();
 
+  // Taken before the run: the checkout may move on while a long paid run is going.
+  const commit = readCommit();
   const results = [];
   try {
     for (const item of cases) {
@@ -55,7 +57,6 @@ async function main(argv) {
     await prisma.$disconnect();
   }
 
-  const commit = readCommit();
   const date = new Date().toISOString().slice(0, 10);
   const report = renderReport({ fixture, results, model, commit, date, dist, web: options.web, estimateTrainingAiCost });
   const out = resolve(options.out ?? resolve(repositoryRoot, `docs/helpr2/eval/${date}-${commit}.md`));

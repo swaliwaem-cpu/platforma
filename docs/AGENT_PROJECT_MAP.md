@@ -73,27 +73,31 @@ Alibaba DashScope (training и assistant), Yandex Search API (assistant), Telegr
 sharp (variants), pdfkit/pdfjs-dist, playwright-core (рендер презентаций), cheerio.
 Внешней очереди нет — везде in-process polling-воркеры с PG-claim (lock_owner/heartbeat/stale-recovery).
 
-## AI-ассистент: apps/api/src/assistant/ (v2, подбор лотов)
+## AI-ассистент: apps/api/src/assistant/ (v2)
 
-Задача одна — находить лоты: сначала в Platforma (feed_units), если в проекте лотов нет — на сайтах застройщиков и агрегаторах.
-Старый модуль v1 (спека `docs/helpar/speka.md`, геопоиск, RAG, eval) снят 2026-09-23 и лежит целиком в ветке `archive/assistant-v1` и теге `assistant-v1-archive`; его таблицы (`assistant_*`) и миграции остались в БД и Prisma schema нетронутыми.
+Подбирает лоты (сначала Platforma, потом сайты застройщиков и агрегаторы), отвечает на вопросы о конкретном ЖК по его карточке и объясняет термины рынка. План этапа 1 — `docs/helpr2/1st.md`.
+Старый модуль v1 (спека `docs/helpar/speka.md`) снят 2026-09-23, код — в ветке `archive/assistant-v1`. Его таблицы (`assistant_*`) пока в БД и схеме: удаление v1 из этапа 1 не сделано. Новый код читает из v1 только `assistant_object_metro_route_facts` + `assistant_metro_access_points` (минуты пешком до метро). У ЖК, созданных после удаления скрипта пересчёта, этих данных нет.
 
-- `assistant.controller.ts` — `GET /assistant/config`, `POST /assistant/jobs` (вся переписка + `pageObjectSlug`), `GET /assistant/jobs/:id` (polling). Доступ: `objects:read` + `ASSISTANT_MODULE_ENABLED` + `ASSISTANT_ROLLOUT_STAGE` (ADMINS/PILOT/ALL).
-- `assistant.service.ts` — задания в памяти процесса (один активный на пользователя, дедлайн 150 с, TTL 15 мин). Историю хранит браузер (sessionStorage), в БД ничего не пишется.
-- `assistant-agent.ts` — цикл модели (по умолчанию `deepseek-v4.1-flash` через Alibaba) с инструментами `find_projects`, `search_lots`, `web_search`, `open_page`, `give_answer`; системный промпт; проверка ответа: лоты Platforma — только id из `search_lots`, веб-лоты — только с открытых сайтов, цена — только если число есть на странице.
-- `assistant-catalog.tools.ts` — поиск проекта (тот же `findCatalogSearchObjectIds`, что строка поиска каталога) и SQL по доступным лотам.
+- `assistant.controller.ts` — `GET /assistant/config`, `POST /assistant/jobs` (вся переписка + `pageObjectSlug` + `conversationId`), `GET /assistant/jobs/:id` (polling), `POST /assistant/turns/:id/feedback` (👍/👎 только своего хода). Доступ: `objects:read` + `ASSISTANT_MODULE_ENABLED` + `ASSISTANT_ROLLOUT_STAGE` (ADMINS/PILOT/ALL). `AssistantAdminController` — `GET /assistant/admin/turns`, `/turns/:id`, `/usage?days=` только с `admin:access`.
+- `assistant.service.ts` — задания в памяти процесса (один активный на пользователя, дедлайн 150 с, TTL 15 мин). Историю переписки хранит браузер (sessionStorage); каждый ход (и упавший) пишется в журнал, `turnId` = id задания.
+- `assistant-turn-log.service.ts` — таблица `assistant_turns`: вопрос и ответ с маскировкой телефонов/почты, лоты, источники, трасса инструментов, токены (с кэшем), стоимость через `estimateTrainingAiCost`, оценки. Раз в сутки удаляет ходы старше 90 дней. Админ-список, карточка хода, расход по дням (московские сутки).
+- `assistant-agent.ts` — цикл модели (по умолчанию `deepseek-v4.1-flash` через Alibaba) с инструментами `find_projects`, `search_lots`, `get_project_facts`, `web_search`, `open_page`, `give_answer`; системный промпт + справочник рынка; проверка ответа: лоты Platforma — только id из `search_lots`, веб-лоты — только с открытых сайтов, цена — только если число есть на странице. `sources` ответа — прочитанные карточки, ЖК показанных лотов и открытые сайты с датой.
+- `assistant-market-knowledge.ts` — текст справочника (классы и критерии, отделка, ипотека без ставок, термины). Медианы цены за м² по классам в нём — черновик по локальной базе, заменить прод-цифрами.
+- `assistant-catalog.tools.ts` — поиск проекта (тот же `findCatalogSearchObjectIds`, что строка поиска каталога), карточка ЖК для `get_project_facts` и SQL по доступным лотам. Фильтры: класс (синонимы через `@platforma/shared/property-class`), отделка (сырые `decoration/renovation` фидов → 4 значения в SQL `CASE`, мебель — `raw_payload @_Furniture` ФСК), цена за м², минуты до метро, год сдачи от/до, «уже сдан».
 - `assistant-web.tools.ts` — поиск: Yandex Search API, если заданы `YANDEX_SEARCH_API_KEY` + `YANDEX_SEARCH_FOLDER_ID`, иначе headless-браузер читает выдачу Startpage → Brave → Yahoo (Google/Bing/Яндекс/Mojeek дают капчу; выключается `ASSISTANT_BROWSER_SEARCH_ENABLED=false`). Чтение страницы Playwright’ом: текст, ссылки на подбор квартир и лоты из JSON, который грузит страница. Агрегаторы (m2.ru, ЦИАН) часто отдают headless-браузеру заглушку.
-- `assistant-llm.client.ts` — DashScope compatible-mode `/chat/completions` с function calling (`ALIBABA_API_KEY`, `ASSISTANT_MODEL`, по умолчанию `deepseek-v4.1-flash`; на ключе есть qwen3.x, deepseek-v4*, kimi/glm — последние два отвергают параметры запроса). Встроенный веб-поиск DashScope на intl-аккаунте не работает (проверено 2026-09-23).
-- Тесты: `apps/api/tests/assistant.test.cjs` (фейковые LLM/каталог/веб).
+- `assistant-llm.client.ts` — DashScope compatible-mode `/chat/completions` с function calling (`ALIBABA_API_KEY`, `ASSISTANT_MODEL`, по умолчанию `deepseek-v4.1-flash`; на ключе есть qwen3.x, deepseek-v4*, kimi/glm — последние два отвергают параметры запроса); читает `prompt_tokens_details.cached_tokens`. Встроенный веб-поиск DashScope на intl-аккаунте не работает (проверено 2026-09-23).
+- Классы ЖК: `packages/shared/src/property-class.{mjs,cjs,d.cts}` — Комфорт-класс, Бизнес-класс, Премиум-класс, Делюкс + синонимы («элитка», «de luxe» → Делюкс). `objects.service` принимает только их (иначе 400; старое нестандартное значение живёт, пока его не меняют). `apps/api/scripts/assistant-class-suggestions.cjs` — `suggest` (модель предлагает класс ЖК без класса, CSV) и `apply` (пишет проверенный CSV с audit log; без `--write` — dry run).
+- Тесты: `apps/api/tests/assistant.test.cjs` (фейковые LLM/каталог/веб, HTTP-гарды), `assistant-postgres.test.cjs` (SQL фильтров, карточка ЖК, журнал; нужен `ASSISTANT_TEST_DATABASE_URL` одноразовой БД после `prisma migrate deploy`).
+- Замер качества: `pnpm assistant:eval` — платный прогон набора `apps/api/tests/fixtures/assistant-eval/phase1.json` на живой модели и локальной БД, отчёт в `docs/helpr2/eval/`. `--dist <папка>` — прогнать другую сборку api (замер «до»), `--only id1,id2`, `--web`.
 
 ## Frontend: apps/web (~86 файлов src)
 
 - **Routing самописный, без библиотеки**: `App.tsx` (1554 строки) — весь routing, shell, LoginPage; `usePathname()` слушает popstate + перехват кликов по `<a>`; цепочка `pathname.startsWith(...)`.
-- Маршруты: `/login`, `/cabinet`, `/catalog` (+`/life`, `/comm`, `/map`), `/objects/:slug` (+`/lots/:unitId`), `/presentations` (+`/projects`), `/training/*`, `/admin/*` (objects, users, catalog-links, feeds, import, assistant-audit, training). Тяжёлые страницы — lazy(). Permission gates — только UX.
+- Маршруты: `/login`, `/cabinet`, `/catalog` (+`/life`, `/comm`, `/map`), `/objects/:slug` (+`/lots/:unitId`), `/presentations` (+`/projects`), `/training/*`, `/admin/*` (objects, users, catalog-links, feeds, import, assistant, training). Тяжёлые страницы — lazy(). Permission gates — только UX.
 - **Auth**: `auth/AuthProvider.tsx` — refresh через httpOnly cookie при mount, access token в памяти, single-flight refresh на 401, события `platforma-auth-updated/cleared`.
 - **API client — `admin/api.ts`** (имя обманчиво, это ОБЩИЙ клиент; не дублировать): `apiRequest`, Bearer, `credentials: include`, перевод ошибок на русский.
 - **Карта** (`src/map/`): MapLibre GL 6, стиль OpenFreeMap Liberty; фасад `PlatformMap.tsx` (155 строк: points/geometries/fullscreen/measurement/fallback-состояния); runtime config через `window.__PLATFORMA_RUNTIME_CONFIG__` (`/runtime-config.js`, можно выключить карту без ребилда); OpenMapTiles-специфика: amenity-слои, локализация подписей на ru, метро/МЦД фильтры. Миграция с Яндекс.Карт завершена (тест проверяет отсутствие YandexMap).
-- **Ассистент** (`src/assistant/`): плавающий draggable/resizable чат-виджет поверх shell (для `objects:read`), slug проекта из pathname, polling заданий раз в секунду, карточки лотов Platforma и сайтов.
+- **Ассистент** (`src/assistant/`): плавающий draggable/resizable чат-виджет поверх shell (для `objects:read`), slug проекта из pathname, `conversationId` в sessionStorage, polling заданий раз в секунду, карточки лотов Platforma и сайтов, плашки источников с датой, 👍/👎 с комментарием. Админ-страница `admin/AssistantAdminPage.tsx` (`/admin/assistant`): расход за 30 дней, журнал ходов (фильтр «только 👎»), карточка хода с трассой инструментов.
 - **UI**: гибрид — глобальный `styles.css` (11k строк предметных классов) + Tailwind/shadcn точечно; темы светлая/`dark-premium`; i18n нет, всё жёстко на русском; lucide-react.
 - Production-статика: собственный `server.mjs` (gzip/brotli, SPA-fallback, runtime-config из env).
 - Большие файлы (styles.css 11k, ObjectDetailPage 2.9k, CatalogPage 2.8k, App.tsx 1.5k) — осознанная политика «цельный читаемый файл».
@@ -108,7 +112,7 @@ PostgreSQL + PostGIS (`searchPoint` geography(Point,4326)) + pgvector. Доме�
 - Файлы: File (LOCAL/MINIO), FileVariant (THUMBNAIL/CARD/DETAIL), ObjectImage, ObjectFile.
 - Презентации: LotPresentation*, ProjectPresentation*.
 - Training (~20 моделей): Project/KnowledgeVersion/Assignment, Question/Fact/Criterion, Attempt→AttemptQuestion→Answer→AnswerSegment, AiUsageEvent, Material(+Revision/Operation), AudioStorageEntry, DeletionManifest, TelegramAccount/LinkToken/Outbox.
-- Ассистент v1 (~25 моделей `Assistant*`) — архивные таблицы, новый код их не использует.
+- Ассистент: `AssistantTurn` (журнал v2). Модели v1 (~25 `Assistant*`) — архивные таблицы; новый код читает только `AssistantObjectMetroRouteFact` и `AssistantMetroAccessPoint`.
 - Аудит: AuditLog, ImportReport (wp-import журнал).
 
 ## Импорты
