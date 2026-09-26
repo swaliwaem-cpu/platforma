@@ -386,3 +386,28 @@ test('assistant jobs belong to their owner and one runs at a time per user', asy
   assert.equal(finished.answer.text, 'Готово');
   service.onModuleDestroy();
 });
+
+test('eval checks compare tool arguments, projects and answer words', () => {
+  const { checkCase } = require('../scripts/assistant-eval.cjs');
+  const calls = [
+    { name: 'find_projects', args: { query: 'ЖК Веер 2' } },
+    { name: 'search_lots', args: { propertyClasses: ['Делюкс', 'Премиум-класс'], budgetMaxRub: 300000000, district: 'Хамовники' } },
+  ];
+  const answer = { text: 'Нашёл лоты в Делюксе.', lots: [{ projectTitle: 'Клубный квартал Фрунзенская набережная' }], sources: [] };
+
+  const checks = checkCase({
+    tools: [
+      { name: 'find_projects', args: { query: 'веер' } },
+      { name: 'search_lots', args: { propertyClasses: ['Делюкс'], budgetMaxRub: 300000000, district: 'Хамовник' } },
+      { name: 'search_lots', args: { budgetMaxRub: 200000000 } },
+      { name: 'get_project_facts' },
+    ],
+    notTools: ['web_search', 'find_projects'],
+    projectsInclude: ['фрунзенская'],
+    projectsExclude: ['Веер'],
+    textIncludes: [['делюкс', 'элит'], 'отделк'],
+    textExcludes: ['lotId'],
+  }, { answer, calls });
+
+  assert.deepEqual(checks.map((check) => check.passed), [true, true, false, false, true, false, true, true, true, false, true]);
+});

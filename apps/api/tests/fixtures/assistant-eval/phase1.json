@@ -1,0 +1,357 @@
+{
+  "version": "phase1-draft-2026-09-26",
+  "notes": "Черновик набора для этапа 1. Проверки: tools — инструмент должен вызваться хотя бы раз с такими аргументами (строки сравниваются вхождением без регистра, массивы — все ожидаемые элементы есть, числа — точно); notTools — инструменты, которых быть не должно; projectsInclude/projectsExclude — подстроки названий ЖК в карточках, источниках и тексте ответа; textIncludes — каждое правило обязательно, массив внутри правила означает «любое из»; textExcludes — запрещённые слова. Названия ЖК взяты из локальной базы, их нужно сверить.",
+  "cases": [
+    {
+      "id": "class-01",
+      "group": "classes",
+      "question": "Элитка в Хамовниках",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "district": "Хамовник" } }]
+      }
+    },
+    {
+      "id": "class-02",
+      "group": "classes",
+      "question": "Премиум до 150 млн",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Премиум-класс"], "budgetMaxRub": 150000000 } }]
+      }
+    },
+    {
+      "id": "class-03",
+      "group": "classes",
+      "question": "Чем бизнес-класс отличается от премиума?",
+      "expect": {
+        "notTools": ["search_lots", "web_search"],
+        "textIncludes": [["локац", "располож", "район"], ["потол"], ["цен", "стоимост"]]
+      }
+    },
+    {
+      "id": "class-04",
+      "group": "classes",
+      "question": "Покажи de luxe трёшки",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "rooms": [3] } }]
+      }
+    },
+    {
+      "id": "class-05",
+      "group": "classes",
+      "question": "Нужен комфорт-класс, студия до 15 млн",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Комфорт-класс"], "rooms": [0], "budgetMaxRub": 15000000 } }]
+      }
+    },
+    {
+      "id": "class-06",
+      "group": "classes",
+      "question": "Бизнес или премиум у Шаболовской, двушка",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Бизнес-класс", "Премиум-класс"], "metro": "Шаболовск", "rooms": [2] } }]
+      }
+    },
+    {
+      "id": "class-07",
+      "group": "classes",
+      "question": "Что такое элитная недвижимость и чем она отличается от премиума?",
+      "expect": {
+        "notTools": ["search_lots"],
+        "textIncludes": [["делюкс", "de luxe", "элит"], ["премиум"]]
+      }
+    },
+    {
+      "id": "class-08",
+      "group": "classes",
+      "question": "Элитное жильё с отделкой до 300 млн",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "finishing": ["с отделкой"], "budgetMaxRub": 300000000 } }]
+      }
+    },
+    {
+      "id": "filter-01",
+      "group": "filters",
+      "question": "Элитка в ЦАО до 300 млн с отделкой, до 10 минут пешком от метро",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "finishing": ["с отделкой"], "budgetMaxRub": 300000000, "metroWalkMinutesMax": 10 } }]
+      }
+    },
+    {
+      "id": "filter-02",
+      "group": "filters",
+      "question": "Двушка без отделки до 25 млн",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "finishing": ["без отделки"], "rooms": [2], "budgetMaxRub": 25000000 } }]
+      }
+    },
+    {
+      "id": "filter-03",
+      "group": "filters",
+      "question": "Однушки в white box",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "finishing": ["white box"], "rooms": [1] } }]
+      }
+    },
+    {
+      "id": "filter-04",
+      "group": "filters",
+      "question": "Квартира с мебелью, можно сразу заехать",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "finishing": ["с мебелью"] } }]
+      }
+    },
+    {
+      "id": "filter-05",
+      "group": "filters",
+      "question": "Лоты дешевле 400 тысяч за метр",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "pricePerM2Max": 400000 } }]
+      }
+    },
+    {
+      "id": "filter-06",
+      "group": "filters",
+      "question": "Цена за квадрат от 1 до 1,5 млн, трёшки",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "pricePerM2Min": 1000000, "pricePerM2Max": 1500000, "rooms": [3] } }]
+      }
+    },
+    {
+      "id": "filter-07",
+      "group": "filters",
+      "question": "Студия в 5 минутах пешком от метро",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "rooms": [0], "metroWalkMinutesMax": 5 } }]
+      }
+    },
+    {
+      "id": "filter-08",
+      "group": "filters",
+      "question": "Что уже сдано из двушек до 40 млн?",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "completed": true, "rooms": [2], "budgetMaxRub": 40000000 } }]
+      }
+    },
+    {
+      "id": "filter-09",
+      "group": "filters",
+      "question": "Однушки со сдачей не раньше 2028 года",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "completionYearMin": 2028, "rooms": [1] } }]
+      }
+    },
+    {
+      "id": "filter-10",
+      "group": "filters",
+      "question": "Премиум в пешей доступности от метро, минут 15, с отделкой",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Премиум-класс"], "metroWalkMinutesMax": 15, "finishing": ["с отделкой"] } }]
+      }
+    },
+    {
+      "id": "facts-01",
+      "group": "facts",
+      "question": "Какой класс у ЖК Веер 2?",
+      "expect": {
+        "tools": [{ "name": "find_projects", "args": { "query": "Веер" } }, { "name": "get_project_facts" }],
+        "projectsInclude": ["Веер"]
+      }
+    },
+    {
+      "id": "facts-02",
+      "group": "facts",
+      "question": "Какая отделка в Режиссёре?",
+      "expect": {
+        "tools": [{ "name": "find_projects", "args": { "query": "Режисс" } }, { "name": "get_project_facts" }],
+        "projectsInclude": ["Режисс"],
+        "textIncludes": [["отделк", "white box", "предчистов"]]
+      }
+    },
+    {
+      "id": "facts-03",
+      "group": "facts",
+      "question": "Какие потолки в Лаврушинском?",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["Лаврушинск"],
+        "textIncludes": [["м", "метр", "нет данных"]]
+      }
+    },
+    {
+      "id": "facts-04",
+      "group": "facts",
+      "question": "Сколько стоит метр в Sky Garden?",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["Sky Garden"],
+        "textIncludes": [["₽", "руб", "тыс", "млн"]]
+      }
+    },
+    {
+      "id": "facts-05",
+      "group": "facts",
+      "question": "Сколько идти до метро от Фрунзенской набережной?",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["Фрунзенская набережная"],
+        "textIncludes": [["мин", "нет данных"]]
+      }
+    },
+    {
+      "id": "facts-06",
+      "group": "facts",
+      "question": "Расскажи про архитектуру LIFE TIME",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["LIFE TIME"]
+      }
+    },
+    {
+      "id": "facts-07",
+      "group": "facts",
+      "question": "Когда сдача у Amber City и кто застройщик?",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["Amber City"],
+        "textIncludes": [["ФСК", "FSK"]]
+      }
+    },
+    {
+      "id": "facts-08",
+      "group": "facts",
+      "question": "Какая инфраструктура в Тишинском бульваре?",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["Тишинский"]
+      }
+    },
+    {
+      "id": "facts-09",
+      "group": "facts",
+      "question": "Сколько этажей и какие площади в Sydney City?",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["Sydney City"],
+        "textIncludes": [["этаж"], ["м²", "м2", "кв"]]
+      }
+    },
+    {
+      "id": "facts-10",
+      "group": "facts",
+      "question": "Премиум или бизнес Rotterdam? И какая там отделка",
+      "expect": {
+        "tools": [{ "name": "get_project_facts" }],
+        "projectsInclude": ["Rotterdam"],
+        "textIncludes": [["класс", "нет данных", "не указан"], ["отделк", "white box"]]
+      }
+    },
+    {
+      "id": "term-01",
+      "group": "terms",
+      "question": "Что такое эскроу-счёт?",
+      "expect": {
+        "notTools": ["search_lots", "web_search"],
+        "textIncludes": [["банк"], ["застройщик"]]
+      }
+    },
+    {
+      "id": "term-02",
+      "group": "terms",
+      "question": "Объясни, что такое ДДУ",
+      "expect": {
+        "notTools": ["search_lots", "web_search"],
+        "textIncludes": [["долев"], ["214"]]
+      }
+    },
+    {
+      "id": "term-03",
+      "group": "terms",
+      "question": "White box — это что?",
+      "expect": {
+        "notTools": ["search_lots"],
+        "textIncludes": [["предчистов", "стяжк", "штукатур"]]
+      }
+    },
+    {
+      "id": "term-04",
+      "group": "terms",
+      "question": "Кому дают семейную ипотеку?",
+      "expect": {
+        "notTools": ["search_lots"],
+        "textIncludes": [["дет", "ребен", "ребён"]],
+        "textExcludes": ["6% годовых", "6 % годовых"]
+      }
+    },
+    {
+      "id": "term-05",
+      "group": "terms",
+      "question": "Чем апартаменты отличаются от квартиры?",
+      "expect": {
+        "notTools": ["search_lots"],
+        "textIncludes": [["прописк", "регистрац"], ["нежил", "коммерч"]]
+      }
+    },
+    {
+      "id": "term-06",
+      "group": "terms",
+      "question": "Что такое переуступка?",
+      "expect": {
+        "notTools": ["search_lots"],
+        "textIncludes": [["прав", "требован"]]
+      }
+    },
+    {
+      "id": "regress-01",
+      "group": "regression",
+      "question": "Однушка до 20 млн в ЖК Веер 2",
+      "expect": {
+        "tools": [
+          { "name": "find_projects", "args": { "query": "Веер" } },
+          { "name": "search_lots", "args": { "rooms": [1], "budgetMaxRub": 20000000 } }
+        ],
+        "projectsInclude": ["Веер"]
+      }
+    },
+    {
+      "id": "regress-02",
+      "group": "regression",
+      "question": "Двушки у метро Шаболовская до 40 млн",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "metro": "Шаболовск", "rooms": [2], "budgetMaxRub": 40000000 } }]
+      }
+    },
+    {
+      "id": "regress-03",
+      "group": "regression",
+      "question": "Что сейчас продаётся в Lion Gate?",
+      "expect": {
+        "tools": [{ "name": "find_projects", "args": { "query": "Lion Gate" } }]
+      }
+    },
+    {
+      "id": "regress-04",
+      "group": "regression",
+      "question": "Евродвушка до 30 млн",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "rooms": [1, 2], "budgetMaxRub": 30000000 } }]
+      }
+    },
+    {
+      "id": "regress-05",
+      "group": "regression",
+      "question": "Студия до 12 млн",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "rooms": [0], "budgetMaxRub": 12000000 } }],
+        "textExcludes": ["search_lots", "lotId", "projectId"]
+      }
+    },
+    {
+      "id": "regress-06",
+      "group": "regression",
+      "question": "Трёшки от ФСК, этаж от 20-го",
+      "expect": {
+        "tools": [{ "name": "search_lots", "args": { "developer": "ФСК", "rooms": [3], "floorMin": 20 } }]
+      }
+    }
+  ]
+}
