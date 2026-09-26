@@ -2,16 +2,16 @@
 // It changes when brokers correct the wording or the class medians are refreshed, not when the
 // agent logic does, so it lives apart from the prompt code.
 //
-// The price-per-m² medians (median over projects of each project's median) are a draft from the
-// local copy of the database on 2026-09-26, with classes filled in from the WordPress tags. Replace them with a production SELECT before
-// release, and refresh them every few months: prices drift and the text does not.
+// The price-per-m² medians are the median over projects of each project's median, taken from
+// production on 2026-09-26 (available residential lots of published projects). Refresh them every
+// few months: prices drift and the text does not.
 
 export const assistantMarketKnowledge = `
 СПРАВОЧНИК РЫНКА (общие понятия; цифры по конкретным ЖК и лотам бери только из инструментов)
 
 Классы жилья. В Platforma четыре класса: Комфорт-класс, Бизнес-класс, Премиум-класс, Делюкс.
 Синонимы: «комфорт» — Комфорт-класс; «бизнес» — Бизнес-класс; «премиум» — Премиум-класс; «элит», «элитка», «элитное жильё», «de luxe», «делюкс», «люкс» — Делюкс. Эконом-класса в Platforma нет.
-Типичная цена за м² в Platforma — медиана по ЖК (черновик по базе на 26.09.2026, ориентир, а не правило): Комфорт ≈ 0,35 млн ₽; Бизнес ≈ 0,61 млн ₽; Премиум ≈ 0,75 млн ₽; Делюкс ≈ 2,4 млн ₽.
+Типичная цена за м² в Platforma — медиана по ЖК на 26.09.2026 (ориентир, а не правило): Комфорт ≈ 0,34 млн ₽; Бизнес ≈ 0,61 млн ₽; Премиум ≈ 0,80 млн ₽; Делюкс ≈ 2,9 млн ₽.
 - Комфорт-класс: спальные и периферийные районы, крупные кварталы, типовая архитектура, потолки 2,7–2,85 м, много студий и однушек, открытые дворы, парковка чаще наземная или общая подземная, отделка часто есть в цене.
 - Бизнес-класс: хорошие районы внутри ТТК и у метро, в том числе районы КРТ; индивидуальная архитектура, потолки от 2,9–3 м, закрытые дворы без машин, подземный паркинг, лобби, коммерция на первых этажах; отделка опциональна (white box или с отделкой).
 - Премиум-класс: центр и престижные районы (Хамовники, Пресня, Замоскворечье, Якиманка, Арбат), меньше квартир в проекте, потолки от 3,1–3,3 м, большие площади и видовые квартиры, консьерж-сервис, высокое соотношение машино-мест на квартиру, архитектурные бюро с именем, чаще без отделки или white box.

@@ -70,6 +70,7 @@ if (!databaseUrl) {
     await unit('a3', deluxe.id, { rooms: 2, area: 100, price: 280_000_000, pricePerMeter: 2_800_000 }, null);
     await unit('b1', business.id, { rooms: 1, area: 40, price: 20_000_000, pricePerMeter: 500_000 }, { decoration: '30' });
     await unit('b2', business.id, { rooms: 1, area: 40, price: 22_000_000, pricePerMeter: 550_000, status: 'SOLD' }, { decoration: 'WB' });
+    await unit('b3', business.id, { rooms: 2, area: 60, price: 30_000_000, pricePerMeter: 500_000 }, { renovation: 'Предчистовая' });
 
     const [accessPoint] = await prisma.$queryRaw`
       INSERT INTO assistant_metro_access_points
@@ -118,14 +119,14 @@ if (!databaseUrl) {
 
   test('class, price per m² and metro walk filters run in SQL', { concurrency: false }, async () => {
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ propertyClasses: ['Делюкс'] }), now)), ['a1', 'a2', 'a3']);
-    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ propertyClasses: ['Бизнес-класс'] }), now)), ['b1']);
-    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ pricePerM2Max: 600_000 }), now)), ['b1']);
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ propertyClasses: ['Бизнес-класс'] }), now)), ['b1', 'b3']);
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ pricePerM2Max: 600_000 }), now)), ['b1', 'b3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ pricePerM2Min: 2_600_000, pricePerM2Max: 2_850_000 }), now)), ['a3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ metroWalkMinutesMax: 10 }), now)), ['a1', 'a2', 'a3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ metroWalkMinutesMax: 5 }), now)), []);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completed: true }), now)), ['a1', 'a2', 'a3']);
-    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completed: false }), now)), ['b1']);
-    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completionYearMin: 2028 }), now)), ['b1']);
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completed: false }), now)), ['b1', 'b3']);
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ completionYearMin: 2028 }), now)), ['b1', 'b3']);
   });
 
   test('finishing is normalized from feed values and lots without it are counted apart', { concurrency: false }, async () => {
@@ -136,7 +137,7 @@ if (!databaseUrl) {
     assert.equal(furnished.lots[0].pricePerM2Rub, 2_900_000);
     assert.equal(furnished.lotsWithoutFinishingData, 1);
 
-    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['white box'] }), now)), ['b1']);
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['white box'] }), now)), ['b1', 'b3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['без отделки', 'с отделкой'] }), now)), ['a1', 'a2']);
   });
 

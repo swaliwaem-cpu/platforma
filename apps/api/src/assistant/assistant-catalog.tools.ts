@@ -387,8 +387,8 @@ const lotCeilingHeight = Prisma.sql`CASE
   THEN replace(rd.details_json->>'ceilingHeight', ',', '.')::numeric
 END`;
 
-// Feeds describe finishing in their own words; every value seen in the feeds (checked on
-// 2026-09-26) maps to one of four answers. FSK sends codes: 0 — без отделки, 30 — предчистовая
+// Feeds describe finishing in their own words; every value seen in the local and production
+// feeds (checked on 2026-09-26) maps to one of four answers. FSK sends codes: 0 — без отделки, 30 — предчистовая
 // (matched against fsk.ru), 10 — чистовая (not confirmed on the site yet).
 const finishingByFeedValue: ReadonlyArray<readonly [string, AssistantFinishing]> = [
   ['без отделки', 'без отделки'],
@@ -399,8 +399,10 @@ const finishingByFeedValue: ReadonlyArray<readonly [string, AssistantFinishing]>
   ['white box', 'white box'],
   ['wb', 'white box'],
   ['предчистовая отделка', 'white box'],
+  ['предчистовая', 'white box'],
   ['30', 'white box'],
   ['чистовая отделка', 'с отделкой'],
+  ['чистовая', 'с отделкой'],
   ['с отделкой', 'с отделкой'],
   ['отделка', 'с отделкой'],
   ['под ключ', 'с отделкой'],
