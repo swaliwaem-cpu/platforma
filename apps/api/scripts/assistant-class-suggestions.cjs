@@ -2,8 +2,9 @@
 //
 //   node --env-file-if-exists=apps/api/.env apps/api/scripts/assistant-class-suggestions.cjs suggest [--limit 20] [--out file.csv]
 //     Paid: one model call per project. Writes a CSV with an empty «final» column.
-//   node --env-file-if-exists=apps/api/.env apps/api/scripts/assistant-class-suggestions.cjs apply --file file.csv [--actor-email a@b] [--overwrite] [--write]
-//     Sets the class where «final» is filled. Without --write it only prints what would change.
+//   node --env-file-if-exists=apps/api/.env apps/api/scripts/assistant-class-suggestions.cjs apply --file file.csv [--overwrite] [--write --actor-email a@b]
+//     Sets the class where «final» is filled. Without --write it only prints what would change;
+//     --write needs the admin who reviewed the CSV, for the audit log.
 //     A project that got a class in the meantime is skipped unless --overwrite is given.
 //
 // Build apps/api first (pnpm build:api): the script uses the compiled model client.
@@ -43,20 +44,24 @@ async function suggest(prisma, options) {
   const llm = new AssistantLlmClient();
   if (!llm.isConfigured()) throw new Error('ALIBABA_API_KEY is not set');
 
+  // Median over projects (each project's own median), so a few big projects do not set the level.
   const medians = await prisma.$queryRaw`
-    SELECT o.property_class AS "propertyClass",
-      percentile_cont(0.5) WITHIN GROUP (ORDER BY ${lotPricePerMeterSql()})::bigint AS median,
-      COUNT(DISTINCT o.id)::int AS projects
-    FROM feed_units fu
-    JOIN feed_sources fs ON fs.id = fu.source_id
-    JOIN real_estate_objects o ON o.id = fu.object_id
-    WHERE ${availableLotSql()} AND o.property_class IS NOT NULL
-      AND o.status = 'published'::object_status AND o.deleted_at IS NULL
-    GROUP BY o.property_class
+    SELECT "propertyClass", percentile_cont(0.5) WITHIN GROUP (ORDER BY median)::bigint AS median, COUNT(*)::int AS projects
+    FROM (
+      SELECT o.property_class AS "propertyClass",
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY ${lotPricePerMeterSql()}) AS median
+      FROM feed_units fu
+      JOIN feed_sources fs ON fs.id = fu.source_id
+      JOIN real_estate_objects o ON o.id = fu.object_id
+      WHERE ${availableLotSql()} AND o.property_class IS NOT NULL
+        AND o.status = 'published'::object_status AND o.deleted_at IS NULL
+      GROUP BY o.id, o.property_class
+    ) per_project
+    GROUP BY "propertyClass"
   `;
   const projects = await prisma.$queryRaw`
     SELECT o.id::text AS id, o.title, o.address, o.description, o.short_description AS "shortDescription",
-      o.ceiling_height AS "ceilingHeight", o.features_json->'taxonomy' AS taxonomy,
+      o.ceiling_height AS "ceilingHeight", o.features_json AS features,
       COALESCE(o.feed_price_per_meter_from, o.price_per_meter_from)::bigint AS "pricePerMeterFrom",
       d.name AS developer, l.name AS district,
       (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY ${lotPricePerMeterSql()})::bigint
@@ -107,7 +112,7 @@ async function suggestClass(llm, project, medianText) {
     `Цена за м² по доступным лотам (медиана): ${project.medianPricePerMeter ? `${formatNumber(project.medianPricePerMeter)} ₽` : 'нет данных'}`,
     `Цена за м² от (карточка): ${project.pricePerMeterFrom ? `${formatNumber(project.pricePerMeterFrom)} ₽` : 'нет данных'}`,
     `Потолки: ${project.ceilingHeight ?? 'нет данных'}`,
-    `Метки сайта: ${project.taxonomy ? JSON.stringify(project.taxonomy).slice(0, 800) : 'нет'}`,
+    `Характеристики и метки сайта: ${project.features ? JSON.stringify(project.features).slice(0, maxDescriptionChars) : 'нет'}`,
     `Описание: ${plainText(project.description || project.shortDescription || '').slice(0, maxDescriptionChars) || 'нет'}`,
   ].join('\n');
   const response = await llm.complete({
@@ -154,6 +159,8 @@ async function apply(prisma, options) {
     ? await prisma.user.findUnique({ where: { email: options.actorEmail }, select: { id: true } })
     : null;
   if (options.actorEmail && !actor) throw new Error(`user ${options.actorEmail} not found`);
+  // Like an edit in the admin, every written change names the admin who approved it.
+  if (options.write && !actor) throw new Error('--write needs --actor-email of the admin who reviewed the CSV');
 
   const summary = { updated: 0, unchanged: 0, skipped: 0, invalid: 0 };
   for (const row of rows) {
@@ -190,7 +197,7 @@ async function apply(prisma, options) {
         // Same audit shape as an edit in the admin, marked with where it came from.
         prisma.auditLog.create({
           data: {
-            actorUserId: actor?.id ?? null,
+            actorUserId: actor.id,
             action: 'object.update',
             entityType: 'object',
             entityId: object.id,

@@ -41,9 +41,12 @@ export function AssistantAdminPage({ onBack }: AssistantAdminPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const detailRequestRef = useRef<AbortController | null>(null);
+  const moreRequestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
+    // A page still loading for the previous filter must not land in the new list.
+    moreRequestRef.current?.abort();
     const controller = new AbortController();
     setIsLoading(true);
     setError(null);
@@ -65,18 +68,29 @@ export function AssistantAdminPage({ onBack }: AssistantAdminPageProps) {
     return () => controller.abort();
   }, [accessToken, onlyDown, reloadKey]);
 
-  useEffect(() => () => detailRequestRef.current?.abort(), []);
+  useEffect(() => () => {
+    detailRequestRef.current?.abort();
+    moreRequestRef.current?.abort();
+  }, []);
 
   async function loadMore() {
     if (!accessToken || !nextCursor || isLoadingMore) return;
+    const controller = new AbortController();
+    moreRequestRef.current = controller;
     setIsLoadingMore(true);
     try {
-      const response = await getAssistantAdminTurns(accessToken, { rating: onlyDown ? 'DOWN' : undefined, cursor: nextCursor });
+      const response = await getAssistantAdminTurns(
+        accessToken,
+        { rating: onlyDown ? 'DOWN' : undefined, cursor: nextCursor },
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
       setTurns((current) => [...current, ...response.items]);
       setNextCursor(response.nextCursor);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить журнал');
+      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : 'Не удалось загрузить журнал');
     } finally {
+      if (moreRequestRef.current === controller) moreRequestRef.current = null;
       setIsLoadingMore(false);
     }
   }

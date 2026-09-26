@@ -319,24 +319,9 @@ export class AssistantCatalogTools {
       area_asc: Prisma.sql`fu.area ASC NULLS LAST`,
       area_desc: Prisma.sql`fu.area DESC NULLS LAST`,
     }[input.sort ?? 'price_asc'] ?? Prisma.sql`${lotPrice} ASC`;
-    const from = Prisma.sql`
-      FROM feed_units fu
-      JOIN feed_sources fs ON fs.id = fu.source_id
-      JOIN real_estate_objects o ON o.id = fu.object_id
-      LEFT JOIN developers d ON d.id = o.developer_id
-      LEFT JOIN feed_residential_unit_details rd ON rd.unit_id = fu.id
-      WHERE ${Prisma.join(conditions, ' AND ')}
-    `;
-
+    const from = lotSearchFrom(conditions);
     const withoutFinishingFrom = input.finishing?.length
-      ? Prisma.sql`
-        FROM feed_units fu
-        JOIN feed_sources fs ON fs.id = fu.source_id
-        JOIN real_estate_objects o ON o.id = fu.object_id
-        LEFT JOIN developers d ON d.id = o.developer_id
-        LEFT JOIN feed_residential_unit_details rd ON rd.unit_id = fu.id
-        WHERE ${Prisma.join([...createLotConditions({ ...input, finishing: undefined }, now), Prisma.sql`${lotFinishing} IS NULL`], ' AND ')}
-      `
+      ? lotSearchFrom([...createLotConditions({ ...input, finishing: undefined }, now), Prisma.sql`${lotFinishing} IS NULL`])
       : null;
 
     const [countRows, withoutFinishingRows, rows] = await Promise.all([
@@ -442,6 +427,17 @@ const metroWalkSelect = {
   select: { durationSeconds: true, metroAccessPoint: { select: { stationName: true } } },
 } as const;
 
+function lotSearchFrom(conditions: Prisma.Sql[]) {
+  return Prisma.sql`
+    FROM feed_units fu
+    JOIN feed_sources fs ON fs.id = fu.source_id
+    JOIN real_estate_objects o ON o.id = fu.object_id
+    LEFT JOIN developers d ON d.id = o.developer_id
+    LEFT JOIN feed_residential_unit_details rd ON rd.unit_id = fu.id
+    WHERE ${Prisma.join(conditions, ' AND ')}
+  `;
+}
+
 function createLotConditions(input: AssistantLotSearchInput, now: Date) {
   const type = input.commercial ? 'commercial' : 'residential';
   const conditions = [
@@ -471,8 +467,10 @@ function createLotConditions(input: AssistantLotSearchInput, now: Date) {
     conditions.push(Prisma.sql`${lotCompletionYear} <= ${Math.trunc(input.completionYearMax)}`);
   }
   if (typeof input.completed === 'boolean') {
-    // A quarter counts as over once the next one has started; a year without a quarter ends in Q4.
-    const currentQuarter = now.getUTCFullYear() * 10 + Math.floor(now.getUTCMonth() / 3) + 1;
+    // A quarter counts as over once the next one has started in Moscow (UTC+3, no DST);
+    // a year without a quarter ends in Q4.
+    const moscow = new Date(now.getTime() + 3 * 60 * 60_000);
+    const currentQuarter = moscow.getUTCFullYear() * 10 + Math.floor(moscow.getUTCMonth() / 3) + 1;
     const lotQuarter = Prisma.sql`(${lotCompletionYear} * 10 + COALESCE(${lotCompletionQuarter}, 4))`;
     conditions.push(input.completed
       ? Prisma.sql`${lotQuarter} < ${currentQuarter}`
@@ -486,6 +484,8 @@ function createLotConditions(input: AssistantLotSearchInput, now: Date) {
   }
   if (input.finishing?.length) {
     const finishing = [...new Set(input.finishing.filter((value) => assistantFinishings.includes(value)))];
+    // A furnished lot is finished too.
+    if (finishing.includes('с отделкой') && !finishing.includes('с мебелью')) finishing.push('с мебелью');
     conditions.push(finishing.length ? Prisma.sql`${lotFinishing} IN (${Prisma.join(finishing)})` : Prisma.sql`FALSE`);
   }
   if (isNumber(input.metroWalkMinutesMax)) {

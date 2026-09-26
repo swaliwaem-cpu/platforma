@@ -63,7 +63,7 @@ export type AssistantAgentDependencies = {
 type TurnState = {
   platformLots: Map<string, AssistantPlatformLot>;
   projectFacts: Map<string, AssistantProjectFacts>;
-  pages: Map<string, AssistantOpenedPage>;
+  pages: Map<string, AssistantOpenedPage & { openedAt: string }>;
   telemetry: AssistantAgentTelemetry;
 };
 
@@ -107,7 +107,7 @@ export async function runAssistantAgent(
     const answerCall = response.toolCalls.find((toolCall) => toolCall.name === 'give_answer');
     if (answerCall) {
       context.onStep?.('Формирую ответ');
-      return finish(buildAnswer(parseArguments(answerCall), state, context.now), state);
+      return finish(buildAnswer(parseArguments(answerCall), state), state);
     }
     if (response.toolCalls.length === 0) {
       // Qwen sometimes writes its answer (or a give_answer call) as plain text; the next call
@@ -118,7 +118,7 @@ export async function runAssistantAgent(
         messages.push({ role: 'user', content: 'Оформи этот ответ вызовом give_answer.' });
         continue;
       }
-      return finish(buildAnswer({ text: stripPseudoToolCalls(response.content ?? '') }, state, context.now), state);
+      return finish(buildAnswer({ text: stripPseudoToolCalls(response.content ?? '') }, state), state);
     }
 
     messages.push({ role: 'assistant', content: response.content, toolCalls: response.toolCalls });
@@ -251,7 +251,7 @@ async function executeTool(
         if (state.pages.size >= maxOpenedPages) return { error: 'Лимит открытых страниц исчерпан. Отвечай по найденному.' };
         context.onStep?.(`Открываю ${hostOf(url) ?? url}`);
         const page = await dependencies.web.openPage(url, context.signal);
-        state.pages.set(page.url, page);
+        state.pages.set(page.url, { ...page, openedAt: new Date().toISOString() });
         state.telemetry.openedPages = state.pages.size;
         return page;
       }
@@ -264,7 +264,7 @@ async function executeTool(
   }
 }
 
-function buildAnswer(args: Record<string, unknown>, state: TurnState, now: Date): AssistantAnswer {
+function buildAnswer(args: Record<string, unknown>, state: TurnState): AssistantAnswer {
   const text = readString(stripPseudoToolCalls(readString(args.text) ?? ''))?.slice(0, 3_000)
     ?? 'Не получилось сформулировать ответ. Попробуйте переформулировать запрос.';
   const lots: AssistantLot[] = [];
@@ -285,7 +285,7 @@ function buildAnswer(args: Record<string, unknown>, state: TurnState, now: Date)
   return {
     text,
     lots: shownLots,
-    sources: collectSources(state, shownLots, now),
+    sources: collectSources(state, shownLots),
     historyNote: createHistoryNote(text, shownLots),
     turnId: null,
   };
@@ -293,7 +293,7 @@ function buildAnswer(args: Record<string, unknown>, state: TurnState, now: Date)
 
 // Sources are what this turn actually used: project cards it read, the projects of the lots it
 // shows (not every lot it looked at) and the sites it opened. One entry per project, latest date.
-function collectSources(state: TurnState, shownLots: AssistantLot[], now: Date): AssistantSource[] {
+function collectSources(state: TurnState, shownLots: AssistantLot[]): AssistantSource[] {
   const projects = new Map<string, AssistantSource>();
   const addProject = (title: string, url: string, date: string) => {
     const existing = projects.get(url);
@@ -310,7 +310,7 @@ function collectSources(state: TurnState, shownLots: AssistantLot[], now: Date):
     kind: 'WEB',
     title: page.title || (hostOf(page.url) ?? page.url),
     url: page.url,
-    date: now.toISOString(),
+    date: page.openedAt,
   }));
   return [...projects.values(), ...sites];
 }
@@ -432,16 +432,18 @@ const assistantFinishingList = 'без отделки, white box, с отдел�
 
 // Words brokers and feeds use for finishing, by the start of the word.
 const finishingByWordStart: ReadonlyArray<readonly [string, AssistantFinishing]> = [
-  ['без', 'без отделки'],
+  ['безотдел', 'без отделки'],
+  ['безремонт', 'без отделки'],
   ['черн', 'без отделки'],
   ['white', 'white box'],
-  ['whitebox', 'white box'],
   ['wb', 'white box'],
   ['вайт', 'white box'],
   ['предчист', 'white box'],
   ['мебел', 'с мебелью'],
   ['смебел', 'с мебелью'],
   ['сотдел', 'с отделкой'],
+  ['сремонт', 'с отделкой'],
+  ['ремонт', 'с отделкой'],
   ['чист', 'с отделкой'],
   ['отдел', 'с отделкой'],
   ['подключ', 'с отделкой'],

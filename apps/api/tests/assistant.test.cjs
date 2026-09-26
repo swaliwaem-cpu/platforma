@@ -211,7 +211,8 @@ test('web lots survive only for opened sites and keep only prices seen on the pa
     ['WEB', 'sminex.com', 7_087_510_000],
     ['WEB', 'sminex.com', null],
   ]);
-  assert.deepEqual(result.answer.sources, [{ kind: 'WEB', title: 'Подбор', url: pageUrl, date: '2026-09-23T10:00:00.000Z' }]);
+  assert.deepEqual(result.answer.sources.map(({ date: _date, ...source }) => source), [{ kind: 'WEB', title: 'Подбор', url: pageUrl }]);
+  assert.ok(Date.parse(result.answer.sources[0].date) > Date.parse('2026-09-24T00:00:00Z'));
 });
 
 test('a web lot that duplicates a shown Platforma lot is dropped', async () => {
@@ -502,7 +503,7 @@ test('search_lots turns class synonyms, finishing words and new limits into cata
     {
       toolCalls: [call('search_lots', {
         propertyClasses: ['элитка', 'эконом'],
-        finishing: ['WB', 'чистовая', 'мрамор'],
+        finishing: ['WB', 'чистовая', 'с ремонтом', 'без мебели', 'мрамор'],
         pricePerM2Min: '300 000',
         pricePerM2Max: 1_500_000,
         metroWalkMinutesMax: 10,
@@ -528,6 +529,7 @@ test('search_lots turns class synonyms, finishing words and new limits into cata
   assert.equal(toolResult.lotsWithoutFinishingData, 12);
   assert.match(toolResult.note, /эконом/);
   assert.match(toolResult.note, /мрамор/);
+  assert.match(toolResult.note, /без мебели/);
   assert.deepEqual(toolResult.lots[0], {
     lotId: veerLot.unitId,
     project: veerLot.projectTitle,
@@ -614,9 +616,9 @@ test('sources list the project cards read, the projects of shown lots and opened
 
   const result = await runAssistantAgent({ llm, catalog, web }, context('расскажи про Веер 2'));
 
-  assert.deepEqual(result.answer.sources, [
+  assert.deepEqual(result.answer.sources.map(({ date, ...source }) => (source.kind === 'WEB' ? source : { ...source, date })), [
     { kind: 'PLATFORMA_PROJECT', title: 'Жилой комплекс Веер 2', url: '/objects/veer-2', date: '2026-09-25T07:00:00.000Z' },
-    { kind: 'WEB', title: 'mr-group.ru', url: pageUrl, date: '2026-09-23T10:00:00.000Z' },
+    { kind: 'WEB', title: 'mr-group.ru', url: pageUrl },
   ]);
 });
 

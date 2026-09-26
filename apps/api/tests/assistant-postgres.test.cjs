@@ -137,7 +137,7 @@ if (!databaseUrl) {
     assert.equal(furnished.lotsWithoutFinishingData, 1);
 
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['white box'] }), now)), ['b1']);
-    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['без отделки', 'с отделкой'] }), now)), ['a1']);
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['без отделки', 'с отделкой'] }), now)), ['a1', 'a2']);
   });
 
   test('project facts come from the card and the available lots', { concurrency: false }, async () => {
