@@ -99,10 +99,9 @@ async function verifyCatalogMap() {
     assert.deepEqual(walkingRouteRequests[0].origin, [55.79, 37.61]);
     assert.equal(walkingRouteRequests[0].destinations.length, 3);
     assert.equal(await northMarker.getAttribute('aria-pressed'), 'true');
-    await page.waitForFunction(
-      ({ selector, previous }) => document.querySelector(selector)?.textContent?.trim() !== previous,
-      { selector: '.catalog-map-list .table-meta span', previous: initialBoundsLabel },
-    );
+    // Selecting a visible marker keeps the user's zoom and position.
+    await page.waitForTimeout(500);
+    assert.equal(await mapList.locator('.table-meta span').first().innerText(), initialBoundsLabel);
     assert.equal(
       await page.getByRole('article', { name: 'Объект ЖК Северный' }).getByRole('link', { name: 'Подробнее' }).getAttribute('href'),
       '/objects/zhk-severnyy',

@@ -11,11 +11,13 @@
     "test:map:browser": "node tests/map-module.browser.mjs"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
     "@platforma/shared": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.14.0",
     "maplibre-gl": "^6.6.0",
+    "pbf": "^5.1.2",
     "radix-ui": "^1.4.3",
     "react": "19.2.5",
     "react-dom": "19.2.5",

@@ -5231,7 +5231,7 @@ tr.user-row--deactivated .text-button {
 }
 
 .catalog-map-panel .platform-map-shell[data-map-controls-position='top-left'] .maplibregl-ctrl-top-left {
-  top: 120px;
+  top: 74px;
 }
 
 .platform-map--measuring .platform-map-canvas,
@@ -5244,9 +5244,10 @@ tr.user-row--deactivated .text-button {
   z-index: 23;
   top: 16px;
   left: 16px;
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   max-width: calc(100% - 32px);
-  justify-items: start;
+  align-items: stretch;
   gap: 8px;
 }
 
@@ -5488,7 +5489,7 @@ tr.user-row--deactivated .text-button {
 .map-object-card {
   position: absolute;
   z-index: 21;
-  top: 120px;
+  top: 74px;
   left: 28px;
   display: grid;
   grid-template-rows: max-content max-content;
@@ -5496,7 +5497,7 @@ tr.user-row--deactivated .text-button {
   gap: 0;
   width: min(430px, calc(100% - 400px));
   min-width: 320px;
-  max-height: calc(100% - 136px);
+  max-height: calc(100% - 90px);
   overflow: auto;
   pointer-events: auto;
   border: 1px solid color-mix(in oklch, var(--catalog-border) 88%, transparent);
@@ -5808,12 +5809,12 @@ tr.user-row--deactivated .text-button {
   }
 
   .map-object-card {
-    top: 116px;
+    top: 70px;
     right: 18px;
     left: 18px;
     width: auto;
     min-width: 0;
-    max-height: calc(100% - 134px);
+    max-height: calc(100% - 88px);
     overflow: auto;
   }
 }
@@ -9616,6 +9617,40 @@ tr.user-row--deactivated .text-button {
   }
 
   .catalog-map-layout .maplibregl-ctrl-fullscreen {
+    display: none;
+  }
+
+  /* Keep the tool row clear of the round close button. */
+  .catalog-map-layout .map-primary-tools {
+    max-width: calc(100% - 76px);
+  }
+
+  /* A running measurement wraps onto a second row, so the zoom buttons step down. */
+  .catalog-map-layout .platform-map-shell[data-map-measurement='open'] .maplibregl-ctrl-top-left {
+    top: 128px;
+  }
+
+  /*
+   * An open object card takes the bottom half of the screen and the map keeps
+   * the top half: both stay usable, and tapping another marker swaps the card.
+   */
+  .catalog-map-layout .platform-map-shell:has(.map-object-card) .platform-map-canvas {
+    height: 50%;
+  }
+
+  .catalog-map-layout .platform-map-shell .map-object-card {
+    top: 50%;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    max-height: none;
+    border-width: 1px 0 0;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overscroll-behavior: contain;
+  }
+
+  .catalog-map-layout .platform-map-shell:has(.map-object-card) .catalog-map-list-toggle {
     display: none;
   }
 

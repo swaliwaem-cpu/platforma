@@ -77,6 +77,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@mapbox/vector-tile':
+        specifier: ^3.0.0
+        version: 3.0.0
       '@platforma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -92,6 +95,9 @@ importers:
       maplibre-gl:
         specifier: ^6.6.0
         version: 6.6.0
+      pbf:
+        specifier: ^5.1.2
+        version: 5.1.2
       radix-ui:
         specifier: ^1.4.3
         version: 1.4.3(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)

@@ -11,12 +11,7 @@ import {
   getMapPointCenter,
   isValidMapCoordinatePair,
 } from './mapContract';
-import {
-  enhanceOpenMapTilesStyle,
-  findNearestSubwayStations,
-  hasOpenMapTilesPoiSource,
-  NEARBY_TRANSIT_SEARCH_ZOOM,
-} from './openMapTilesEnhancements';
+import { enhanceOpenMapTilesStyle, loadNearestSubwayStations } from './openMapTilesEnhancements';
 import {
   setOpenMapTilesAmenityVisibility,
   type OpenMapTilesAmenityCategory,
@@ -46,7 +41,8 @@ type MapCallbacks = Pick<
 >;
 
 const MAP_LOAD_TIMEOUT_MS = 15_000;
-const NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS = 4_000;
+const NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS = 6_000;
+const SELECTED_POINT_VISIBLE_MARGIN_PX = 48;
 const MEASUREMENT_SOURCE_ID = 'platforma-measurement';
 const MEASUREMENT_LINE_LAYER_ID = 'platforma-measurement-line';
 const MEASUREMENT_POINT_LAYER_ID = 'platforma-measurement-points';
@@ -96,7 +92,6 @@ export default function MapLibreMap({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const pointsByIdRef = useRef(new Map<string, MapPoint>());
   const callbacksRef = useRef<MapCallbacks>({});
-  const nearbyTransitRequestRef = useRef(0);
   const measurementActiveRef = useRef(false);
   const amenityVisibilityRef = useRef(initialAmenityVisibility);
   const initialViewportRef = useRef<MapViewport>(initialViewport ?? createInitialViewport(points));
@@ -209,6 +204,8 @@ export default function MapLibreMap({
     };
     resizeObserver = new ResizeObserver(scheduleResize);
     resizeObserver.observe(shell);
+    // Pages may shrink the canvas inside the shell, e.g. to make room for an object card.
+    resizeObserver.observe(container);
     const handleFullscreenStart = () => {
       setIsFullscreen(true);
       callbacksRef.current.onFullscreenChange?.(true);
@@ -419,9 +416,6 @@ export default function MapLibreMap({
   useEffect(() => {
     const map = mapRef.current;
     const point = selectedPointId ? pointsByIdRef.current.get(selectedPointId) : null;
-    const requestId = nearbyTransitRequestRef.current + 1;
-
-    nearbyTransitRequestRef.current = requestId;
 
     if (!point) {
       callbacksRef.current.onNearbyTransitChange?.({ pointId: null, status: 'idle', stations: [] });
@@ -438,44 +432,33 @@ export default function MapLibreMap({
     }
 
     callbacksRef.current.onNearbyTransitChange?.({ pointId: point.id, status: 'loading', stations: [] });
-    map.easeTo({
-      center: toMapLibreCoordinate(point.coordinates),
-      duration: prefersReducedMotion ? 0 : 320,
-      zoom: Math.max(map.getZoom(), NEARBY_TRANSIT_SEARCH_ZOOM),
-    });
+    revealPoint(map, point.coordinates, prefersReducedMotion);
 
-    let timeoutId: number | null = null;
-    let isComplete = false;
-    const finishLookup = () => {
-      if (isComplete || nearbyTransitRequestRef.current !== requestId) {
-        return;
-      }
+    let isCancelled = false;
+    const controller = new AbortController();
+    // On timeout the lookup still resolves with the tiles that did arrive.
+    const timeoutId = window.setTimeout(() => controller.abort(), NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS);
 
-      isComplete = true;
-
-      if (timeoutId !== null) {
+    void loadNearestSubwayStations(map, point.coordinates, controller.signal)
+      .catch(() => null)
+      .then((stations) => {
         window.clearTimeout(timeoutId);
-      }
 
-      const supportsNearbyTransit = hasOpenMapTilesPoiSource(map);
-      const stations = supportsNearbyTransit ? findNearestSubwayStations(map, point.coordinates, 3) : [];
+        if (isCancelled) {
+          return;
+        }
 
-      callbacksRef.current.onNearbyTransitChange?.({
-        pointId: point.id,
-        status: supportsNearbyTransit && stations.length > 0 ? 'ready' : 'unavailable',
-        stations,
+        callbacksRef.current.onNearbyTransitChange?.({
+          pointId: point.id,
+          status: stations && stations.length > 0 ? 'ready' : 'unavailable',
+          stations: stations ?? [],
+        });
       });
-    };
-
-    map.once('idle', finishLookup);
-    timeoutId = window.setTimeout(finishLookup, NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS);
 
     return () => {
-      map.off('idle', finishLookup);
-
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
+      isCancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
     };
   }, [points, prefersReducedMotion, selectedPointId, status]);
 
@@ -487,6 +470,7 @@ export default function MapLibreMap({
       className="platform-map-shell"
       data-map-controls-position={controlsPosition}
       data-map-fullscreen={isFullscreen ? 'true' : 'false'}
+      data-map-measurement={isMeasurementActive || measurementPoints.length > 0 ? 'open' : 'closed'}
       data-map-status={status}
       role={ariaLabel ? 'region' : undefined}
     >
@@ -833,6 +817,26 @@ function createMarkerElement(point: MapPoint) {
   element.append(dot, pin);
 
   return element;
+}
+
+// Keeps the zoom the user chose: the map only pans when the point is out of sight.
+function revealPoint(map: maplibregl.Map, coordinates: MapCoordinate, prefersReducedMotion: boolean) {
+  const container = map.getContainer();
+  const canvas = map.getCanvas();
+
+  // The page may have just resized the canvas for the object card; measure the new size.
+  if (canvas.clientWidth !== container.clientWidth || canvas.clientHeight !== container.clientHeight) {
+    map.resize();
+  }
+
+  const { x, y } = map.project(toMapLibreCoordinate(coordinates));
+  const margin = SELECTED_POINT_VISIBLE_MARGIN_PX;
+
+  if (x >= margin && x <= container.clientWidth - margin && y >= margin && y <= container.clientHeight - margin) {
+    return;
+  }
+
+  map.easeTo({ center: toMapLibreCoordinate(coordinates), duration: prefersReducedMotion ? 0 : 320 });
 }
 
 function fitMapToPoints(map: maplibregl.Map, points: MapPoint[], prefersReducedMotion: boolean) {

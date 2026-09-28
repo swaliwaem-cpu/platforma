@@ -1,4 +1,6 @@
+import { VectorTile } from '@mapbox/vector-tile';
 import type * as maplibregl from 'maplibre-gl';
+import { PbfReader } from 'pbf';
 
 import { getMapDistanceMeters } from './mapContract';
 import { ensureOpenMapTilesAmenityLayers } from './openMapTilesAmenities';
@@ -165,61 +167,127 @@ export function enhanceOpenMapTilesStyle(map: maplibregl.Map) {
   }
 }
 
-export function hasOpenMapTilesPoiSource(map: maplibregl.Map) {
-  return getSourceIdsForSourceLayer(map, 'poi').length > 0;
-}
-
-export function findNearestSubwayStations(
+/**
+ * Reads subway stations straight from the vector tiles around the origin, so
+ * the lookup neither depends on nor changes the zoom the user is looking at.
+ * Resolves to null when the style has no tiled POI source to read from.
+ */
+export async function loadNearestSubwayStations(
   map: maplibregl.Map,
   origin: MapCoordinate,
+  signal: AbortSignal,
   limit = 3,
-): MapNearbyTransitStation[] {
+): Promise<MapNearbyTransitStation[] | null> {
+  const sources = getSourceIdsForSourceLayer(map, 'poi')
+    .map((sourceId) => map.getSource(sourceId))
+    .filter((source): source is maplibregl.VectorTileSource => (
+      source?.type === 'vector' && (source as maplibregl.VectorTileSource).tiles?.length > 0
+    ));
+
+  if (sources.length === 0) {
+    return null;
+  }
+
   const stationsByName = new Map<string, MapNearbyTransitStation>();
 
-  for (const sourceId of getSourceIdsForSourceLayer(map, 'poi')) {
-    let features: maplibregl.GeoJSONFeature[];
+  for (const source of sources) {
+    const zoom = Math.min(NEARBY_TRANSIT_SEARCH_ZOOM, source.maxzoom);
+    const tiles = await Promise.all(
+      getTilesAround(origin, zoom).map(async (tile) => ({ tile, data: await fetchVectorTile(source, tile, signal) })),
+    );
 
-    try {
-      features = map.querySourceFeatures(sourceId, {
-        sourceLayer: 'poi',
-        filter: [
-          'all',
-          ['==', ['get', 'class'], 'railway'],
-          ['==', ['get', 'subclass'], 'subway'],
-        ],
-      });
-    } catch {
-      continue;
-    }
+    for (const { tile, data } of tiles) {
+      const layer = data?.layers.poi;
 
-    for (const feature of features) {
-      if (feature.geometry.type !== 'Point') {
+      if (!layer) {
         continue;
       }
 
-      const [longitude, latitude] = feature.geometry.coordinates;
-      const name = getStationName(feature.properties);
+      for (let index = 0; index < layer.length; index += 1) {
+        const feature = layer.feature(index);
 
-      if (!name || typeof latitude !== 'number' || typeof longitude !== 'number') {
-        continue;
-      }
+        if (feature.type !== 1 || feature.properties.class !== 'railway' || feature.properties.subclass !== 'subway') {
+          continue;
+        }
 
-      const coordinates: MapCoordinate = [latitude, longitude];
-      const station: MapNearbyTransitStation = {
-        name,
-        coordinates,
-        distanceMeters: getMapDistanceMeters(origin, coordinates),
-      };
-      const key = name.trim().toLocaleLowerCase('ru-RU');
-      const current = stationsByName.get(key);
+        const { geometry } = feature.toGeoJSON(tile.x, tile.y, tile.z);
+        const name = getStationName(feature.properties);
 
-      if (!current || station.distanceMeters < current.distanceMeters) {
-        stationsByName.set(key, station);
+        if (!name || geometry.type !== 'Point') {
+          continue;
+        }
+
+        const [longitude, latitude] = geometry.coordinates;
+
+        if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+          continue;
+        }
+
+        const coordinates: MapCoordinate = [latitude, longitude];
+        const station: MapNearbyTransitStation = {
+          name,
+          coordinates,
+          distanceMeters: getMapDistanceMeters(origin, coordinates),
+        };
+        const key = name.trim().toLocaleLowerCase('ru-RU');
+        const current = stationsByName.get(key);
+
+        if (!current || station.distanceMeters < current.distanceMeters) {
+          stationsByName.set(key, station);
+        }
       }
     }
   }
 
   return [...stationsByName.values()].sort((left, right) => left.distanceMeters - right.distanceMeters).slice(0, limit);
+}
+
+type TileAddress = { x: number; y: number; z: number };
+
+// A 3x3 block of z14 tiles covers roughly 2 km around the origin in Moscow.
+function getTilesAround([latitude, longitude]: MapCoordinate, zoom: number): TileAddress[] {
+  const tileCount = 2 ** zoom;
+  const latitudeRadians = (latitude * Math.PI) / 180;
+  const centerX = Math.floor(((longitude + 180) / 360) * tileCount);
+  const centerY = Math.floor(
+    ((1 - Math.log(Math.tan(latitudeRadians) + 1 / Math.cos(latitudeRadians)) / Math.PI) / 2) * tileCount,
+  );
+  const tiles: TileAddress[] = [];
+
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    const y = centerY + offsetY;
+
+    if (y < 0 || y >= tileCount) {
+      continue;
+    }
+
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      tiles.push({ x: (centerX + offsetX + tileCount) % tileCount, y, z: zoom });
+    }
+  }
+
+  return tiles;
+}
+
+async function fetchVectorTile(source: maplibregl.VectorTileSource, tile: TileAddress, signal: AbortSignal) {
+  const [template] = source.tiles;
+  const y = source.scheme === 'tms' ? 2 ** tile.z - 1 - tile.y : tile.y;
+
+  if (!template) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      template.replace('{z}', String(tile.z)).replace('{x}', String(tile.x)).replace('{y}', String(y)),
+      { signal },
+    );
+
+    return response.ok ? new VectorTile(new PbfReader(await response.arrayBuffer())) : null;
+  } catch {
+    // A missing or unreachable tile only narrows the search; the caller checks the signal.
+    return null;
+  }
 }
 
 function enhanceTransitStationLayer(map: maplibregl.Map) {
@@ -298,7 +366,7 @@ function addLineLayer(
   );
 }
 
-function getStationName(properties: maplibregl.MapGeoJSONFeature['properties']) {
+function getStationName(properties: Record<string, unknown>) {
   const candidate = properties?.['name:ru'] ?? properties?.name ?? properties?.['name:nonlatin'] ?? properties?.name_en;
 
   return typeof candidate === 'string' ? candidate.trim() : '';

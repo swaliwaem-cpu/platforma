@@ -149,7 +149,7 @@ test('catalog map places navigation and fullscreen controls on the left below it
   assert.match(mapLibreSource, /data-map-controls-position=\{controlsPosition\}/);
   assert.match(
     styles,
-    /\.catalog-map-panel \.platform-map-shell\[data-map-controls-position='top-left'\] \.maplibregl-ctrl-top-left\s*\{\s*top:\s*120px;/,
+    /\.catalog-map-panel \.platform-map-shell\[data-map-controls-position='top-left'\] \.maplibregl-ctrl-top-left\s*\{\s*top:\s*74px;/,
   );
   assert.match(
     styles,
