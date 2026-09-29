@@ -1347,8 +1347,7 @@
   .gallery-tile-order-button,
   .gallery-tile-remove-button,
   .gallery-tile-open-original,
-  .gallery-modal-header-save,
-  .lot-finish-modal-option
+  .gallery-modal-header-save
 ) {
   border: 1px solid transparent;
   border-radius: 12px;
@@ -1366,8 +1365,7 @@
   .gallery-tile-order-button,
   .gallery-tile-remove-button,
   .gallery-tile-open-original,
-  .gallery-modal-header-save,
-  .lot-finish-modal-option
+  .gallery-modal-header-save
 ):not(:disabled, [aria-disabled="true"]):is(:hover, :focus-visible) {
   border-color: var(--fw-hover-line);
   background: var(--fw-hover-bg);
@@ -1383,10 +1381,46 @@
   .gallery-tile-order-button,
   .gallery-tile-remove-button,
   .gallery-tile-open-original,
-  .gallery-modal-header-save,
-  .lot-finish-modal-option
+  .gallery-modal-header-save
 ):not(:disabled, [aria-disabled="true"]):active {
   transform: translateY(var(--fw-press));
+}
+
+/* Finish selection modal: segmented finish picker, active segment filled solid. */
+:root[data-app-theme] body .lot-finish-modal-row {
+  border-color: var(--fw-line);
+}
+
+:root[data-app-theme] body .lot-finish-modal-row--all {
+  background: var(--fw-control);
+}
+
+:root[data-app-theme] body .lot-finish-modal-segments {
+  border-color: var(--fw-line);
+  background: var(--fw-panel);
+}
+
+:root[data-app-theme] body .lot-finish-modal-segment {
+  color: var(--fw-text);
+  transition: var(--fw-button-transition);
+}
+
+:root[data-app-theme] body .lot-finish-modal-segment:not(:disabled):is(:hover, :focus-visible) {
+  background: var(--fw-hover-bg);
+  outline: none;
+}
+
+:root[data-app-theme] body .lot-finish-modal-segment[data-state="on"],
+:root[data-app-theme] body .lot-finish-modal-segment[data-state="on"]:not(:disabled):is(:hover, :focus-visible) {
+  background: var(--fw-solid);
+  color: var(--fw-solid-text);
+}
+
+/* The dark solid fill disappears on graphite glass, so the dark theme inverts the active segment. */
+:root[data-app-theme="dark-premium"] body .lot-finish-modal-segment[data-state="on"],
+:root[data-app-theme="dark-premium"] body .lot-finish-modal-segment[data-state="on"]:not(:disabled):is(:hover, :focus-visible) {
+  background: var(--fw-text);
+  color: var(--fw-canvas);
 }
 
 /* Destructive actions keep the neutral reference surface with a danger ink. */

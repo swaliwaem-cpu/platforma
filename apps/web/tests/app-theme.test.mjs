@@ -233,6 +233,7 @@ test('collapsed sidebar reserves a rail, the expanded panel overlays the workspa
     /@media \(max-width: 760px\) \{[\s\S]*?\.mobile-tabbar \{\s*position: fixed;[\s\S]*?right: 0;\s*bottom: 0;\s*left: 0;\s*display: grid;/,
   );
   assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.mobile-tabbar\.is-hidden:not\(:focus-within\) \{\s*transform: translateY\(100%\);/);
+  assert.match(styles, /body:has\(\[data-slot='dialog-overlay'\]\) \.mobile-tabbar \{\s*transform: translateY\(100%\);/);
   assert.match(
     styles,
     /@media \(max-width: 760px\) \{[\s\S]*?\.sidebar \{\s*display: none;\s*\}\s*\.sidebar--open \{\s*top: 0;\s*right: 0;\s*bottom: calc\(var\(--mobile-tabbar-height\) \+ env\(safe-area-inset-bottom, 0px\)\);\s*left: 0;\s*display: flex;/,

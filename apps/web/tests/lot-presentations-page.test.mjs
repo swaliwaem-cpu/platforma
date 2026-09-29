@@ -12,7 +12,7 @@ const pageSource = readFileSync(resolve(currentDir, '../src/presentations/LotPre
 const actionSource = readFileSync(resolve(currentDir, '../src/presentations/LotCollectionAction.tsx'), 'utf8');
 const finishModalSource = readFileSync(resolve(currentDir, '../src/presentations/LotFinishSelectionModal.tsx'), 'utf8');
 const dialogSource = readFileSync(resolve(currentDir, '../src/components/ui/dialog.tsx'), 'utf8');
-const radioGroupSource = readFileSync(resolve(currentDir, '../src/components/ui/radio-group.tsx'), 'utf8');
+const toggleGroupSource = readFileSync(resolve(currentDir, '../src/components/ui/toggle-group.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 
 test('lot presentations route is available from the sidebar', () => {
@@ -119,15 +119,16 @@ test('PDF creation requests a separate finish for every residential lot', () => 
 
 test('finish modal is required, accessible and responsive without image previews', () => {
   assert.match(finishModalSource, /LOT_PRESENTATION_FINISH_TYPES/);
-  assert.match(finishModalSource, /LOT_PRESENTATION_FINISH_LABELS/);
+  assert.match(finishModalSource, /finishSegmentLabels: Record<LotPresentationFinishType, \{ title: string; hint: string \}>/);
   assert.match(finishModalSource, /useState<Record<string, LotPresentationFinishType>>\(\{\}\)/);
   assert.match(finishModalSource, /<Dialog[\s\S]*open[\s\S]*onOpenChange=/);
   assert.match(finishModalSource, /<DialogContent[\s\S]*overlayClassName="lot-finish-modal-backdrop"[\s\S]*showCloseButton=\{false\}/);
-  assert.match(finishModalSource, /<FieldSet className="lot-finish-modal-lot"/);
-  assert.match(finishModalSource, /<FieldLegend className="lot-finish-modal-lot-heading" variant="label">/);
-  assert.match(finishModalSource, /<RadioGroup[\s\S]*value=\{selectedFinishes\[lot\.id\]\}[\s\S]*onValueChange=/);
-  assert.match(finishModalSource, /<RadioGroupItem[\s\S]*value=\{finishType\}/);
-  assert.match(finishModalSource, /<FieldTitle className="lot-finish-modal-option-title">/);
+  assert.match(finishModalSource, /<div className="lot-finish-modal-row" key=\{lot\.id\}>/);
+  assert.match(finishModalSource, /<FinishSegments[\s\S]*value=\{selectedFinishes\[lot\.id\] \?\? ''\}/);
+  assert.match(finishModalSource, /<ToggleGroup[\s\S]*type="single"[\s\S]*onValueChange=\{\(finishType\) => \{[\s\S]*if \(finishType\)/);
+  assert.match(finishModalSource, /<ToggleGroupItem[\s\S]*className="lot-finish-modal-segment"[\s\S]*value=\{finishType\}/);
+  assert.match(finishModalSource, /\{lots\.length > 1 \? \([\s\S]*Для всех лотов[\s\S]*lots\.map\(\(lot\) => \[lot\.id, finishType\]\)/);
+  assert.doesNotMatch(finishModalSource, /RadioGroup/);
   assert.match(finishModalSource, /Укажите отделку в лоте/);
   assert.match(finishModalSource, /\{selectedCount\} из \{lots\.length\}/);
   assert.match(finishModalSource, /disabled=\{!isComplete \|\| isLoading\}/);
@@ -139,21 +140,17 @@ test('finish modal is required, accessible and responsive without image previews
   assert.match(dialogSource, /DialogPrimitive\.Root/);
   assert.match(dialogSource, /DialogPrimitive\.Content/);
   assert.match(dialogSource, /DialogPrimitive\.Overlay/);
-  assert.match(radioGroupSource, /RadioGroupPrimitive\.Root/);
-  assert.match(radioGroupSource, /RadioGroupPrimitive\.Item/);
-  assert.match(radioGroupSource, /RadioGroupPrimitive\.Indicator/);
-  assert.doesNotMatch(finishModalSource, /Применить ко всем/);
+  assert.match(toggleGroupSource, /ToggleGroupPrimitive\.Root/);
+  assert.match(toggleGroupSource, /ToggleGroupPrimitive\.Item/);
+  assert.match(toggleGroupSource, /import \{ cn \} from "@\/lib\/utils"/);
   assert.doesNotMatch(finishModalSource, /<img|SecureImage/);
   assert.doesNotMatch(finishModalSource, /focusableElementSelector|document\.body\.style\.overflow|type="radio"/);
   assert.match(styles, /\.lot-finish-modal\s*\{[\s\S]*?width:\s*min\(920px, calc\(100vw - 40px\)\);[\s\S]*?overflow:\s*hidden;/);
   assert.match(styles, /\.lot-finish-modal-list\s*\{[\s\S]*?overflow-y:\s*auto;/);
-  assert.match(styles, /\.lot-finish-modal-lot:not\(:last-child\)\s*\{[\s\S]*?border-bottom:/);
-  assert.match(styles, /\.lot-finish-modal-option\s*\{[\s\S]*?min-height:\s*66px;/);
-  assert.match(styles, /\.lot-finish-modal-option:has\(\[data-slot='radio-group-item'\]\[data-state='checked'\]\)\s*\{[\s\S]*?background:\s*var\(--app-theme-primary-soft/);
-  assert.match(styles, /\.lot-finish-modal-option \[data-slot='radio-group-item'\]\s*\{[\s\S]*?width:\s*20px;[\s\S]*?height:\s*20px;/);
-  assert.match(styles, /\.lot-finish-modal-option \[data-slot='radio-group-item'\]\[data-state='checked'\]\s*\{[\s\S]*?background:\s*var\(--app-theme-primary/);
-  assert.match(styles, /\.lot-finish-modal-option-title\s*\{[\s\S]*?font-size:\s*13px;[\s\S]*?font-weight:\s*750;/);
-  assert.doesNotMatch(styles, /\.lot-finish-modal-option input\[type='radio'\]/);
+  assert.match(styles, /\.lot-finish-modal-row:not\(:last-child\)\s*\{[\s\S]*?border-bottom:/);
+  assert.match(styles, /\.lot-finish-modal-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;/);
+  assert.match(styles, /\.lot-finish-modal-segment\s*\{[\s\S]*?min-width:\s*128px;/);
+  assert.doesNotMatch(styles, /\.lot-finish-modal-option/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.lot-finish-modal,[\s\S]*?\.lot-finish-modal-backdrop[\s\S]*?animation:\s*none;/);
   assert.match(styles, /@media \(max-width: 560px\)[\s\S]*?\.lot-finish-modal\s*\{[\s\S]*?width:\s*calc\(100vw - 24px\);/);
 });
