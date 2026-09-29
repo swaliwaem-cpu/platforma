@@ -12,7 +12,11 @@
 
 ## 2026-09-29
 
-### PDF по лотам: без планировки больше не блокирует (локально, без коммита)
+### Production deploy no-plan-20260929T1112Z (main 674f7e5)
+
+- api + web на `release-674f7e5…-20260929T1112Z`, миграций нет; voice worker остался на e21364e. Проверки: api healthy, `/health` 200, сайт 200, без авторизации 401. Бэкап (env + дамп) в `/opt/platforma-deploy-backups/no-plan-20260929T1112Z`.
+
+### PDF по лотам: без планировки больше не блокирует (закоммичено в 674f7e5)
 
 - Убрана проверка «Планировка отсутствует в лоте» на бэке (`lot-presentations.service.ts`, `createDocument`) и на фронте (`ensureCanDownload` в `LotPresentationsPage.tsx`); поле `hasPlanImage` в API оставлено.
 - В PDF вместо планировки рамка с текстом «В настоящий момент планировка отсутствует» (`lot-presentations-pdf.service.ts`); тесты обновлены.
