@@ -512,12 +512,6 @@ export class LotPresentationsService {
 
     const groups = await this.getPdfGroups(unitIds);
     const unitFinishes = this.parseUnitFinishes(body.unitFinishes, groups.flatMap((group) => group.units));
-    const missingPlanUnit = groups.flatMap((group) => group.units).find((unit) => !this.hasPlanImage(unit));
-
-    if (missingPlanUnit) {
-      throw new BadRequestException(`Планировка отсутствует в лоте: ${this.getLotTitle(missingPlanUnit)}`);
-    }
-
     const title = this.parseOptionalDocumentTitle(body.title) ?? this.getDocumentTitle(collection?.name ?? null, groups);
     const pdfBuffer = await this.pdfService.generate({
       broker: {
@@ -872,10 +866,6 @@ export class LotPresentationsService {
 
   private getUnitEffectivePrice(unit: Pick<PdfUnitRecord, 'effectivePrice' | 'discountPrice' | 'price'>) {
     return this.decimalToNumber(unit.effectivePrice) ?? this.decimalToNumber(unit.discountPrice) ?? this.decimalToNumber(unit.price);
-  }
-
-  private hasPlanImage(unit: PdfPresentationUnit) {
-    return unit.media.some((media) => Boolean(media.mediaAsset.file));
   }
 
   private getLotTitle(unit: PdfPresentationUnit) {

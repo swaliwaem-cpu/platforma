@@ -93,7 +93,7 @@ test('lot presentations page manages workspace, downloads and validation warning
   assert.match(pageSource, /unitIds: \[item\.unitId\]/);
   assert.match(pageSource, /if \(!user\?\.brokerPhone \|\| !user\.brokerEmail\)/);
   assert.match(pageSource, /Заполните телефон и почту брокера в профиле/);
-  assert.match(pageSource, /Планировка отсутствует в лоте/);
+  assert.doesNotMatch(pageSource, /Планировка отсутствует в лоте/);
   assert.match(pageSource, /downloadDocument\(data\.document, accessToken\)/);
   assert.match(styles, /\.lot-presentations-grid\s*\{/);
   assert.match(styles, /\.lot-presentations-lot-tile\s*\{/);
@@ -105,7 +105,7 @@ test('PDF creation requests a separate finish for every residential lot', () => 
   )?.[0] ?? '';
 
   assert.match(pageSource, /import \{ LotFinishSelectionModal \} from '\.\/LotFinishSelectionModal';/);
-  assert.match(requestDocumentBody, /ensureCanDownload\(user, lotsForCheck, setError\)/);
+  assert.match(requestDocumentBody, /ensureCanDownload\(user, setError\)/);
   assert.match(requestDocumentBody, /lotsForCheck\.filter\(\(lot\) => lot\.type === 'RESIDENTIAL'\)/);
   assert.match(requestDocumentBody, /setPendingFinishSelection\([\s\S]*lots: residentialLots/);
   assert.match(requestDocumentBody, /createAndDownloadDocument\(\{ \.\.\.input, unitFinishes: \[\] \}\)/);

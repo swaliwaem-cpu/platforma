@@ -284,7 +284,7 @@ export class LotPresentationsPdfService {
 
     doc.moveTo(marginX, 182).lineTo(pageWidth - marginX, 182).strokeColor(colors.line).lineWidth(0.7).stroke();
     doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('ПЛАНИРОВКА', marginX, 199);
-    await this.drawFileFrame(doc, plan, marginX, 223, 303, 278, 'Планировка недоступна');
+    await this.drawFileFrame(doc, plan, marginX, 223, 303, 278, 'В настоящий момент планировка отсутствует');
     this.drawPriceSummary(doc, unit, 374, 199, 191);
     this.drawPrimaryFacts(doc, unit, finishType, 374, 292);
     doc

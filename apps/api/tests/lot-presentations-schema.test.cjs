@@ -718,7 +718,7 @@ test('lot presentation API exposes workspace and item comment routes', () => {
   assert.match(service, /Comment is too long/);
 });
 
-test('lot presentation service enforces available lots, plan images and broker contacts', () => {
+test('lot presentation service enforces available lots and broker contacts', () => {
   const service = readProjectFile(servicePath);
   const pdfService = readProjectFile(pdfServicePath);
   const createDocumentSource = service.match(/async createDocument\([\s\S]*?\n  async listDocuments/)?.[0] ?? '';
@@ -736,7 +736,7 @@ test('lot presentation service enforces available lots, plan images and broker c
   assert.match(service, /const objectId = query\.objectId\?\.trim\(\);[\s\S]*objectId: this\.parseUuid\(objectId, 'Object is invalid'\)/);
   assert.match(service, /const sortedUnits = \[\.\.\.units\]\.sort\(\(leftUnit, rightUnit\) => this\.compareUnitsByPrice\(leftUnit, rightUnit\)\);/);
   assert.match(service, /if \(!actor\.brokerPhone \|\| !actor\.brokerEmail\)/);
-  assert.match(service, /\.find\(\(unit\) => !this\.hasPlanImage\(unit\)\)/);
+  assert.doesNotMatch(service, /Планировка отсутствует в лоте/);
   assert.match(service, /groupsByObjectId/);
   assert.match(service, /groupsByObjectId\.set\(unit\.objectId/);
   assert.match(service, /getGroupMinPrice/);
@@ -797,7 +797,7 @@ test('lot presentation service enforces available lots, plan images and broker c
     pdfService.match(/const titleLayout = this\.getLotTitleLayout[\s\S]*?const subtitleY/)?.[0] ?? '',
     /ellipsis: true/,
   );
-  assert.match(pdfService, /drawFileFrame\(doc, plan, marginX, 223, 303, 278, 'Планировка недоступна'\)/);
+  assert.match(pdfService, /drawFileFrame\(doc, plan, marginX, 223, 303, 278, 'В настоящий момент планировка отсутствует'\)/);
   assert.match(
     pdfService,
     /drawFileFrame\([\s\S]*floorPlan,[\s\S]*marginX,[\s\S]*570,[\s\S]*303,[\s\S]*192,[\s\S]*'План этажа недоступен',[\s\S]*floorPlanFillFrame/,

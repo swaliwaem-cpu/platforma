@@ -10,6 +10,18 @@
 
 ---
 
+## 2026-09-29
+
+### PDF по лотам: без планировки больше не блокирует (локально, без коммита)
+
+- Убрана проверка «Планировка отсутствует в лоте» на бэке (`lot-presentations.service.ts`, `createDocument`) и на фронте (`ensureCanDownload` в `LotPresentationsPage.tsx`); поле `hasPlanImage` в API оставлено.
+- В PDF вместо планировки рамка с текстом «В настоящий момент планировка отсутствует» (`lot-presentations-pdf.service.ts`); тесты обновлены.
+- Повод: у всех лотов ТЕКТЫ (ERA, Twelve, Ever, Пыжёвский) в фиде `IntLayoutCode` — внутренний путь `\\crm-storage\...`, не URL, поэтому картинок нет; нужны публичные ссылки от ТЕКТЫ.
+
+### Прод: ИИ-помощник в режиме PILOT
+
+- В `/opt/platforma/.env.production` `ASSISTANT_ROLLOUT_STAGE=PILOT` и `ASSISTANT_PILOT_USER_IDS` (infanterattack@gmail.com); api пересоздан на том же образе c139e4b. Бэкап env: `/opt/platforma-deploy-backups/assistant-pilot-20260929T1028Z`.
+
 ## 2026-09-28
 
 ### Production deploy map-split-20260928T0650Z (main ea1dfa8)

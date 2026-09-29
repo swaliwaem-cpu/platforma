@@ -757,7 +757,7 @@ export function LotPresentationsPage({ navigate }: LotPresentationsPageProps) {
     setNotice(null);
     setFinishSelectionError(null);
 
-    if (!ensureCanDownload(user, lotsForCheck, setError)) {
+    if (!ensureCanDownload(user, setError)) {
       return;
     }
 
@@ -2281,20 +2281,9 @@ function formatPlural(value: number, forms: [string, string, string]) {
   return forms[2];
 }
 
-function ensureCanDownload(
-  user: AuthUser | null,
-  lots: LotPresentationLot[],
-  setError: (message: string | null) => void,
-) {
+function ensureCanDownload(user: AuthUser | null, setError: (message: string | null) => void) {
   if (!user?.brokerPhone || !user.brokerEmail) {
     setError('Заполните телефон и почту брокера в профиле перед скачиванием презентации');
-    return false;
-  }
-
-  const lotWithoutPlan = lots.find((lot) => !lot.hasPlanImage);
-
-  if (lotWithoutPlan) {
-    setError(`Планировка отсутствует в лоте: ${getLotTitle(lotWithoutPlan)}`);
     return false;
   }
 
