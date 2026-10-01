@@ -8,6 +8,7 @@ import type {
   AssistantWebLot,
 } from '@platforma/shared';
 import {
+  MapPinIcon,
   MessageCircleIcon,
   PlusIcon,
   RotateCcwIcon,
@@ -22,10 +23,17 @@ import {
   PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+
+import { getValidMapCoordinate } from '../map/mapContract';
+import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
+import { PlatformMap, type MapCoordinate, type MapPoint } from '../map/PlatformMap';
 import { getAssistantConfig, getAssistantJob, rateAssistantTurn, startAssistantJob } from './assistantApi';
 import './assistant.css';
 
@@ -50,6 +58,14 @@ type AssistantGeometry = {
   top: number;
   width: number;
   height: number;
+};
+
+type MapProject = {
+  id: string;
+  title: string;
+  mapName: string | null;
+  coordinates: MapCoordinate;
+  lots: AssistantPlatformLot[];
 };
 
 type DragState = {
@@ -380,6 +396,7 @@ function AssistantMessageView({
   message: ChatMessage;
   onUpdate: (messageId: string, patch: Partial<ChatMessage>) => void;
 }) {
+  const [isMapOpen, setIsMapOpen] = useState(false);
   if (message.role === 'user') {
     return (
       <div className="assistant-message assistant-message--user">
@@ -391,6 +408,7 @@ function AssistantMessageView({
   const answer = message.answer;
   // Answers saved in the session before sources existed have none.
   const sources = answer?.sources ?? [];
+  const hasMapProjects = answer ? groupLotsByProject(answer.lots).length > 0 : false;
   return (
     <div className="assistant-message assistant-message--results">
       <span>Помощник</span>
@@ -402,8 +420,15 @@ function AssistantMessageView({
               ? <PlatformLotCard key={lot.unitId} lot={lot} />
               : <WebLotCard key={`${lot.url}:${lot.projectTitle}:${lot.priceRub}:${lot.areaM2}:${lot.floor}`} lot={lot} />))}
           </div>
+          {hasMapProjects ? (
+            <button className="assistant-map-button" type="button" onClick={() => setIsMapOpen(true)}>
+              <MapPinIcon aria-hidden="true" />
+              Показать на карте
+            </button>
+          ) : null}
         </div>
       ) : null}
+      {answer && isMapOpen ? <AssistantResultsMap lots={answer.lots} onClose={() => setIsMapOpen(false)} /> : null}
       {sources.length > 0 ? (
         <ul className="assistant-sources" aria-label="Источники">
           {sources.map((source) => (
@@ -428,6 +453,98 @@ function AssistantMessageView({
       ) : null}
     </div>
   );
+}
+
+function AssistantResultsMap({ lots, onClose }: { lots: AssistantLot[]; onClose: () => void }) {
+  const projects = useMemo(() => groupLotsByProject(lots), [lots]);
+  const points = useMemo<MapPoint[]>(() => projects.map((project) => ({
+    id: project.id,
+    title: project.title,
+    hint: project.title,
+    coordinates: project.coordinates,
+    markerLabel: resolveMapMarkerLabel({ title: project.title, mapName: project.mapName }),
+  })), [projects]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = projects.find((project) => project.id === selectedId) ?? null;
+  const shownLots = selected ? selected.lots : projects.flatMap((project) => project.lots);
+  const mappedLotsCount = projects.reduce((count, project) => count + project.lots.length, 0);
+  const offMapCount = lots.length - mappedLotsCount;
+
+  return (
+    <Dialog open onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
+      <DialogContent className="assistant-map-dialog" overlayClassName="assistant-map-dialog-backdrop" showCloseButton={false}>
+        <header className="assistant-map-dialog-header">
+          <div>
+            <DialogTitle>Результаты на карте</DialogTitle>
+            <DialogDescription>
+              {formatLotsCount(mappedLotsCount)} в {projects.length} ЖК
+              {offMapCount > 0 ? ` · ещё ${formatLotsCount(offMapCount)} без координат на карте нет` : ''}
+            </DialogDescription>
+          </div>
+          <DialogClose asChild>
+            <Button aria-label="Закрыть карту" size="icon-lg" type="button" variant="outline">
+              <XIcon aria-hidden="true" />
+            </Button>
+          </DialogClose>
+        </header>
+        <div className="assistant-map-dialog-body">
+          <div className="assistant-map-dialog-map">
+            <PlatformMap
+              ariaLabel="Карта найденных лотов"
+              enableFullscreen={false}
+              enableMeasurement={false}
+              points={points}
+              selectedPointId={selectedId}
+              onMapClick={() => setSelectedId(null)}
+              onSelectPoint={(point) => setSelectedId(point.id)}
+            />
+          </div>
+          <div className="assistant-map-dialog-lots">
+            <div className="assistant-map-dialog-lots-heading">
+              <strong>{selected ? shortProjectTitle(selected.title) : 'Все найденные лоты'}</strong>
+              {selected ? (
+                <button type="button" onClick={() => setSelectedId(null)}>Все ЖК</button>
+              ) : (
+                <span>Нажмите на ЖК на карте, чтобы оставить только его лоты</span>
+              )}
+            </div>
+            <div className="assistant-result-list">
+              {shownLots.map((lot) => <PlatformLotCard key={lot.unitId} lot={lot} />)}
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** One map marker per project; lots of projects without coordinates are left out. */
+function groupLotsByProject(lots: AssistantLot[]) {
+  const projects = new Map<string, MapProject>();
+  for (const lot of lots) {
+    if (lot.source !== 'PLATFORMA') continue;
+    // Answers saved in the session before the map existed have no coordinates.
+    const coordinates = lot.coordinates ? getValidMapCoordinate(lot.coordinates[0], lot.coordinates[1]) : null;
+    if (!coordinates) continue;
+    const project = projects.get(lot.projectHref);
+    if (project) project.lots.push(lot);
+    else projects.set(lot.projectHref, {
+      id: lot.projectHref,
+      title: lot.projectTitle,
+      mapName: lot.projectMapName ?? null,
+      coordinates,
+      lots: [lot],
+    });
+  }
+  return [...projects.values()];
+}
+
+function formatLotsCount(count: number) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${count} лот`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} лота`;
+  return `${count} лотов`;
 }
 
 function AnswerFeedback({

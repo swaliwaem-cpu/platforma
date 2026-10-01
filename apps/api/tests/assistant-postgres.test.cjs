@@ -34,6 +34,9 @@ if (!databaseUrl) {
         slug: `test-deluxe-${suffix}`,
         status: 'PUBLISHED',
         propertyClass: 'Делюкс',
+        mapName: 'Делюкс',
+        latitude: 55.74,
+        longitude: 37.6,
         developerId: developer.id,
         completionYear: 2024,
         completionQuarter: 1,
@@ -139,9 +142,13 @@ if (!databaseUrl) {
     assert.equal(furnished.lots[0].finishing, 'с мебелью');
     assert.equal(furnished.lots[0].propertyClass, 'Делюкс');
     assert.equal(furnished.lots[0].pricePerM2Rub, 2_900_000);
+    assert.deepEqual(furnished.lots[0].coordinates, [55.74, 37.6]);
+    assert.equal(furnished.lots[0].projectMapName, 'Делюкс');
     assert.equal(furnished.lotsWithoutFinishingData, 1);
 
-    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['white box'] }), now)), ['b1', 'b3']);
+    const whiteBox = await catalog.searchLots(scoped({ finishing: ['white box'] }), now);
+    assert.deepEqual(lotIds(whiteBox), ['b1', 'b3']);
+    assert.equal(whiteBox.lots[0].coordinates, null);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['без отделки', 'с отделкой'] }), now)), ['a1', 'a2']);
   });
 

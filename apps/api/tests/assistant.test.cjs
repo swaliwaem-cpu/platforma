@@ -32,6 +32,8 @@ const veerLot = {
   propertyClass: 'Бизнес-класс',
   pricePerM2Rub: 523_849,
   finishing: 'white box',
+  coordinates: [55.6983, 37.4945],
+  projectMapName: 'Веер 2',
 };
 
 const veerFacts = {

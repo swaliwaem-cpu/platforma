@@ -345,6 +345,9 @@ export class AssistantCatalogTools {
           fu.id::text AS id,
           o.title AS "projectTitle",
           o.slug AS "projectSlug",
+          o.map_name AS "projectMapName",
+          o.latitude,
+          o.longitude,
           o.property_class AS "propertyClass",
           d.name AS developer,
           fu.rooms,
@@ -376,6 +379,9 @@ type LotRow = {
   id: string;
   projectTitle: string;
   projectSlug: string;
+  projectMapName: string | null;
+  latitude: Prisma.Decimal | null;
+  longitude: Prisma.Decimal | null;
   propertyClass: string | null;
   developer: string | null;
   rooms: number | null;
@@ -552,6 +558,8 @@ function toPlatformLot(row: LotRow): AssistantPlatformLot {
     building: row.building,
     completion: formatCompletion(row.completionYear, row.completionQuarter),
     updatedAt: row.updatedAt.toISOString(),
+    coordinates: row.latitude === null || row.longitude === null ? null : [Number(row.latitude), Number(row.longitude)],
+    projectMapName: row.projectMapName,
   };
 }
 

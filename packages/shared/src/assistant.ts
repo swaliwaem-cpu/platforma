@@ -43,6 +43,10 @@ export type AssistantPlatformLot = {
   building: string | null;
   completion: string | null;
   updatedAt: string;
+  /** Project location for the results map; null when the project has no coordinates. */
+  coordinates: [latitude: number, longitude: number] | null;
+  /** Short project label for the map marker, as in the catalog map. */
+  projectMapName: string | null;
 };
 
 export type AssistantWebLot = {
