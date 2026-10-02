@@ -12,6 +12,11 @@
 
 ## 2026-10-02
 
+### ИИ-помощник: модель deepseek-v4.1-flash → deepseek-v4-pro
+
+- Дефолт в `apps/api/src/assistant/assistant-llm.client.ts` и в `docker-compose.yml` (прод запускается с базовым compose, поэтому `ASSISTANT_MODEL` в api приходит оттуда или из `/opt/platforma/.env.production`, если строка там есть). Также три `.env*.example`, eval-скрипт берёт `resolveAssistantModel()`. Обучение (training) не трогали.
+- Pro дороже в 8 раз по входу и в 4 по выходу (2.4/4.8 $ за 1M против 0.3/1.2). `ASSISTANT_MODEL_DAILY_BUDGET_USD` в коде не используется — лимита расходов нет.
+
 ### Production deploy map-legend-20261002T1350Z (main 414c837)
 
 - api + web на `release-414c837…-20261002T1350Z`, миграций нет (80 найдено, 0 pending), voice worker остался на e21364e. `origin/main` запушен до 414c837. Проверки через домен: `/` 200, `/api/health` 200, закрытые API 401; в новом api-образе напечатан тестовый PDF с живой картой (3 ЖК, 7 страниц). Бэкап (env + дамп) и откат — в `/opt/platforma-deploy-backups/map-legend-20261002T1350Z`.

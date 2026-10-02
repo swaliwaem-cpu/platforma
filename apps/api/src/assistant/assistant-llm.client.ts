@@ -3,8 +3,8 @@ import { Injectable } from '@nestjs/common';
 // Alibaba DashScope, OpenAI-compatible chat completions with function calling.
 
 const defaultBaseUrl = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
-// Picked by a side-by-side run on 2026-09-23: as accurate as Qwen, about twice as fast.
-const defaultModel = 'deepseek-v4.1-flash';
+// Switched from deepseek-v4.1-flash on 2026-10-02: the pro model, at roughly 4-8x the token price.
+const defaultModel = 'deepseek-v4-pro';
 const defaultTimeoutMs = 60_000;
 
 export type AssistantLlmToolCall = {

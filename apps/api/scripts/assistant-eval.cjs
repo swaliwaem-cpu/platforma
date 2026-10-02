@@ -26,7 +26,7 @@ async function main(argv) {
   const dist = resolve(options.dist ?? resolve(__dirname, '../dist'));
   const { runAssistantAgent } = require(resolve(dist, 'assistant/assistant-agent.js'));
   const { AssistantCatalogTools } = require(resolve(dist, 'assistant/assistant-catalog.tools.js'));
-  const { AssistantLlmClient } = require(resolve(dist, 'assistant/assistant-llm.client.js'));
+  const { AssistantLlmClient, resolveAssistantModel } = require(resolve(dist, 'assistant/assistant-llm.client.js'));
   const { AssistantWebTools } = require(resolve(dist, 'assistant/assistant-web.tools.js'));
   const { PrismaService } = require(resolve(dist, 'prisma/prisma.service.js'));
   const { estimateTrainingAiCost } = require(resolve(dist, 'training/training-ai-pricing.js'));
@@ -37,7 +37,7 @@ async function main(argv) {
     : fixture.cases;
   const llm = new AssistantLlmClient();
   if (!llm.isConfigured()) throw new Error('ALIBABA_API_KEY is not set');
-  const model = process.env.ASSISTANT_MODEL?.trim() || 'deepseek-v4.1-flash';
+  const model = resolveAssistantModel();
   const prisma = new PrismaService();
   await prisma.$connect();
   const catalog = new AssistantCatalogTools(prisma);
