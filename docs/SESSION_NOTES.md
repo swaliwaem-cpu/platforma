@@ -12,9 +12,13 @@
 
 ## 2026-10-02
 
+### Production deploy map-legend-20261002T1350Z (main 414c837)
+
+- api + web на `release-414c837…-20261002T1350Z`, миграций нет (80 найдено, 0 pending), voice worker остался на e21364e. `origin/main` запушен до 414c837. Проверки через домен: `/` 200, `/api/health` 200, закрытые API 401; в новом api-образе напечатан тестовый PDF с живой картой (3 ЖК, 7 страниц). Бэкап (env + дамп) и откат — в `/opt/platforma-deploy-backups/map-legend-20261002T1350Z`.
+
 ### Подборка ЖК (project-presentations): лимит 12 → 20, варианты карты
 
-- `PROJECT_PRESENTATION_MAX_OBJECTS` (api) и `projectPresentationMaxObjects` (web) = 20; тексты списка и редактора берут константу; тесты обновлены (PDF печатается на 20 ЖК). Не задеплоено.
+- `PROJECT_PRESENTATION_MAX_OBJECTS` (api) и `projectPresentationMaxObjects` (web) = 20; тексты списка и редактора берут константу; тесты обновлены (PDF печатается на 20 ЖК).
 - Страница «География»: подписи на карте налезали. Из 5 макетов (https://claude.ai/artifact/EuneF81oejPtVX9voCdnVb) выбран вариант 1 — на карте кружки с номерами (разводятся, к сдвинутым тянется линия), под картой легенда в 2 колонки: номер, название, номер страницы. Строки легенды намеренно НЕ кликабельные (просьба пользователя).
 - Высота кадра карты теперь зависит от числа ЖК: `getProjectPresentationMapSize(count)` вместо константы `PROJECT_PRESENTATION_MAP_SIZE` (shared-контракт, им пользуются рендер карты в API и превью в вебе). Отступ камеры 96 → 40.
 
