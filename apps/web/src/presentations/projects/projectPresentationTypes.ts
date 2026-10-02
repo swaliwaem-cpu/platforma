@@ -6,7 +6,7 @@ import type {
   ObjectStoredFile,
 } from '@platforma/shared';
 
-export const projectPresentationMaxObjects = 12;
+export const projectPresentationMaxObjects = 20;
 export const projectPresentationMaxImages = 3;
 export const projectPresentationMaxAdvantages = 4;
 export const projectPresentationMaxCoverFileSizeBytes = 10 * 1024 * 1024;

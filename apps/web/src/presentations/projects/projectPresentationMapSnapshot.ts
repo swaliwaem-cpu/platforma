@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import mapLibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import {
-  PROJECT_PRESENTATION_MAP_SIZE,
   PROJECT_PRESENTATION_MAP_VIEW,
   type ProjectPresentationMapMarker,
+  type ProjectPresentationMapSize,
 } from '@platforma/shared/project-presentation-template';
 
 import { resolveMapRuntimeConfig } from '../../map/mapContract';
@@ -18,10 +18,13 @@ export type ProjectPresentationMapSnapshot = {
 const renderDelayMs = 400;
 const renderTimeoutMs = 20_000;
 
-// Renders the preview basemap offscreen with the same camera rules as the PDF generator,
+// Renders the preview basemap offscreen with the same frame size and camera rules as the PDF generator,
 // so the editor shows where the projects land. Returns null while loading or when maps are off.
-export function useProjectPresentationMapSnapshot(points: ProjectPresentationMapPoint[]) {
-  const pointsKey = JSON.stringify(points.map(({ latitude, longitude }) => [latitude, longitude]));
+export function useProjectPresentationMapSnapshot(points: ProjectPresentationMapPoint[], size: ProjectPresentationMapSize) {
+  const pointsKey = JSON.stringify({
+    points: points.map(({ latitude, longitude }) => [latitude, longitude]),
+    size: [size.width, size.height],
+  });
   const [snapshot, setSnapshot] = useState<{ key: string; value: ProjectPresentationMapSnapshot } | null>(null);
 
   useEffect(() => {
@@ -31,19 +34,20 @@ export function useProjectPresentationMapSnapshot(points: ProjectPresentationMap
       return undefined;
     }
 
-    const coordinates = (JSON.parse(pointsKey) as Array<[number, number]>)
-      .map(([latitude, longitude]) => [longitude, latitude] as [number, number]);
+    const key = JSON.parse(pointsKey) as { points: Array<[number, number]>; size: [number, number] };
+    const coordinates = key.points.map(([latitude, longitude]) => [longitude, latitude] as [number, number]);
+    const [width, height] = key.size;
     let isCancelled = false;
     let removeMap: (() => void) | null = null;
     const container = window.document.createElement('div');
     container.setAttribute('aria-hidden', 'true');
     Object.assign(container.style, {
-      height: `${PROJECT_PRESENTATION_MAP_SIZE.height}px`,
+      height: `${height}px`,
       left: '-10000px',
       pointerEvents: 'none',
       position: 'fixed',
       top: '0',
-      width: `${PROJECT_PRESENTATION_MAP_SIZE.width}px`,
+      width: `${width}px`,
     });
 
     const timerId = window.setTimeout(() => {

@@ -222,8 +222,8 @@ test('all authenticated users see common draft and PDF history while responses r
   assert.match(service, /filesService\.delete\(document\.fileId\)/);
 });
 
-test('contracts fix the 12-object limit, 3:4 page, ordered snapshot and Telegram CTA', () => {
-  assert.match(types, /PROJECT_PRESENTATION_MAX_OBJECTS = 12/);
+test('contracts fix the 20-object limit, 3:4 page, ordered snapshot and Telegram CTA', () => {
+  assert.match(types, /PROJECT_PRESENTATION_MAX_OBJECTS = 20/);
   assert.match(types, /PROJECT_PRESENTATION_PAGE_WIDTH = (\d+)/);
   assert.match(types, /PROJECT_PRESENTATION_PAGE_HEIGHT = (\d+)/);
   const width = Number(types.match(/PROJECT_PRESENTATION_PAGE_WIDTH = (\d+)/)?.[1]);

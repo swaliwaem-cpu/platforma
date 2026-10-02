@@ -1142,7 +1142,7 @@ function ObjectSelectionStep({
     <section className="project-presentation-step-panel project-presentation-selection-step">
       <div className="project-presentation-step-heading">
         <div className="project-presentation-step-number">01</div>
-        <div><p className="eyebrow">Состав презентации</p><h3>Выберите жилые комплексы</h3><p>Добавьте от 1 до 12 ЖК. Их порядок станет порядком страниц в PDF.</p></div>
+        <div><p className="eyebrow">Состав презентации</p><h3>Выберите жилые комплексы</h3><p>Добавьте от 1 до {projectPresentationMaxObjects} ЖК. Их порядок станет порядком страниц в PDF.</p></div>
         <Badge variant="outline">{form.objects.length} / {projectPresentationMaxObjects}</Badge>
       </div>
 

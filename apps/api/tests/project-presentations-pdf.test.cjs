@@ -97,7 +97,7 @@ test('project PDF is printed by Chromium on a 3:4 canvas with exactly N + 4 page
   assert.ok(resolveBrowserExecutablePath(), 'a Chromium executable is required to print project presentations');
   const filesService = await createFilesService();
 
-  for (const objectsCount of [1, 12]) {
+  for (const objectsCount of [1, 20]) {
     const progress = [];
     const buffer = await new ProjectPresentationsPdfService(filesService).generate(
       createSnapshot(objectsCount),
@@ -130,6 +130,8 @@ test('project PDF links every project, the catalog contacts and always dials the
     'https://t.me/+OacAOVxTqWM0Y2Ji',
     'https://www.youtube.com/@fluffywhite.moscow',
   ]) assert.ok(source.includes(`/URI (${url})`), url);
+  // The map legend is plain text: it does not jump to the project pages.
+  assert.doesNotMatch(source, /\/Dest\b/);
   // The presentation is published by the company, so the broker phone of the snapshot is never printed.
   assert.match(source, /tel:\+74954924858/);
   assert.doesNotMatch(source, /tel:\+79991112233/);
@@ -194,7 +196,7 @@ test('template renders the approved page order, escapes user text and links the 
   const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
   const model = {
     cover: { title: '<script>alert(1)</script>', subtitle: 'Подзаголовок', issueLabel: 'Каталог 2026', imageSrc: null, features: [{ title: 'Локации рядом', caption: 'Метро и парки' }] },
-    map: { title: 'Москва рядом с парком', imageSrc: 'https://example.test/map.jpg', markers: [{ x: 10, y: 20, label: 'КОД Сокольники' }, { x: 600, y: 40, label: 'Дом Дау' }] },
+    map: { title: 'Москва рядом с парком', imageSrc: 'https://example.test/map.jpg', markers: [{ x: 40, y: 50, number: 1 }] },
     projects: [{
       key: 'p1',
       title: 'КОД Сокольники',
@@ -225,9 +227,11 @@ test('template renders the approved page order, escapes user text and links the 
   assert.match(html, /<span class="fw-facts__from">от<\/span><strong> 421 200 300 ₽<\/strong>/);
   assert.equal((html.match(/class="fw-facts__number"/g) ?? []).length, 4);
   assert.doesNotMatch(html, /OpenStreetMap/);
-  // Markers carry the project titles and flip to the left when they sit near the right edge of the frame.
-  assert.match(html, /class="fw-map__marker" style="left:10px;top:20px"><span class="fw-map__label">КОД Сокольники<\/span>/);
-  assert.match(html, /class="fw-map__marker is-flipped" style="left:600px;top:40px"><span class="fw-map__label">Дом Дау<\/span>/);
+  // Markers carry the project number; the legend under the map names the project and links to its page.
+  assert.match(html, /class="fw-map__marker" style="left:40px;top:50px">01<\/span>/);
+  assert.doesNotMatch(html, /fw-map__label/);
+  assert.match(html, /<div class="fw-map__row is-column-end"><span class="fw-map__number">01<\/span><span class="fw-map__name">КОД Сокольники<\/span><span class="fw-map__page">3<\/span><\/div>/);
+  assert.doesNotMatch(html, /<a class="fw-map__row/);
   assert.ok(html.includes(
     `class="fw-button fw-button--details" href="https://t.me/svetlana_fluffywhite?text=${encodeURIComponent('КОД Сокольники')}"`,
   ));
@@ -235,7 +239,7 @@ test('template renders the approved page order, escapes user text and links the 
   assert.match(html, /\.fw-feature>div>span\{display:block;margin-top:8px/);
   assert.doesNotMatch(html, /\.fw-feature span\{/);
   // Blurred shadows turn into grey boxes in PDF viewers, so the map markers draw none.
-  assert.doesNotMatch(html, /\.fw-map__(?:marker|label)\{[^}]*box-shadow:[^;}]*\d+px \d+px \d+px/);
+  assert.doesNotMatch(html, /\.fw-map__marker\{[^}]*box-shadow:[^;}]*\d+px \d+px \d+px/);
   assert.match(html, /class="fw-button fw-button--start" href="https:\/\/clck\.ru\/3QmQoS"/);
   assert.match(html, /<a href="https:\/\/www\.instagram\.com\/fluffywhite\.estate\/" class="fw-social"><span>Instagram<\/span>/);
   assert.match(html, /<a href="https:\/\/t\.me\/\+OacAOVxTqWM0Y2Ji" class="fw-social"><span>Telegram<\/span>/);
@@ -261,17 +265,74 @@ test('description is cut to 430 characters on a word boundary and markers fit th
   assert.match(cut, /\S…$/);
   assert.equal(template.truncateProjectPresentationDescription('  Коротко   и ясно '), 'Коротко и ясно');
 
+  const size = template.getProjectPresentationMapSize(3);
   const markers = template.getProjectPresentationFallbackMarkers([
-    { latitude: 55.79, longitude: 37.68, label: 'Первый' },
-    { latitude: null, longitude: 37.6, label: 'Без координат' },
-    { latitude: 55.7, longitude: 37.5, label: 'Второй' },
-  ]);
+    { latitude: 55.79, longitude: 37.68, number: 1 },
+    { latitude: null, longitude: 37.6, number: 2 },
+    { latitude: 55.7, longitude: 37.5, number: 3 },
+  ], size);
   assert.equal(markers.length, 2);
-  assert.deepEqual(markers.map((marker) => marker.label), ['Первый', 'Второй']);
+  assert.deepEqual(markers.map((marker) => marker.number), [1, 3]);
   for (const { x, y } of markers) {
-    assert.ok(x >= 0 && x <= template.PROJECT_PRESENTATION_MAP_SIZE.width);
-    assert.ok(y >= 0 && y <= template.PROJECT_PRESENTATION_MAP_SIZE.height);
+    assert.ok(x >= 0 && x <= size.width);
+    assert.ok(y >= 0 && y <= size.height);
   }
+});
+
+test('the map frame gives way to a two-column legend that grows with the projects', async () => {
+  const template = await loadTemplate();
+
+  assert.deepEqual(template.getProjectPresentationMapSize(0), { width: 648, height: 735 });
+  assert.deepEqual(template.getProjectPresentationMapSize(1), { width: 648, height: 673 });
+  assert.deepEqual(template.getProjectPresentationMapSize(2), { width: 648, height: 673 });
+  assert.deepEqual(template.getProjectPresentationMapSize(20), { width: 648, height: 439 });
+});
+
+test('close projects get separate numbered pins with a leader to their point and every project is in the legend', async () => {
+  const template = await loadTemplate();
+  const fontUrls = Object.fromEntries(template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `/fonts/${file}`]));
+  const projects = Array.from({ length: 5 }, (_, index) => ({
+    key: `p${index + 1}`,
+    title: `ЖК ${index + 1}`,
+    description: '',
+    price: '',
+    propertyClass: '',
+    metro: '',
+    advantages: [],
+    imageSrcs: [null, null, null],
+  }));
+  // Two projects share a point, a third is 10 px away, the fifth project has no coordinates.
+  const markers = [
+    { x: 300, y: 200, number: 1 },
+    { x: 300, y: 200, number: 2 },
+    { x: 310, y: 200, number: 3 },
+    { x: 100, y: 100, number: 4 },
+  ];
+  const render = () => template.renderProjectPresentationHtml(
+    { cover: { title: 'T', subtitle: '', issueLabel: '', imageSrc: null }, map: { title: 'M', imageSrc: null, markers }, projects, contacts: { ctaUrl: 'https://t.me/x' } },
+    { fontUrls, pageKeys: ['map'] },
+  );
+  const html = render();
+  const pins = [...html.matchAll(/class="fw-map__marker" style="left:([\d.]+)px;top:([\d.]+)px">(\d+)</g)]
+    .map(([, x, y, number]) => ({ x: Number(x), y: Number(y), number }));
+
+  assert.deepEqual(pins.map((pin) => pin.number), ['01', '02', '03', '04']);
+  for (let first = 0; first < pins.length; first += 1) {
+    for (let second = first + 1; second < pins.length; second += 1) {
+      const distance = Math.hypot(pins[first].x - pins[second].x, pins[first].y - pins[second].y);
+      assert.ok(distance >= 26.5, `pins ${first + 1} and ${second + 1} overlap: ${distance}`);
+    }
+  }
+  // The lone project keeps its place; the moved pins draw a leader back to their point.
+  assert.deepEqual(pins[3], { x: 100, y: 100, number: '04' });
+  assert.equal((html.match(/<line /g) ?? []).length, 3);
+  assert.match(html, /class="fw-map__frame is-empty" style="height:621px"/);
+  assert.equal((html.match(/class="fw-map__row/g) ?? []).length, 5);
+  assert.match(html, /grid-template-rows:repeat\(3,26px\)/);
+  assert.equal((html.match(/class="fw-map__row is-column-end"/g) ?? []).length, 2);
+  assert.match(html, /<span class="fw-map__number">05<\/span><span class="fw-map__name">ЖК 5<\/span><span class="fw-map__page">7<\/span>/);
+  // The layout is deterministic, so the preview and the PDF place the pins the same way.
+  assert.equal(render(), html);
 });
 
 test('map rendering retries a stalled attempt on a fresh page and reports every stage', async () => {
@@ -295,6 +356,7 @@ test('map rendering retries a stalled attempt on a fresh page and reports every 
       failingBrowser,
       template,
       [{ latitude: 55.75, longitude: 37.61 }],
+      template.getProjectPresentationMapSize(1),
       { enabled: true, styleUrl: 'https://example.test/style', timeoutMs: 1000, attempts: 2 },
       { onStage: async (stage) => stages.push(stage), onRetry: (error, attempt) => retries.push([attempt, error.message]) },
     ),

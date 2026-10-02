@@ -11,7 +11,7 @@ export type ProjectPresentationMapSnapshot = {
 };
 
 type MapView = ProjectPresentationTemplateModule['PROJECT_PRESENTATION_MAP_VIEW'];
-type MapSize = ProjectPresentationTemplateModule['PROJECT_PRESENTATION_MAP_SIZE'];
+export type ProjectPresentationMapSize = ReturnType<ProjectPresentationTemplateModule['getProjectPresentationMapSize']>;
 type BrowserMapArgs = {
   styleUrl: string;
   points: ProjectPresentationMapPoint[];
@@ -62,13 +62,14 @@ export async function renderProjectPresentationMap(
   browser: Browser,
   template: ProjectPresentationTemplateModule,
   points: ProjectPresentationMapPoint[],
+  size: ProjectPresentationMapSize,
   config: MapRenderConfig,
   hooks: MapRenderHooks = {},
 ): Promise<ProjectPresentationMapSnapshot> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= config.attempts; attempt += 1) {
     try {
-      return await renderMapOnce(browser, template, points, config, hooks);
+      return await renderMapOnce(browser, template, points, size, config, hooks);
     } catch (error) {
       lastError = error;
       if (attempt < config.attempts) hooks.onRetry?.(error, attempt);
@@ -81,10 +82,10 @@ async function renderMapOnce(
   browser: Browser,
   template: ProjectPresentationTemplateModule,
   points: ProjectPresentationMapPoint[],
+  size: ProjectPresentationMapSize,
   config: MapRenderConfig,
   hooks: MapRenderHooks,
 ) {
-  const size: MapSize = template.PROJECT_PRESENTATION_MAP_SIZE;
   const libraryDir = dirname(require.resolve('maplibre-gl/dist/maplibre-gl.css'));
   const html = '<!doctype html><html><head><link rel="stylesheet" href="/maplibre/maplibre-gl.css">'
     + `<style>html,body{margin:0;overflow:hidden}#map{position:relative;width:${size.width}px;height:${size.height}px}</style></head>`

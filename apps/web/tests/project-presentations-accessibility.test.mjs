@@ -70,7 +70,7 @@ test('editor serializes autosave, preserves explicit order and recovers from ver
 });
 
 test('editor enforces selection limits and validates resolved content before generation', () => {
-  assert.match(typesSource, /projectPresentationMaxObjects = 12/);
+  assert.match(typesSource, /projectPresentationMaxObjects = 20/);
   assert.match(typesSource, /projectPresentationMaxImages = 3/);
   assert.match(typesSource, /projectPresentationMaxAdvantages = 4/);
   assert.match(editorSource, /currentForm\.objects\.length >= projectPresentationMaxObjects/);

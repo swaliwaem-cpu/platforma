@@ -32,9 +32,10 @@ import {
   listProjectPresentationDrafts,
   retryProjectPresentationDocument,
 } from './projectPresentationApi';
-import type {
-  ProjectPresentationDocument,
-  ProjectPresentationDraft,
+import {
+  projectPresentationMaxObjects,
+  type ProjectPresentationDocument,
+  type ProjectPresentationDraft,
 } from './projectPresentationTypes';
 import './projectPresentations.css';
 
@@ -241,7 +242,7 @@ export function ProjectPresentationsPage({ navigate }: ProjectPresentationsPageP
                   <CardDescription>{draft.owner?.name ?? draft.owner?.email ?? `Изменён ${formatDateTime(draft.updatedAt)}`}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <strong>{draft.objectsCount ?? draft.objects.length} из 12 ЖК</strong>
+                  <strong>{draft.objectsCount ?? draft.objects.length} из {projectPresentationMaxObjects} ЖК</strong>
                   <span>Версия {draft.version}</span>
                 </CardContent>
                 <CardFooter>
@@ -267,7 +268,7 @@ export function ProjectPresentationsPage({ navigate }: ProjectPresentationsPageP
             <EmptyHeader>
               <EmptyMedia variant="icon"><FilePlus2Icon aria-hidden="true" /></EmptyMedia>
               <EmptyTitle>Черновиков пока нет</EmptyTitle>
-              <EmptyDescription>Создайте презентацию и добавьте до 12 жилых комплексов.</EmptyDescription>
+              <EmptyDescription>Создайте презентацию и добавьте до {projectPresentationMaxObjects} жилых комплексов.</EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
               <Button type="button" onClick={() => navigate('/presentations/projects/new')}>Создать презентацию</Button>

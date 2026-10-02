@@ -14,6 +14,7 @@ import {
   getProjectPresentationMapConfig,
   renderProjectPresentationMap,
   type ProjectPresentationMapPoint,
+  type ProjectPresentationMapSize,
   type ProjectPresentationMapSnapshot,
 } from './project-presentations-map';
 import { ProjectPresentationSnapshot, ProjectPresentationSnapshotImage } from './project-presentations.types';
@@ -64,7 +65,9 @@ export class ProjectPresentationsPdfService {
     });
     try {
       await onProgress?.(60);
-      const map = await this.renderMap(browser, template, snapshot, onProgress);
+      // The legend under the map takes a row per two projects, so the frame height depends on their count.
+      const mapSize = template.getProjectPresentationMapSize(snapshot.objects.length);
+      const map = await this.renderMap(browser, template, snapshot, mapSize, onProgress);
       if (map) assets.set('map', { body: map.image, contentType: 'image/jpeg' });
       const mapRenderedAt = Date.now();
       await onProgress?.(75);
@@ -76,7 +79,7 @@ export class ProjectPresentationsPdfService {
       const fontUrls = Object.fromEntries(
         template.PROJECT_PRESENTATION_FONT_FILES.map((file) => [file, `${assetOrigin}/fonts/${file}`]),
       ) as TemplateFontUrls;
-      const html = template.renderProjectPresentationHtml(this.createModel(template, snapshot, assets, map), { fontUrls });
+      const html = template.renderProjectPresentationHtml(this.createModel(template, snapshot, assets, map, mapSize), { fontUrls });
       await page.setContent(html, { waitUntil: 'load', timeout: renderTimeoutMs });
       await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', undefined, {
         timeout: renderTimeoutMs,
@@ -106,14 +109,16 @@ export class ProjectPresentationsPdfService {
     snapshot: ProjectPresentationSnapshot,
     assets: Map<string, { body: Buffer; contentType: string }>,
     map: ProjectPresentationMapSnapshot | null,
+    mapSize: ProjectPresentationMapSize,
   ): TemplateModel {
     const src = (key: string) => (assets.has(key) ? `${assetOrigin}/assets/${encodeURIComponent(key)}` : null);
-    // The basemap projects the located projects in order, so their titles label the markers one by one.
-    const located = snapshot.objects.filter(hasCoordinates);
+    // The basemap projects the located projects in order, so each marker gets the number of its project page.
+    const locatedNumbers = snapshot.objects.flatMap((object, index) => (hasCoordinates(object) ? [index + 1] : []));
     const markers = map
-      ? map.markers.map((marker, index) => ({ ...marker, label: located[index]?.title ?? '' }))
+      ? map.markers.map((marker, index) => ({ ...marker, number: locatedNumbers[index] ?? null }))
       : template.getProjectPresentationFallbackMarkers(
-        snapshot.objects.map(({ latitude, longitude, title }) => ({ latitude, longitude, label: title })),
+        snapshot.objects.map(({ latitude, longitude }, index) => ({ latitude, longitude, number: index + 1 })),
+        mapSize,
       );
     return {
       cover: {
@@ -186,6 +191,7 @@ export class ProjectPresentationsPdfService {
     browser: Browser,
     template: ProjectPresentationTemplateModule,
     snapshot: ProjectPresentationSnapshot,
+    mapSize: ProjectPresentationMapSize,
     onProgress: Progress,
   ) {
     const config = getProjectPresentationMapConfig();
@@ -207,6 +213,7 @@ export class ProjectPresentationsPdfService {
         browser,
         template,
         points.map(({ latitude, longitude }) => ({ latitude, longitude })),
+        mapSize,
         config,
         {
           onStage: (stage) => report(mapProgress[stage]),

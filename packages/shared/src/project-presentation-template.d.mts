@@ -5,7 +5,9 @@ export type ProjectPresentationFontFile =
   | 'Inter-Medium.woff2'
   | 'Lora-Italic.woff2';
 
-export type ProjectPresentationMapMarker = { x: number; y: number; label?: string };
+// `number` is the project's position in the presentation, printed on the pin and in the legend.
+export type ProjectPresentationMapMarker = { x: number; y: number; number?: number | null };
+export type ProjectPresentationMapSize = { width: number; height: number };
 
 export type ProjectPresentationCoverFeature = { title: string; caption: string };
 
@@ -47,7 +49,6 @@ export type ProjectPresentationTemplateOptions = {
 };
 
 export declare const PROJECT_PRESENTATION_PAGE_SIZE: Readonly<{ width: 720; height: 960 }>;
-export declare const PROJECT_PRESENTATION_MAP_SIZE: Readonly<{ width: 648; height: 735 }>;
 export declare const PROJECT_PRESENTATION_MAP_VIEW: Readonly<{
   padding: number;
   maxZoom: number;
@@ -86,8 +87,10 @@ export declare function resolveProjectPresentationCoverFeatures(
 
 export declare function truncateProjectPresentationDescription(value: string | null | undefined, limit?: number): string;
 export declare function getProjectPresentationPageKeys(projectKeys: string[]): string[];
+export declare function getProjectPresentationMapSize(projectsCount: number): ProjectPresentationMapSize;
 export declare function getProjectPresentationFallbackMarkers(
-  points: Array<{ latitude: number | null; longitude: number | null; label?: string }>,
+  points: Array<{ latitude: number | null; longitude: number | null; number?: number | null }>,
+  size: ProjectPresentationMapSize,
 ): ProjectPresentationMapMarker[];
 export declare function renderProjectPresentationHtml(
   model: ProjectPresentationTemplateModel,

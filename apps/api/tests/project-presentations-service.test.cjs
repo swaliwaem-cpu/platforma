@@ -215,9 +215,9 @@ test('project presentation routes require the project presentation permission', 
   }
 });
 
-test('draft object parser accepts exactly 12 unique projects and preserves manual order', () => {
+test('draft object parser accepts exactly 20 unique projects and preserves manual order', () => {
   const service = new ProjectPresentationsService({}, {});
-  const input = Array.from({ length: 12 }, (_, index) => ({
+  const input = Array.from({ length: 20 }, (_, index) => ({
     objectId: uuid(index + 1),
     manualTitle: `Проект ${index + 1}`,
     advantages: index === 0 ? ['Парк', 'Метро', 'Школа'] : [],
@@ -226,20 +226,20 @@ test('draft object parser accepts exactly 12 unique projects and preserves manua
 
   const parsed = service.parseDraftObjects(input);
 
-  assert.equal(parsed.length, 12);
+  assert.equal(parsed.length, 20);
   assert.deepEqual(parsed.map((item) => item.objectId), input.map((item) => item.objectId));
   assert.deepEqual(parsed[0].advantages, ['Парк', 'Метро', 'Школа']);
   assert.deepEqual(parsed[0].imageIds, [uuid(101), uuid(102), uuid(103)]);
 });
 
-test('draft object parser rejects the thirteenth project, duplicates and oversized card data', () => {
+test('draft object parser rejects the twenty-first project, duplicates and oversized card data', () => {
   const service = new ProjectPresentationsService({}, {});
 
   assert.throws(
     () => service.parseDraftObjects(
-      Array.from({ length: 13 }, (_, index) => ({ objectId: uuid(index + 1) })),
+      Array.from({ length: 21 }, (_, index) => ({ objectId: uuid(index + 1) })),
     ),
-    (error) => error instanceof BadRequestException && /0 to 12 projects/.test(error.message),
+    (error) => error instanceof BadRequestException && /0 to 20 projects/.test(error.message),
   );
   assert.throws(
     () => service.parseDraftObjects([{ objectId: uuid(1) }, { objectId: uuid(1) }]),

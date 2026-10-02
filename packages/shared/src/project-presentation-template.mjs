@@ -3,9 +3,13 @@
 // Sizes are CSS pixels of a 720×960 page (= 540×720 pt), copied from the approved reference PDF.
 
 export const PROJECT_PRESENTATION_PAGE_SIZE = Object.freeze({ width: 720, height: 960 });
-export const PROJECT_PRESENTATION_MAP_SIZE = Object.freeze({ width: 648, height: 735 });
+// The map and its legend share the area under the title: the legend grows with the projects, the map takes the rest.
+const mapArea = Object.freeze({ width: 648, height: 735 });
+const mapLegend = Object.freeze({ gap: 12, padding: 12, rowHeight: 26 });
+// Close pins push each other apart until their centers are this far, and keep a leader to their point.
+const mapPinSpacing = 27;
 export const PROJECT_PRESENTATION_MAP_VIEW = Object.freeze({
-  padding: 96,
+  padding: 40,
   maxZoom: 14,
   singlePointZoom: 13,
   defaultCenter: Object.freeze([37.6173, 55.7558]),
@@ -82,11 +86,18 @@ export function getProjectPresentationPageKeys(projectKeys) {
   return ['cover', 'map', ...projectKeys, 'company', 'final'];
 }
 
+// The legend lists the projects in two columns under the map, so the map frame loses the legend's height.
+export function getProjectPresentationMapSize(projectsCount) {
+  const rows = getMapLegendRows(projectsCount);
+  const legendHeight = rows ? mapLegend.gap + mapLegend.padding * 2 + rows * mapLegend.rowHeight : 0;
+  return { width: mapArea.width, height: mapArea.height - legendHeight };
+}
+
 // Positions markers without a map image: equirectangular fit inside the padded map frame.
-export function getProjectPresentationFallbackMarkers(points) {
+export function getProjectPresentationFallbackMarkers(points, size) {
   const valid = points.filter((point) => isCoordinate(point.latitude, point.longitude));
   if (!valid.length) return [];
-  const { width, height } = PROJECT_PRESENTATION_MAP_SIZE;
+  const { width, height } = size;
   const { padding } = PROJECT_PRESENTATION_MAP_VIEW;
   const latitudes = valid.map((point) => point.latitude);
   const longitudes = valid.map((point) => point.longitude);
@@ -99,7 +110,7 @@ export function getProjectPresentationFallbackMarkers(points) {
   return valid.map((point) => ({
     x: width / 2 + (point.longitude - centerLongitude) * longitudeScale * scale,
     y: height / 2 - (point.latitude - centerLatitude) * scale,
-    label: point.label ?? '',
+    number: point.number ?? null,
   }));
 }
 
@@ -108,7 +119,7 @@ export function renderProjectPresentationHtml(model, options) {
   const include = (key) => !keys || keys.has(key);
   const pages = [];
   if (include('cover')) pages.push(renderCover(model.cover));
-  if (include('map')) pages.push(renderMap(model.map));
+  if (include('map')) pages.push(renderMap(model.map, model.projects));
   for (const project of model.projects) {
     if (include(project.key)) pages.push(renderProject(project, model.contacts.ctaUrl));
   }
@@ -133,18 +144,78 @@ function renderCover(cover) {
 </section>`;
 }
 
-function renderMap(map) {
-  // Labels sit to the right of their dot, and flip to the left half of the frame so they stay inside it.
-  const flipFrom = PROJECT_PRESENTATION_MAP_SIZE.width * 0.6;
-  const markers = map.markers
-    .filter((marker) => Number.isFinite(marker.x) && Number.isFinite(marker.y))
-    .map((marker) => `<span class="fw-map__marker${marker.x > flipFrom ? ' is-flipped' : ''}" style="left:${round(marker.x)}px;top:${round(marker.y)}px">`
-      + `${marker.label ? `<span class="fw-map__label">${text(marker.label)}</span>` : ''}</span>`)
+// The map shows numbered pins; the legend under it names the projects in the order of their pages (plain text, no links).
+function renderMap(map, projects) {
+  const size = getProjectPresentationMapSize(projects.length);
+  const pins = spreadMapPins(map.markers.filter((marker) => Number.isFinite(marker.x) && Number.isFinite(marker.y)), size);
+  const leaders = pins.filter((pin) => Math.hypot(pin.pinX - pin.x, pin.pinY - pin.y) > 4);
+  const leaderLayer = leaders.length
+    ? `<svg class="fw-map__leaders" width="${size.width}" height="${size.height}" viewBox="0 0 ${size.width} ${size.height}" aria-hidden="true">${leaders.map((pin) => `<line x1="${round(pin.x)}" y1="${round(pin.y)}" x2="${round(pin.pinX)}" y2="${round(pin.pinY)}"/><circle cx="${round(pin.x)}" cy="${round(pin.y)}" r="3"/>`).join('')}</svg>`
+    : '';
+  const markers = pins
+    .map((pin) => `<span class="fw-map__marker" style="left:${round(pin.pinX)}px;top:${round(pin.pinY)}px">${pin.number ? String(pin.number).padStart(2, '0') : ''}</span>`)
     .join('');
+  const rows = getMapLegendRows(projects.length);
+  // A single project takes the whole row, so its page number is not left in the middle of the card.
+  const columns = projects.length > 1 ? '' : ';grid-template-columns:1fr';
+  // Project pages follow the cover and the map, so the project number N is printed on page N + 2.
+  const legend = rows
+    ? `<nav class="fw-map__legend" style="grid-template-rows:repeat(${rows},${mapLegend.rowHeight}px)${columns}">${projects.map((project, index) => `<div class="fw-map__row${(index + 1) % rows === 0 || index === projects.length - 1 ? ' is-column-end' : ''}">`
+      + `<span class="fw-map__number">${String(index + 1).padStart(2, '0')}</span><span class="fw-map__name">${text(project.title)}</span><span class="fw-map__page">${index + 3}</span></div>`).join('')}</nav>`
+    : '';
   return `<section class="fw-page fw-map" data-page="map">
 <header class="fw-map__head"><h2 class="fw-map__title" data-fit data-fit-lines="3" data-fit-height="152" data-fit-min="32">${text(map.title)}</h2></header>
-<div class="fw-map__frame${map.imageSrc ? '' : ' is-empty'}">${map.imageSrc ? `<img src="${escapeHtml(map.imageSrc)}" alt="">` : ''}${markers}</div>
+<div class="fw-map__frame${map.imageSrc ? '' : ' is-empty'}" style="height:${size.height}px">${map.imageSrc ? `<img src="${escapeHtml(map.imageSrc)}" alt="">` : ''}${leaderLayer}${markers}</div>
+${legend}
 </section>`;
+}
+
+function getMapLegendRows(projectsCount) {
+  return Math.ceil(Math.max(0, projectsCount) / 2);
+}
+
+// Overlapping pins push each other apart while a weak pull keeps them near their points; the last passes only separate.
+function spreadMapPins(markers, size) {
+  const margin = 14;
+  const pins = markers.map((marker) => ({ ...marker, pinX: marker.x, pinY: marker.y }));
+  const separate = () => {
+    let moved = false;
+    for (let first = 0; first < pins.length; first += 1) {
+      for (let second = first + 1; second < pins.length; second += 1) {
+        const a = pins[first];
+        const b = pins[second];
+        let dx = b.pinX - a.pinX;
+        let dy = b.pinY - a.pinY;
+        let distance = Math.hypot(dx, dy);
+        if (distance >= mapPinSpacing) continue;
+        if (distance < 0.01) {
+          // Projects at the same point fan out in a fixed direction per pin, so the layout is stable.
+          dx = Math.cos(second * 2.4);
+          dy = Math.sin(second * 2.4);
+          distance = 1;
+        }
+        const push = (mapPinSpacing - distance) / 2 + 0.2;
+        a.pinX -= (dx / distance) * push;
+        a.pinY -= (dy / distance) * push;
+        b.pinX += (dx / distance) * push;
+        b.pinY += (dy / distance) * push;
+        moved = true;
+      }
+    }
+    for (const pin of pins) {
+      pin.pinX = Math.min(Math.max(pin.pinX, margin), size.width - margin);
+      pin.pinY = Math.min(Math.max(pin.pinY, margin), size.height - margin);
+    }
+    return moved;
+  };
+  for (let step = 0; step < 400 && separate(); step += 1) {
+    for (const pin of pins) {
+      pin.pinX += (pin.x - pin.pinX) * 0.015;
+      pin.pinY += (pin.y - pin.pinY) * 0.015;
+    }
+  }
+  for (let step = 0; step < 100 && separate(); step += 1);
+  return pins;
 }
 
 function renderProject(project, ctaUrl) {
@@ -366,9 +437,16 @@ img{display:block;width:100%;height:100%;object-fit:cover}
 .fw-map__head{position:absolute;top:30px;right:36px;left:36px}
 .fw-map__title{font:400 66px/64.9px "FW Display";letter-spacing:-.035em;text-wrap:balance}
 .fw-map__frame{position:absolute;top:189px;left:36px;width:648px;height:735px;overflow:hidden;border-radius:28px;background:#e4e0d7}
-.fw-map__marker{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border:4px solid #f4f2eb;border-radius:50%;background:#430a13;box-shadow:0 0 0 6px rgba(67,10,19,.16)}
-.fw-map__label{position:absolute;top:50%;left:26px;max-width:200px;overflow:hidden;padding:4.5px 11px;border-radius:999px;background:#430a13;color:#f4f2eb;font-size:12.5px;font-weight:500;line-height:15px;text-overflow:ellipsis;white-space:nowrap;transform:translateY(-50%)}
-.fw-map__marker.is-flipped .fw-map__label{right:26px;left:auto}
+.fw-map__leaders{position:absolute;top:0;left:0;overflow:visible}
+.fw-map__leaders line{stroke:#430a13;stroke-width:1.2}
+.fw-map__leaders circle{fill:#430a13}
+.fw-map__marker{position:absolute;display:grid;width:24px;height:24px;margin:-12px 0 0 -12px;place-items:center;padding-top:1.5px;border:2px solid #f4f2eb;border-radius:50%;background:#430a13;box-shadow:0 0 0 4px rgba(67,10,19,.16);color:#f4f2eb;font:500 10.5px/1 "FW Display";letter-spacing:-.01em}
+.fw-map__legend{position:absolute;bottom:36px;left:36px;display:grid;width:648px;padding:12px 20px;grid-auto-flow:column;grid-template-columns:1fr 1fr;column-gap:28px;border-radius:26px;background:#fff}
+.fw-map__row{display:flex;min-width:0;align-items:center;gap:10px;border-bottom:1px solid #ece8df}
+.fw-map__row.is-column-end{border-bottom:0}
+.fw-map__number{display:grid;flex:none;width:22px;height:22px;place-items:center;padding-top:2.5px;border-radius:7px;background:#f3e4e6;color:#430a13;font:500 10.5px/1 "FW Display"}
+.fw-map__name{min-width:0;flex:1;overflow:hidden;font-size:13px;font-weight:500;line-height:16px;text-overflow:ellipsis;white-space:nowrap}
+.fw-map__page{flex:none;color:#979b92;font:400 11px/1 "FW Display"}
 .fw-project__head{position:absolute;top:30px;left:36px;width:648px;height:273px;overflow:hidden}
 .fw-project__title{font:400 60px/60px "FW Display";letter-spacing:-.035em;text-wrap:balance}
 .fw-project__description{margin-top:13px;color:#63685f;font-size:15px;line-height:23px;text-wrap:pretty}

@@ -144,6 +144,9 @@ test('project preview renders the shared PDF template with the reference fonts a
   assert.doesNotMatch(previewSource, /fluffywhite-logo-gold\.png/u);
   assert.doesNotMatch(stylesSource, /Noto Serif Display/u);
   assert.match(mapSnapshotSource, /PROJECT_PRESENTATION_MAP_VIEW/u);
+  // The preview basemap uses the PDF frame, which shrinks for the legend as projects are added.
+  assert.match(previewSource, /getProjectPresentationMapSize\(form\.objects\.length\)/u);
+  assert.match(previewSource, /useProjectPresentationMapSnapshot\(mapPoints, mapSize\)/u);
   assert.match(mapSnapshotSource, /localizeOpenMapTilesLabels\(map\)/u);
   assert.match(mapSnapshotSource, /preserveDrawingBuffer: true/u);
   // The boss dropped the client line from the cover and the note from the map page.

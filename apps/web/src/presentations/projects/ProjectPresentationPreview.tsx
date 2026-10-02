@@ -4,9 +4,11 @@ import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type { AuthUser } from '@platforma/shared';
 import {
   getProjectPresentationFallbackMarkers,
+  getProjectPresentationMapSize,
   PROJECT_PRESENTATION_LINKS,
   PROJECT_PRESENTATION_PAGE_SIZE,
   renderProjectPresentationHtml,
+  type ProjectPresentationMapSize,
   type ProjectPresentationTemplateModel,
 } from '@platforma/shared/project-presentation-template';
 import interMediumUrl from '@platforma/shared/project-presentation-fonts/Inter-Medium.woff2?url';
@@ -60,12 +62,12 @@ export function ProjectPresentationPreview({
   const safePageIndex = Math.min(activePageIndex, Math.max(pages.length - 1, 0));
   const activePage = pages[safePageIndex];
   const locatedProjects = useMemo(
-    () => form.objects.flatMap((item) => (
+    () => form.objects.flatMap((item, index) => (
       item.object.latitude !== null && item.object.longitude !== null
         ? [{
           latitude: item.object.latitude,
           longitude: item.object.longitude,
-          label: item.manualTitle || item.object.title,
+          number: index + 1,
         }]
         : []
     )),
@@ -75,15 +77,16 @@ export function ProjectPresentationPreview({
     () => locatedProjects.map(({ latitude, longitude }) => ({ latitude, longitude })),
     [locatedProjects],
   );
-  const mapSnapshot = useProjectPresentationMapSnapshot(mapPoints);
+  const mapSize = useMemo(() => getProjectPresentationMapSize(form.objects.length), [form.objects.length]);
+  const mapSnapshot = useProjectPresentationMapSnapshot(mapPoints, mapSize);
   const deferredForm = useDeferredValue(form);
   const activePageKey = activePage?.key ?? 'cover';
   const html = useMemo(
     () => renderProjectPresentationHtml(
-      createPreviewModel(deferredForm, mapSnapshot, locatedProjects),
+      createPreviewModel(deferredForm, mapSnapshot, locatedProjects, mapSize),
       { fontUrls, pageKeys: [activePageKey] },
     ),
-    [activePageKey, deferredForm, locatedProjects, mapSnapshot],
+    [activePageKey, deferredForm, locatedProjects, mapSize, mapSnapshot],
   );
   const { frameRef, scale } = usePageScale();
 
@@ -174,14 +177,15 @@ export function ProjectPresentationPreview({
 function createPreviewModel(
   form: ProjectPresentationDraftForm,
   mapSnapshot: ReturnType<typeof useProjectPresentationMapSnapshot>,
-  locatedProjects: Array<{ latitude: number; longitude: number; label: string }>,
+  locatedProjects: Array<{ latitude: number; longitude: number; number: number }>,
+  mapSize: ProjectPresentationMapSize,
 ): ProjectPresentationTemplateModel {
   const coverImage = findProjectImage(form.objects, form.coverImageId);
   const coverFileId = form.coverFile?.id ?? coverImage?.file.id ?? null;
-  // Snapshot markers come back in the order the points were projected, so the titles line up one by one.
+  // Snapshot markers come back in the order the points were projected, so the project numbers line up one by one.
   const markers = mapSnapshot
-    ? mapSnapshot.markers.map((marker, index) => ({ ...marker, label: locatedProjects[index]?.label ?? '' }))
-    : getProjectPresentationFallbackMarkers(locatedProjects);
+    ? mapSnapshot.markers.map((marker, index) => ({ ...marker, number: locatedProjects[index]?.number ?? null }))
+    : getProjectPresentationFallbackMarkers(locatedProjects, mapSize);
 
   return {
     cover: {
