@@ -12,6 +12,10 @@
 
 ## 2026-10-02
 
+### Production deploy assistant-pro-20261002T1426Z (main f4c1686)
+
+- Только api на `release-f4c1686…-20261002T1426Z`, web остался на 414c837, voice worker — на e21364e. Миграций нет (80 найдено, 0 pending). В `.env.production` поменялся только `API_IMAGE`; `ASSISTANT_MODEL` там не задан, модель берётся из дефолта compose — в контейнере `deepseek-v4-pro`. `origin/main` запушен до f4c1686. Проверки через домен: `/` 200, `/api/health` 200, `/api/assistant/config` без входа 401. Бэкап (env + дамп, 566 строк) и команда отката — в `/opt/platforma-deploy-backups/assistant-pro-20261002T1426Z`.
+
 ### ИИ-помощник: модель deepseek-v4.1-flash → deepseek-v4-pro
 
 - Дефолт в `apps/api/src/assistant/assistant-llm.client.ts` и в `docker-compose.yml` (прод запускается с базовым compose, поэтому `ASSISTANT_MODEL` в api приходит оттуда или из `/opt/platforma/.env.production`, если строка там есть). Также три `.env*.example`, eval-скрипт берёт `resolveAssistantModel()`. Обучение (training) не трогали.
