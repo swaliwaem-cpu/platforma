@@ -33,6 +33,10 @@
 
 ## 2026-10-01
 
+### ИИ-помощник: лоты из окна карты открываются в новой вкладке
+
+- `PlatformLotCard` получил `openInNewTab`; включён только в `AssistantResultsMap` (в чате ссылки по-прежнему в той же вкладке). Файл: `apps/web/src/assistant/AssistantChat.tsx`. Новая вкладка логинится сама через refresh-cookie.
+
 ### Production deploy results-map-20261001T0751Z (main 84f0520)
 
 - api + web на `release-84f0520…-20261001T0751Z`, миграций нет, voice worker остался на e21364e. `origin/main` запушен до 84f0520. Проверки через домен: `/` 200, `/api/health` 200, закрытые API 401; окно карты в lazy-чанке `AssistantChat-*.js`. Бэкап (env + дамп, 566 записей) и откат — в `/opt/platforma-deploy-backups/results-map-20261001T0751Z`.

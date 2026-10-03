@@ -509,7 +509,7 @@ function AssistantResultsMap({ lots, onClose }: { lots: AssistantLot[]; onClose:
               )}
             </div>
             <div className="assistant-result-list">
-              {shownLots.map((lot) => <PlatformLotCard key={lot.unitId} lot={lot} />)}
+              {shownLots.map((lot) => <PlatformLotCard key={lot.unitId} lot={lot} openInNewTab />)}
             </div>
           </div>
         </div>
@@ -623,7 +623,7 @@ function AnswerFeedback({
   );
 }
 
-function PlatformLotCard({ lot }: { lot: AssistantPlatformLot }) {
+function PlatformLotCard({ lot, openInNewTab = false }: { lot: AssistantPlatformLot; openInNewTab?: boolean }) {
   const facts = [
     lot.propertyClass,
     lot.finishing,
@@ -633,7 +633,13 @@ function PlatformLotCard({ lot }: { lot: AssistantPlatformLot }) {
   ].filter(Boolean);
   return (
     <section className="assistant-result-card" aria-label={`${lot.projectTitle}, ${formatRub(lot.priceRub)}`}>
-      <a className="assistant-result-title" href={lot.href}>{lot.projectTitle}</a>
+      <a
+        className="assistant-result-title"
+        href={lot.href}
+        {...(openInNewTab ? { rel: 'noopener noreferrer', target: '_blank' } : {})}
+      >
+        {lot.projectTitle}
+      </a>
       <p className="assistant-result-subtitle">{describeLot(lot)}</p>
       <strong className="assistant-result-price">{formatRub(lot.priceRub)}</strong>
       <div className="assistant-result-status">
