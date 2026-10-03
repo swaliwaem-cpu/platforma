@@ -143,10 +143,275 @@
 }
 
 .assistant-chat-layout {
+  position: relative;
   display: grid;
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(0, 1fr);
+}
+
+.assistant-chat-layout--with-history {
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
+.assistant-history {
+  display: flex;
+  min-height: 0;
+  padding: 12px 10px;
+  flex-direction: column;
+  gap: 10px;
+  background: #f8f3ef;
+  border-right: 1px solid rgb(78 49 32 / 12%);
+}
+
+.assistant-history--drawer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 3;
+  width: min(320px, 86%);
+  box-shadow: 16px 0 40px rgb(48 30 18 / 18%);
+}
+
+.assistant-history-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 0;
+  background: rgb(31 24 21 / 32%);
+  border: 0;
+  cursor: default;
+}
+
+.assistant-history-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.assistant-history-new {
+  display: flex;
+  min-height: 40px;
+  padding: 0 12px;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #b94713;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--color-surface, #fffdfb);
+  border: 1px solid rgb(232 90 24 / 45%);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.assistant-history-new:hover {
+  background: #fff5ef;
+}
+
+.assistant-history-new svg {
+  width: 16px;
+  height: 16px;
+}
+
+.assistant-history-hide {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  color: var(--color-muted-foreground, #756a64);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.assistant-history-hide:hover {
+  background: rgb(78 49 32 / 8%);
+}
+
+.assistant-history-hide svg {
+  width: 18px;
+  height: 18px;
+}
+
+.assistant-history-search {
+  display: flex;
+  padding: 0 10px;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-muted-foreground, #756a64);
+  background: var(--color-surface, #fffdfb);
+  border: 1px solid rgb(78 49 32 / 16%);
+  border-radius: 12px;
+}
+
+.assistant-history-search:focus-within {
+  border-color: #e85a18;
+}
+
+.assistant-history-search svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.assistant-history-search input {
+  min-width: 0;
+  height: 36px;
+  padding: 0;
+  flex: 1;
+  color: var(--color-text, #251d19);
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  appearance: none;
+}
+
+.assistant-history-list {
+  display: flex;
+  min-height: 0;
+  margin: 0 -4px;
+  padding: 0 4px;
+  overflow-y: auto;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  overscroll-behavior: contain;
+}
+
+.assistant-history-group h3 {
+  margin: 0;
+  padding: 4px 10px;
+  color: var(--color-muted-foreground, #756a64);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.assistant-history-group ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  list-style: none;
+}
+
+.assistant-history-item {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  border-radius: 9px;
+}
+
+.assistant-history-item:hover {
+  background: rgb(78 49 32 / 6%);
+}
+
+.assistant-history-item[data-active] {
+  background: rgb(232 90 24 / 14%);
+}
+
+.assistant-history-open {
+  min-width: 0;
+  padding: 8px 4px 8px 10px;
+  flex: 1;
+  overflow: hidden;
+  color: var(--color-text, #251d19);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.assistant-history-item[data-active] .assistant-history-open {
+  font-weight: 600;
+}
+
+.assistant-history-delete {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  margin-right: 3px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  color: var(--color-muted-foreground, #756a64);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.assistant-history-item:hover .assistant-history-delete,
+.assistant-history-delete:focus-visible {
+  opacity: 1;
+}
+
+.assistant-history-delete:hover {
+  color: #b42318;
+  background: rgb(180 35 24 / 8%);
+}
+
+.assistant-history-delete svg {
+  width: 15px;
+  height: 15px;
+}
+
+.assistant-history-confirm {
+  display: flex;
+  min-width: 0;
+  padding: 4px 6px 4px 10px;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.assistant-history-confirm span {
+  flex: 1;
+}
+
+.assistant-history-confirm button,
+.assistant-history-note button {
+  padding: 5px 9px;
+  color: var(--color-text, #251d19);
+  font: inherit;
+  font-size: 12px;
+  background: var(--color-surface, #fffdfb);
+  border: 1px solid rgb(78 49 32 / 16%);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.assistant-history-confirm button:first-of-type {
+  color: #fff;
+  background: #b42318;
+  border-color: #b42318;
+}
+
+.assistant-history-note {
+  display: grid;
+  margin: 8px 10px;
+  justify-items: start;
+  gap: 8px;
+  color: var(--color-muted-foreground, #756a64);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.assistant-history-note p {
+  margin: 0;
 }
 
 .assistant-error button {
@@ -631,6 +896,18 @@
   border-color: #e85a18;
 }
 
+/* The global field styles give every input a filled frame; the history search label draws its own. */
+:root[data-app-theme] body .assistant-chat .assistant-history-search input,
+:root[data-app-theme] body .assistant-chat .assistant-history-search input:is(:hover, :focus, :focus-visible) {
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 13px;
+}
+
 /* The global field styles give every textarea a tall padded box; the composer draws its own frame. */
 :root[data-app-theme] body .assistant-chat .assistant-composer textarea,
 :root[data-app-theme] body .assistant-chat .assistant-composer textarea:is(:hover, :focus, :focus-visible) {
@@ -870,6 +1147,12 @@
   }
 }
 
+@media (hover: none) {
+  .assistant-history-delete {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .assistant-launcher {
     transition: none;
@@ -948,6 +1231,49 @@ html[data-app-theme="dark-premium"] .assistant-chat :is(.assistant-error) {
 
 html[data-app-theme="dark-premium"] .assistant-chat :is(.assistant-error button) {
   color: var(--fw-danger, #ff718a);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-history {
+  background: rgb(255 255 255 / 3%);
+  border-right-color: var(--assistant-dark-line);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-history--drawer {
+  background: #18191a;
+  box-shadow: 16px 0 40px rgb(0 0 0 / 45%);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-history-new {
+  color: var(--assistant-dark-accent-ink);
+  background: var(--assistant-dark-fill);
+  border-color: var(--assistant-dark-accent-line);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat :is(.assistant-history-new, .assistant-history-hide):hover {
+  background: var(--assistant-dark-fill-strong);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-history-search {
+  background: var(--assistant-dark-fill);
+  border-color: var(--assistant-dark-line);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-history-item:hover {
+  background: var(--assistant-dark-fill);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-history-item[data-active] {
+  background: var(--assistant-dark-accent-soft);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-history-delete:hover {
+  color: var(--fw-danger, #ff718a);
+  background: rgb(255 113 138 / 12%);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat :is(.assistant-history-confirm button:not(:first-of-type), .assistant-history-note button) {
+  background: var(--assistant-dark-fill);
+  border-color: var(--assistant-dark-line);
 }
 
 html[data-app-theme="dark-premium"] .assistant-chat .assistant-composer-area {

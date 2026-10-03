@@ -17,7 +17,7 @@ export type AssistantAskInput = {
   messages: AssistantChatTurn[];
   /** Slug of the project page the user is looking at, if any. */
   pageObjectSlug?: string | null;
-  /** UUID the browser keeps for the conversation, so logged turns can be grouped. */
+  /** UUID of the conversation; answered turns are saved under it in the asker's history. */
   conversationId?: string | null;
 };
 
@@ -98,6 +98,38 @@ export type AssistantJob = {
 
 export type AssistantJobResponse = {
   job: AssistantJob;
+};
+
+/** A saved chat message; an assistant one carries the answer as it was shown and its rating. */
+export type AssistantConversationMessage =
+  | { id: string; role: 'user'; content: string }
+  | {
+      id: string;
+      role: 'assistant';
+      content: string;
+      answer: AssistantAnswer;
+      rating: AssistantTurnRating | null;
+      ratingCommented: boolean;
+    };
+
+export type AssistantConversationSummary = {
+  id: string;
+  /** The first question, shortened. */
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AssistantConversationsResponse = {
+  items: AssistantConversationSummary[];
+};
+
+export type AssistantConversation = AssistantConversationSummary & {
+  messages: AssistantConversationMessage[];
+};
+
+export type AssistantConversationResponse = {
+  conversation: AssistantConversation;
 };
 
 /** One tool call inside a turn, as the turn log keeps it (arguments masked). */

@@ -8,6 +8,7 @@ import { ObjectStatus, Prisma } from '@prisma/client';
 
 import { findCatalogSearchObjectIds } from '../objects/object-search';
 import { PrismaService } from '../prisma/prisma.service';
+import { describeAssistantLocation, resolveAssistantArea } from './assistant-moscow-areas';
 
 // Platforma catalog as seen by the assistant: projects by name, their facts and available lots.
 
@@ -15,6 +16,7 @@ const maxProjects = 8;
 const maxLotsPerCall = 15;
 const defaultLotsPerCall = 10;
 const maxDescriptionChars = 1_500;
+const maxAreas = 10;
 
 export const assistantFinishings: readonly AssistantFinishing[] = ['без отделки', 'white box', 'с отделкой', 'с мебелью'];
 
@@ -25,7 +27,10 @@ export type AssistantProjectMatch = {
   title: string;
   slug: string;
   developer: string | null;
+  /** Location tag of the card, as editors set it. */
   district: string | null;
+  /** Zone, okrug and district by the coordinates; empty without them. */
+  location: string[];
   metro: string[];
   address: string | null;
   propertyClass: string | null;
@@ -48,7 +53,8 @@ export type AssistantLotSearchInput = {
   completionYearMax?: number;
   /** true — the completion quarter is already over, false — it is still ahead. */
   completed?: boolean;
-  district?: string;
+  /** Zones, okrugs or districts (by coordinates) and card location tags; any of them matches. */
+  areas?: string[];
   metro?: string;
   developer?: string;
   /** Canonical classes or synonyms («элитка», «премиум»). */
@@ -69,6 +75,8 @@ export type AssistantLotSearchResult = {
   lotsWithoutFinishingData?: number;
   /** With a metro walk filter: lots that match everything else but whose project has no walking time. */
   lotsWithoutMetroWalkData?: number;
+  /** Requested areas that are neither a zone, okrug or district nor a card location tag. */
+  unknownAreas?: string[];
 };
 
 type Range = { min: number; max: number };
@@ -81,6 +89,7 @@ export type AssistantProjectFacts = {
   developer: string | null;
   address: string | null;
   district: string | null;
+  location: string[];
   metro: string[];
   nearestMetroWalk: AssistantMetroWalk | null;
   completion: string | null;
@@ -133,6 +142,8 @@ export class AssistantCatalogTools {
         slug: true,
         address: true,
         propertyClass: true,
+        latitude: true,
+        longitude: true,
         developer: { select: { name: true } },
         primaryLocation: { select: { name: true } },
         metroStations: {
@@ -175,6 +186,7 @@ export class AssistantCatalogTools {
         slug: object.slug,
         developer: object.developer?.name ?? null,
         district: object.primaryLocation?.name ?? null,
+        location: describeAssistantLocation(toCoordinate(object.latitude), toCoordinate(object.longitude)),
         metro: object.metroStations.map(({ metroStation }) => metroStation.name),
         address: object.address,
         propertyClass: object.propertyClass,
@@ -222,6 +234,8 @@ export class AssistantCatalogTools {
         feedCompletionQuarter: true,
         updatedAt: true,
         feedUpdatedAt: true,
+        latitude: true,
+        longitude: true,
         developer: { select: { name: true } },
         primaryLocation: { select: { name: true } },
         metroStations: {
@@ -284,6 +298,7 @@ export class AssistantCatalogTools {
       developer: object.developer?.name ?? null,
       address: object.address,
       district: object.primaryLocation?.name ?? null,
+      location: describeAssistantLocation(toCoordinate(object.latitude), toCoordinate(object.longitude)),
       metro: object.metroStations.map(({ metroStation }) => metroStation.name),
       nearestMetroWalk: toMetroWalk(object.assistantMetroRouteFact),
       completion: formatCompletion(
@@ -313,7 +328,8 @@ export class AssistantCatalogTools {
   }
 
   async searchLots(input: AssistantLotSearchInput, now = new Date()): Promise<AssistantLotSearchResult> {
-    const conditions = createLotConditions(input, now);
+    const area = await this.createAreaCondition(input.areas);
+    const conditions = createLotConditions(input, now, area?.condition ?? null);
     const limit = Math.min(Math.max(Math.trunc(input.limit ?? defaultLotsPerCall), 1), maxLotsPerCall);
     const orderBy = {
       price_asc: Prisma.sql`${lotPrice} ASC`,
@@ -323,11 +339,11 @@ export class AssistantCatalogTools {
     }[input.sort ?? 'price_asc'] ?? Prisma.sql`${lotPrice} ASC`;
     const from = lotSearchFrom(conditions);
     const withoutFinishingFrom = input.finishing?.length
-      ? lotSearchFrom([...createLotConditions({ ...input, finishing: undefined }, now), Prisma.sql`${lotFinishing} IS NULL`])
+      ? lotSearchFrom([...createLotConditions({ ...input, finishing: undefined }, now, area?.condition ?? null), Prisma.sql`${lotFinishing} IS NULL`])
       : null;
     const withoutMetroWalkFrom = isNumber(input.metroWalkMinutesMax)
       ? lotSearchFrom([
-          ...createLotConditions({ ...input, metroWalkMinutesMax: undefined }, now),
+          ...createLotConditions({ ...input, metroWalkMinutesMax: undefined }, now, area?.condition ?? null),
           Prisma.sql`NOT EXISTS (SELECT 1 FROM assistant_object_metro_route_facts mf WHERE mf.object_id = o.id)`,
         ])
       : null;
@@ -371,7 +387,40 @@ export class AssistantCatalogTools {
       lots: rows.map(toPlatformLot),
       ...(withoutFinishingRows ? { lotsWithoutFinishingData: Number(withoutFinishingRows[0]?.count ?? 0) } : {}),
       ...(withoutMetroWalkRows ? { lotsWithoutMetroWalkData: Number(withoutMetroWalkRows[0]?.count ?? 0) } : {}),
+      ...(area?.unknown.length ? { unknownAreas: area.unknown } : {}),
     };
+  }
+
+  // Zones, okrugs and districts match by the project's coordinates; anything else («У воды»,
+  // «Рядом с Москва-сити») by the location tags of its card. A lot matches if any area does.
+  private async createAreaCondition(values: string[] | undefined) {
+    const requested = [...new Set((values ?? []).flatMap((value) => cleanText(value) ?? []))].slice(0, maxAreas);
+    if (requested.length === 0) return null;
+    const resolved = requested.map((value) => ({ value, matcher: resolveAssistantArea(value) }));
+    const matchers = resolved.flatMap(({ matcher }) => matcher ?? []);
+    const tags = resolved.flatMap(({ value, matcher }) => (matcher ? [] : [value]));
+    const parts: Prisma.Sql[] = [];
+
+    if (matchers.length) {
+      const objects = await this.prisma.realEstateObject.findMany({
+        where: { status: ObjectStatus.PUBLISHED, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
+        select: { id: true, latitude: true, longitude: true },
+      });
+      const ids = objects
+        .filter((object) => matchers.some((matcher) => matcher.contains(Number(object.longitude), Number(object.latitude))))
+        .map((object) => object.id);
+      if (ids.length) parts.push(Prisma.sql`o.id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})`);
+    }
+
+    const unknown: string[] = [];
+    if (tags.length) {
+      const locationNames = (await this.prisma.location.findMany({ select: { name: true } })).map(({ name }) => normalizeText(name));
+      for (const tag of tags) {
+        if (locationNames.some((name) => name.includes(normalizeText(tag)))) parts.push(locationTagCondition(tag));
+        else unknown.push(tag);
+      }
+    }
+    return { condition: parts.length ? Prisma.sql`(${Prisma.join(parts, ' OR ')})` : Prisma.sql`FALSE`, unknown };
   }
 }
 
@@ -458,7 +507,7 @@ function lotSearchFrom(conditions: Prisma.Sql[]) {
   `;
 }
 
-function createLotConditions(input: AssistantLotSearchInput, now: Date) {
+function createLotConditions(input: AssistantLotSearchInput, now: Date, area: Prisma.Sql | null) {
   const type = input.commercial ? 'commercial' : 'residential';
   const conditions = [
     ...availableLotConditions,
@@ -514,14 +563,7 @@ function createLotConditions(input: AssistantLotSearchInput, now: Date) {
       WHERE mf.object_id = o.id AND mf.duration_seconds <= ${Math.round(input.metroWalkMinutesMax * 60)}
     )`);
   }
-  const district = cleanText(input.district);
-  if (district) {
-    conditions.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM locations l
-      WHERE (l.id = o.primary_location_id OR l.id IN (SELECT ol.location_id FROM object_locations ol WHERE ol.object_id = o.id))
-        AND ${normalizedContains(Prisma.sql`l.name`, district)}
-    )`);
-  }
+  if (area) conditions.push(area);
   const metro = cleanText(input.metro);
   if (metro) {
     conditions.push(Prisma.sql`EXISTS (
@@ -533,6 +575,14 @@ function createLotConditions(input: AssistantLotSearchInput, now: Date) {
   const developer = cleanText(input.developer);
   if (developer) conditions.push(normalizedContains(Prisma.sql`d.name`, developer));
   return conditions;
+}
+
+function locationTagCondition(tag: string) {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM locations l
+    WHERE (l.id = o.primary_location_id OR l.id IN (SELECT ol.location_id FROM object_locations ol WHERE ol.object_id = o.id))
+      AND ${normalizedContains(Prisma.sql`l.name`, tag)}
+  )`;
 }
 
 export function normalizePropertyClasses(values: string[]) {
@@ -565,6 +615,10 @@ function toPlatformLot(row: LotRow): AssistantPlatformLot {
 
 function toMetroWalk(fact: { durationSeconds: number; metroAccessPoint: { stationName: string } } | null): AssistantMetroWalk | null {
   return fact ? { station: fact.metroAccessPoint.stationName, minutes: Math.max(1, Math.round(fact.durationSeconds / 60)) } : null;
+}
+
+function toCoordinate(value: Prisma.Decimal | null) {
+  return value === null ? null : Number(value);
 }
 
 function toNumber(value: Prisma.Decimal | number | null | undefined) {

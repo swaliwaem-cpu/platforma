@@ -22,6 +22,7 @@ import type { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { createAssistantAgentTelemetry, runAssistantAgent } from './assistant-agent';
 import { AssistantCatalogTools } from './assistant-catalog.tools';
+import { AssistantConversationsService } from './assistant-conversations.service';
 import { AssistantLlmClient, AssistantLlmError, resolveAssistantModel } from './assistant-llm.client';
 import { AssistantTurnLogService } from './assistant-turn-log.service';
 import { AssistantWebTools } from './assistant-web.tools';
@@ -51,6 +52,7 @@ export class AssistantService implements OnModuleDestroy {
     private readonly catalog: AssistantCatalogTools,
     private readonly web: AssistantWebTools,
     private readonly turnLog: AssistantTurnLogService,
+    private readonly conversations: AssistantConversationsService,
   ) {}
 
   onModuleDestroy() {
@@ -71,6 +73,10 @@ export class AssistantService implements OnModuleDestroy {
     if ([...this.jobs.values()].some((job) => job.ownerId === actor.id && job.status === 'RUNNING')) {
       throw new ConflictException('ASSISTANT_JOB_ALREADY_RUNNING');
     }
+    const conversationId = typeof input.conversationId === 'string' && uuidPattern.test(input.conversationId)
+      ? input.conversationId
+      : null;
+    if (conversationId) await this.conversations.assertWritable(actor.id, conversationId);
 
     const job: StoredJob = {
       id: randomUUID(),
@@ -86,9 +92,6 @@ export class AssistantService implements OnModuleDestroy {
     };
     this.jobs.set(job.id, job);
     const pageProject = await this.findPageProject(input.pageObjectSlug);
-    const conversationId = typeof input.conversationId === 'string' && uuidPattern.test(input.conversationId)
-      ? input.conversationId
-      : null;
     void this.run(job, history, pageProject, conversationId);
     return toPublicJob(job);
   }
@@ -145,7 +148,9 @@ export class AssistantService implements OnModuleDestroy {
         },
       );
       const turnId = await logTurn(result.answer, null);
-      job.answer = { ...result.answer, turnId };
+      const answer = { ...result.answer, turnId };
+      if (conversationId) await this.saveToHistory(job, conversationId, history.at(-1)?.content ?? '', answer);
+      job.answer = answer;
       job.turnId = turnId;
       job.status = 'COMPLETED';
       const { trace: _trace, ...usage } = telemetry;
@@ -158,6 +163,16 @@ export class AssistantService implements OnModuleDestroy {
     } finally {
       clearTimeout(deadline);
       job.finishedAt = Date.now();
+    }
+  }
+
+  // Saved before the job completes, so the history list the browser reloads already has the turn.
+  private async saveToHistory(job: StoredJob, conversationId: string, question: string, answer: AssistantAnswer) {
+    try {
+      await this.conversations.appendTurn({ ownerId: job.ownerId, conversationId, question, answerId: job.id, answer });
+    } catch (error) {
+      // The broker still gets the answer; only the history misses it.
+      this.logger.warn(`assistant turn ${job.id} was not saved to history: ${errorCode(error)}`);
     }
   }
 

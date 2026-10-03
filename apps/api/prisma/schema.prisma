@@ -386,6 +386,7 @@ model User {
   assignedTrainingProjects       TrainingProjectAssignment[] @relation("TrainingProjectAssigner")
   trainingAudioDeletionManifests TrainingAudioDeletionManifest[] @relation("TrainingAudioDeletionManifestCreator")
   assistantTurns                  AssistantTurn[]
+  assistantConversations          AssistantConversation[]
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -463,6 +464,21 @@ model AssistantTurn {
   @@index([rating, createdAt])
   @@index([userId])
   @@map("assistant_turns")
+}
+
+// A user's assistant chat as they saw it, for the history list; only the owner reads it.
+model AssistantConversation {
+  id           String   @id @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  title        String   @db.VarChar(200)
+  messagesJson Json     @default("[]") @map("messages_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+  @@map("assistant_conversations")
 }
 
 model UserSession {

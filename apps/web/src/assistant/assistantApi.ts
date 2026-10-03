@@ -3,6 +3,8 @@ import type {
   AssistantAdminTurnsResponse,
   AssistantAskInput,
   AssistantConfigResponse,
+  AssistantConversationResponse,
+  AssistantConversationsResponse,
   AssistantJobResponse,
   AssistantTurnFeedbackInput,
   AssistantUsageResponse,
@@ -24,6 +26,18 @@ export function startAssistantJob(accessToken: string, input: AssistantAskInput,
 
 export function getAssistantJob(accessToken: string, jobId: string, signal?: AbortSignal) {
   return apiRequest<AssistantJobResponse>(`/assistant/jobs/${encodeURIComponent(jobId)}`, accessToken, { signal });
+}
+
+export function getAssistantConversations(accessToken: string, signal?: AbortSignal) {
+  return apiRequest<AssistantConversationsResponse>('/assistant/conversations', accessToken, { signal });
+}
+
+export function getAssistantConversation(accessToken: string, conversationId: string, signal?: AbortSignal) {
+  return apiRequest<AssistantConversationResponse>(`/assistant/conversations/${encodeURIComponent(conversationId)}`, accessToken, { signal });
+}
+
+export function deleteAssistantConversation(accessToken: string, conversationId: string) {
+  return apiRequest<null>(`/assistant/conversations/${encodeURIComponent(conversationId)}`, accessToken, { method: 'DELETE' });
 }
 
 export function rateAssistantTurn(accessToken: string, turnId: string, input: AssistantTurnFeedbackInput) {

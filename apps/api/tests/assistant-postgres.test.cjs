@@ -126,6 +126,12 @@ if (!databaseUrl) {
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ pricePerM2Max: 600_000 }), now)), ['b1', 'b3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ pricePerM2Min: 2_600_000, pricePerM2Max: 2_850_000 }), now)), ['a3']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ metroWalkMinutesMax: 10 }), now)), ['a1', 'a2', 'a3']);
+    // The deluxe project stands inside the Garden Ring; the business one has no coordinates.
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ areas: ['Внутри Садового кольца'] }), now)), ['a1', 'a2', 'a3']);
+    assert.deepEqual(lotIds(await catalog.searchLots(scoped({ areas: ['За МКАД'] }), now)), []);
+    const nowhere = await catalog.searchLots(scoped({ areas: ['Атлантида'] }), now);
+    assert.equal(nowhere.total, 0);
+    assert.deepEqual(nowhere.unknownAreas, ['Атлантида']);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ metroWalkMinutesMax: 5 }), now)), []);
     // The business project has no walking time: its two available lots are counted apart.
     assert.equal((await catalog.searchLots(scoped({ metroWalkMinutesMax: 10 }), now)).lotsWithoutMetroWalkData, 2);

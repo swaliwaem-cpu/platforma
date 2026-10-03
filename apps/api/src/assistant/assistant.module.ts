@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AssistantCatalogTools } from './assistant-catalog.tools';
+import { AssistantConversationsService } from './assistant-conversations.service';
 import { AssistantAdminController, AssistantController, AssistantFeatureGuard } from './assistant.controller';
 import { AssistantLlmClient } from './assistant-llm.client';
 import { AssistantTurnLogService } from './assistant-turn-log.service';
@@ -19,6 +20,7 @@ import { AssistantWebTools } from './assistant-web.tools';
     AssistantCatalogTools,
     AssistantWebTools,
     AssistantTurnLogService,
+    AssistantConversationsService,
   ],
 })
 export class AssistantModule {}

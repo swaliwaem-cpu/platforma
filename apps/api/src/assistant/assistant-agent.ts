@@ -217,6 +217,9 @@ async function executeTool(
           result.lotsWithoutMetroWalkData
             ? `Ещё ${result.lotsWithoutMetroWalkData} лотов подходят под остальные условия, но у их ЖК не посчитано время пешком до метро — они не показаны.`
             : null,
+          result.unknownAreas?.length
+            ? `Место «${result.unknownAreas.join('», «')}» не распознано, по нему ничего не найдено. Передай в areas зону (${assistantZoneList}), округ (ЦАО, САО…), район Москвы или метку карточки.`
+            : null,
         ].filter(Boolean);
         return {
           total: result.total,
@@ -406,7 +409,7 @@ function describeProject(project: AssistantProjectMatch) {
     title: project.title,
     propertyClass: project.propertyClass,
     developer: project.developer,
-    district: project.district,
+    location: describeLocation(project),
     metro: project.metro,
     nearestMetroWalk: project.nearestMetroWalk,
     availableLotsInPlatforma: project.availableLots,
@@ -416,12 +419,19 @@ function describeProject(project: AssistantProjectMatch) {
 }
 
 function describeFacts(facts: AssistantProjectFacts) {
-  const { href: _href, cardUpdatedAt, feedUpdatedAt, ...rest } = facts;
+  const { href: _href, cardUpdatedAt, feedUpdatedAt, district: _district, location: _location, ...rest } = facts;
   return {
     ...rest,
+    location: describeLocation(facts),
     nearestMetroWalk: facts.nearestMetroWalk ?? 'нет данных о времени пешком до метро',
     updated: { card: moscowDate(cardUpdatedAt), feed: feedUpdatedAt ? moscowDate(feedUpdatedAt) : null },
   };
+}
+
+// Zone, okrug and district by the coordinates; the card's location tag only when there are none.
+function describeLocation(project: { district: string | null; location?: string[] }) {
+  if (project.location?.length) return project.location;
+  return project.district ? [project.district] : [];
 }
 
 // Brokers read dates in Moscow time, like the source chips under the answer.
@@ -430,6 +440,7 @@ function moscowDate(iso: string) {
 }
 
 const propertyClassList = 'Комфорт-класс, Бизнес-класс, Премиум-класс, Делюкс';
+const assistantZoneList = 'Внутри Садового кольца, Между Садовым кольцом и ТТК, Внутри ТТК, Между ТТК и МКАД, Внутри МКАД, За МКАД, Новая Москва, Подмосковье';
 const assistantFinishingList = 'без отделки, white box, с отделкой, с мебелью';
 
 // Words brokers and feeds use for finishing, by the start of the word.
@@ -474,7 +485,8 @@ function readLotSearchInput(args: Record<string, unknown>) {
     completionYearMin: readNumber(args.completionYearMin) ?? undefined,
     completionYearMax: readNumber(args.completionYearMax) ?? undefined,
     completed: typeof args.completed === 'boolean' ? args.completed : undefined,
-    district: readString(args.district) ?? undefined,
+    // `district` is the old single-place argument; the model still sends it now and then.
+    areas: [...readStringArray(args.areas), ...readStringArray([args.district])],
     metro: readString(args.metro) ?? undefined,
     developer: readString(args.developer) ?? undefined,
     propertyClasses: normalizePropertyClasses(rawClasses),
@@ -496,15 +508,18 @@ function readLotSearchInput(args: Record<string, unknown>) {
 function createSystemPrompt(context: AssistantAgentContext, webSearchEnabled: boolean) {
   const today = context.now.toISOString().slice(0, 10);
   return [
-    'Ты — помощник брокера по новостройкам (в основном Москва) во внутренней платформе Platforma. Твоя главная задача — находить лоты (квартиры, апартаменты, помещения) под запрос брокера и отвечать на вопросы о ЖК и рынке.',
+    'Ты — опытный брокер-аналитик по новостройкам Москвы и помощник брокеров во внутренней платформе Platforma. Твоя главная задача — находить лоты (квартиры, апартаменты, помещения) под запрос брокера и отвечать на вопросы о ЖК, локациях и рынке.',
+    'Говори с брокерами на их языке: свободно используй профессиональные термины (лот, корпус, секция, шахматка, квартирография, евроформат, white box, ДДУ, эскроу, РВЭ, фиксация) и не объясняй очевидное. Как эксперт коротко отмечай нюансы, важные для сделки: апартаменты вместо квартиры, далёкий срок ввода, нет отделки, далеко от метро, цена выше типичной для класса.',
     `Сегодня ${today}. Отвечай по-русски, коротко и по делу.`,
     '',
     'Порядок работы:',
     '1. Всегда начинай с Platforma, даже если брокер прислал ссылку. Если в запросе есть название ЖК/проекта — вызови find_projects, затем search_lots с projectIds найденного проекта. Если названия нет — сразу search_lots по фильтрам (район, метро, застройщик, бюджет, комнатность, площадь, этаж, срок сдачи, класс, отделка, цена за м², минуты до метро).',
     '   Вопрос о конкретном ЖК (класс, отделка, потолки, этажность, площади, цена за метр, метро и сколько идти пешком, срок сдачи, застройщик, архитектура, инфраструктура, описание) — find_projects, затем get_project_facts с его projectId. Отвечай по карточке и назови дату обновления данных.',
-    '   Слова о классе («элитка», «премиум», «бизнес»), отделке («без отделки», «white box», «с ремонтом», «с мебелью»), цене за метр, минутах пешком до метро или о том, что дом уже сдан, переводи в фильтры search_lots: propertyClasses, finishing, pricePerM2Min/Max, metroWalkMinutesMax, completed. «ЦАО» и «в центре» — district «Центр»; ещё есть зоны «Внутри Садового Кольца», «Внутри ТТК», «За ТТК», «У воды», «У парка», «Рядом с Москва-сити».',
+    '   Слова о классе («элитка», «премиум», «бизнес»), отделке («без отделки», «white box», «с ремонтом», «с мебелью»), цене за метр, минутах пешком до метро или о том, что дом уже сдан, переводи в фильтры search_lots: propertyClasses, finishing, pricePerM2Min/Max, metroWalkMinutesMax, completed.',
+    '   Место — в areas. Кольца, округа и районы Москвы проверяются по координатам ЖК, это точно: «в центре» — ЦАО; «внутри Садового», «в пределах ТТК», «за ТТК» (это между ТТК и МКАД), «за МКАД», «Новая Москва» — зоны; «Хамовники или Якиманка» — два района в одном списке. «У воды», «У парка», «У школы», «Рядом с Москва-сити», «На Патриарших» — метки карточек. Станция метро — в metro, не в areas.',
+    '   Где стоит конкретный ЖК (зона, округ, район) — поле location из find_projects и get_project_facts, оно посчитано по координатам.',
     '   Название в вопросе может совпадать с улицей, районом или метро («Фрунзенская набережная», «Тишинский бульвар») — всё равно сначала вызови find_projects и не отказывайся, пока не поищешь.',
-    '   Вопросы о терминах и понятиях рынка (классы, отделка, ипотека, эскроу, ДДУ и т.п.) объясняй сам по справочнику ниже, без инструментов.',
+    '   Вопросы о терминах и понятиях рынка (классы, отделка, ипотека, эскроу, ДДУ и т.п.) и общие вопросы о районах и локациях Москвы объясняй сам по справочнику ниже, без инструментов; если в чём-то не уверен — так и скажи.',
     '2. Если проекта нет в Platforma, у него 0 лотов (availableLotsInPlatforma = 0) или подходящих лотов нет — ищи в интернете: '
       + (webSearchEnabled
         ? 'web_search (например «ЖК <название> квартиры цены» или «<название> официальный сайт»), затем open_page на официальном сайте застройщика или агрегаторе (ЦИАН, Яндекс Недвижимость, Домклик, Novostroy-m и т.п.). Если на странице есть ссылка на выбор квартир — открой её.'
@@ -560,7 +575,11 @@ function createTools(webSearchEnabled: boolean): AssistantLlmTool[] {
           completionYearMin: { type: 'integer', description: 'Сдача не раньше этого года.' },
           completionYearMax: { type: 'integer', description: 'Сдача не позже этого года.' },
           completed: { type: 'boolean', description: 'true — только уже сданные («готовые», «сдан»), false — только строящиеся.' },
-          district: { type: 'string', description: 'Район, например «Хамовники».' },
+          areas: {
+            type: 'array',
+            items: { type: 'string' },
+            description: `Где искать; несколько значений — подходит любое. Зона: ${assistantZoneList}. Округ: ЦАО, САО, СВАО, ВАО, ЮВАО, ЮАО, ЮЗАО, ЗАО, СЗАО, ЗелАО, НАО, ТАО. Район Москвы: «Хамовники», «Пресненский». Метка карточки: «У воды», «У парка», «У школы», «Рядом с Москва-сити», «На Патриарших».`,
+          },
           metro: { type: 'string', description: 'Станция метро.' },
           developer: { type: 'string', description: 'Застройщик.' },
           propertyClasses: {

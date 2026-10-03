@@ -1,6 +1,8 @@
 import type {
   AssistantAnswer,
   AssistantChatTurn,
+  AssistantConversationMessage,
+  AssistantConversationSummary,
   AssistantJob,
   AssistantLot,
   AssistantPlatformLot,
@@ -10,6 +12,7 @@ import type {
 import {
   MapPinIcon,
   MessageCircleIcon,
+  PanelLeftOpenIcon,
   PlusIcon,
   RotateCcwIcon,
   SendIcon,
@@ -34,7 +37,16 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } fr
 import { getValidMapCoordinate } from '../map/mapContract';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { PlatformMap, type MapCoordinate, type MapPoint } from '../map/PlatformMap';
-import { getAssistantConfig, getAssistantJob, rateAssistantTurn, startAssistantJob } from './assistantApi';
+import {
+  deleteAssistantConversation,
+  getAssistantConfig,
+  getAssistantConversation,
+  getAssistantConversations,
+  getAssistantJob,
+  rateAssistantTurn,
+  startAssistantJob,
+} from './assistantApi';
+import { AssistantHistory } from './AssistantHistory';
 import './assistant.css';
 
 type AssistantChatProps = {
@@ -77,6 +89,8 @@ type DragState = {
 };
 
 const mobileMediaQuery = '(max-width: 760px)';
+// Narrower windows show the history as a panel over the chat instead of a column beside it.
+const dockedHistoryMinWidth = 640;
 const pollIntervalMs = 1_000;
 const examplePrompts = [
   'Однушка до 20 млн в ЖК Веер 2',
@@ -93,13 +107,23 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
   const [runningSteps, setRunningSteps] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [geometry, setGeometry] = useState<AssistantGeometry>(() => readGeometry(userId));
+  const [conversations, setConversations] = useState<AssistantConversationSummary[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(() => readHistoryCollapsed(userId));
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => isMobileViewport());
   const chatRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const historyRequestRef = useRef<AbortController | null>(null);
+  // Bumped on every switch, so a slow load of an older pick does not replace a newer one.
+  const selectionRef = useRef(0);
   const skipGeometryWriteRef = useRef(false);
   const isRunning = runningSteps !== null;
+  const isHistoryDocked = !isMobile && geometry.width >= dockedHistoryMinWidth;
+  const isHistoryVisible = isHistoryDocked ? !isHistoryCollapsed : isHistoryDrawerOpen;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -109,7 +133,38 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
     return () => controller.abort();
   }, [accessToken]);
 
-  useEffect(() => () => requestRef.current?.abort(), []);
+  useEffect(() => () => {
+    requestRef.current?.abort();
+    historyRequestRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia(mobileMediaQuery);
+    const handleChange = () => setIsMobile(query.matches);
+    query.addEventListener('change', handleChange);
+    return () => query.removeEventListener('change', handleChange);
+  }, []);
+
+  useEffect(() => {
+    writeHistoryCollapsed(userId, isHistoryCollapsed);
+  }, [isHistoryCollapsed, userId]);
+
+  const loadConversations = useCallback(async () => {
+    historyRequestRef.current?.abort();
+    const controller = new AbortController();
+    historyRequestRef.current = controller;
+    setHistoryError(null);
+    try {
+      const { items } = await getAssistantConversations(accessToken, controller.signal);
+      setConversations(items);
+    } catch {
+      if (!controller.signal.aborted) setHistoryError('Не удалось загрузить историю');
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (enabled && isOpen) void loadConversations();
+  }, [enabled, isOpen, loadConversations]);
 
   useEffect(() => {
     writeMessages(userId, messages);
@@ -188,11 +243,13 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
           ...current,
           { id: job.id, role: 'assistant', content: answer.text, answer },
         ]);
+        // The server saved the turn before completing the job, so the list already has it.
+        void loadConversations();
         return;
       }
       setError(job.error ?? 'Не получилось выполнить поиск. Попробуйте ещё раз.');
     }
-  }, [accessToken, conversationId, pathname]);
+  }, [accessToken, conversationId, loadConversations, pathname]);
 
   const updateMessage = useCallback((messageId: string, patch: Partial<ChatMessage>) => {
     setMessages((current) => current.map((message) => (message.id === messageId ? { ...message, ...patch } : message)));
@@ -224,13 +281,54 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
   };
 
   const startNewConversation = () => {
+    selectionRef.current += 1;
     requestRef.current?.abort();
     requestRef.current = null;
     setRunningSteps(null);
     setError(null);
     setMessages([]);
     setConversationId(writeNewConversationId(userId));
+    setIsHistoryDrawerOpen(false);
     composerRef.current?.focus();
+  };
+
+  // A running turn keeps going on the server and lands in its own conversation.
+  const selectConversation = async (nextId: string) => {
+    setIsHistoryDrawerOpen(false);
+    if (nextId === conversationId) return;
+    const selection = selectionRef.current + 1;
+    selectionRef.current = selection;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setRunningSteps(null);
+    setError(null);
+    try {
+      const { conversation } = await getAssistantConversation(accessToken, nextId);
+      if (selectionRef.current !== selection) return;
+      setMessages(conversation.messages.map(toChatMessage));
+      setConversationId(writeConversationId(userId, nextId));
+      composerRef.current?.focus();
+    } catch (loadError) {
+      if (selectionRef.current === selection) setError(readErrorMessage(loadError));
+    }
+  };
+
+  const deleteConversation = async (deletedId: string) => {
+    try {
+      await deleteAssistantConversation(accessToken, deletedId);
+    } catch (deleteError) {
+      if (!readErrorMessage(deleteError).startsWith('Эта беседа недоступна')) {
+        setError('Не удалось удалить беседу. Попробуйте ещё раз.');
+        return;
+      }
+    }
+    setConversations((current) => current?.filter((item) => item.id !== deletedId) ?? current);
+    if (deletedId === conversationId) startNewConversation();
+  };
+
+  const toggleHistory = () => {
+    if (isHistoryDocked) setIsHistoryCollapsed((current) => !current);
+    else setIsHistoryDrawerOpen((current) => !current);
   };
 
   const handleDragStart = (event: ReactPointerEvent<HTMLElement>) => {
@@ -310,9 +408,16 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
           </div>
         </div>
         <div className="assistant-chat-controls">
-          <button aria-label="Новый разговор" type="button" onClick={startNewConversation}>
-            <PlusIcon aria-hidden="true" />
-          </button>
+          {!isHistoryVisible ? (
+            <>
+              <button aria-label="Показать историю бесед" type="button" onClick={toggleHistory}>
+                <PanelLeftOpenIcon aria-hidden="true" />
+              </button>
+              <button aria-label="Новый разговор" type="button" onClick={startNewConversation}>
+                <PlusIcon aria-hidden="true" />
+              </button>
+            </>
+          ) : null}
           <button aria-label="Сбросить размер и положение" type="button" onClick={resetGeometry}>
             <RotateCcwIcon aria-hidden="true" />
           </button>
@@ -322,7 +427,29 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
         </div>
       </header>
 
-      <div className="assistant-chat-layout">
+      <div className={`assistant-chat-layout${isHistoryDocked && isHistoryVisible ? ' assistant-chat-layout--with-history' : ''}`}>
+        {isHistoryVisible && !isHistoryDocked ? (
+          <button
+            aria-hidden="true"
+            className="assistant-history-scrim"
+            tabIndex={-1}
+            type="button"
+            onClick={() => setIsHistoryDrawerOpen(false)}
+          />
+        ) : null}
+        {isHistoryVisible ? (
+          <AssistantHistory
+            activeId={conversationId}
+            conversations={conversations}
+            error={historyError}
+            mode={isHistoryDocked ? 'docked' : 'drawer'}
+            onDelete={deleteConversation}
+            onHide={toggleHistory}
+            onNew={startNewConversation}
+            onRetry={() => void loadConversations()}
+            onSelect={(nextId) => void selectConversation(nextId)}
+          />
+        ) : null}
         <div className="assistant-conversation">
           <div ref={messagesRef} className="assistant-messages" aria-live="polite">
             {messages.length === 0 && !isRunning ? (
@@ -683,6 +810,18 @@ function describeLot(lot: AssistantLot) {
   return parts.join(' · ') || 'Параметры уточните по ссылке';
 }
 
+function toChatMessage(message: AssistantConversationMessage): ChatMessage {
+  if (message.role === 'user') return { id: message.id, role: 'user', content: message.content };
+  return {
+    id: message.id,
+    role: 'assistant',
+    content: message.content,
+    answer: message.answer,
+    rating: message.rating ?? undefined,
+    ratingCommentSent: message.ratingCommented,
+  };
+}
+
 function toChatTurn(message: ChatMessage): AssistantChatTurn {
   return {
     role: message.role,
@@ -741,6 +880,7 @@ function readErrorMessage(error: unknown) {
   if (message.includes('ASSISTANT_JOB_ALREADY_RUNNING')) return 'Предыдущий запрос ещё выполняется. Дождитесь ответа.';
   if (message.includes('ASSISTANT_LLM_NOT_CONFIGURED')) return 'Нейросеть не настроена на сервере.';
   if (message.includes('ASSISTANT_JOB_NOT_FOUND')) return 'Сервер перезапустился во время поиска. Повторите запрос.';
+  if (message.includes('ASSISTANT_CONVERSATION_NOT_FOUND')) return 'Эта беседа недоступна. Начните новый разговор.';
   return message || 'Не удалось выполнить запрос';
 }
 
@@ -789,7 +929,10 @@ function readConversationId(userId: string) {
 }
 
 function writeNewConversationId(userId: string) {
-  const id = createId();
+  return writeConversationId(userId, createId());
+}
+
+function writeConversationId(userId: string, id: string) {
   try {
     sessionStorage.setItem(conversationKey(userId), id);
   } catch {
@@ -798,8 +941,29 @@ function writeNewConversationId(userId: string) {
   return id;
 }
 
+function historyCollapsedKey(userId: string) {
+  return `platforma-assistant-history-collapsed:${userId}`;
+}
+
+function readHistoryCollapsed(userId: string) {
+  try {
+    return localStorage.getItem(historyCollapsedKey(userId)) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeHistoryCollapsed(userId: string, collapsed: boolean) {
+  try {
+    localStorage.setItem(historyCollapsedKey(userId), String(collapsed));
+  } catch {
+    // The column state then lasts for the session only.
+  }
+}
+
+// v2: the window became wider to fit the history column, so old saved sizes start over.
 function geometryKey(userId: string) {
-  return `platforma-assistant-geometry:${userId}`;
+  return `platforma-assistant-geometry-v2:${userId}`;
 }
 
 function readGeometry(userId: string) {
@@ -836,7 +1000,7 @@ function removeGeometry(userId: string) {
 }
 
 function defaultGeometry(): AssistantGeometry {
-  const width = Math.min(460, Math.max(360, window.innerWidth - 32));
+  const width = Math.min(780, Math.max(360, window.innerWidth - 32));
   const height = Math.min(680, Math.max(480, window.innerHeight - 48));
   return clampGeometry({
     left: window.innerWidth - width - 24,

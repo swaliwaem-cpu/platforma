@@ -88,6 +88,20 @@ function fakeTurnLog({ fail = false } = {}) {
   };
 }
 
+function fakeConversations({ foreignIds = [], fail = false } = {}) {
+  const turns = [];
+  return {
+    turns,
+    async assertWritable(_ownerId, conversationId) {
+      if (foreignIds.includes(conversationId)) throw new Error('ASSISTANT_CONVERSATION_NOT_FOUND');
+    },
+    async appendTurn(turn) {
+      if (fail) throw new Error('db down');
+      turns.push(structuredClone(turn));
+    },
+  };
+}
+
 function call(name, args, id = name) {
   return { id, name, arguments: JSON.stringify(args) };
 }
@@ -416,7 +430,7 @@ test('assistant jobs belong to their owner and one runs at a time per user', asy
   };
   const prisma = { realEstateObject: { findFirst: async () => ({ id: 'p-veer', title: 'Веер 2' }) } };
   const turnLog = fakeTurnLog();
-  const service = new AssistantService(prisma, llm, fakeCatalog(), fakeWeb(), turnLog);
+  const service = new AssistantService(prisma, llm, fakeCatalog(), fakeWeb(), turnLog, fakeConversations());
   const owner = { id: 'owner', permissions: ['objects:read'] };
   const stranger = { id: 'stranger', permissions: ['objects:read'] };
 
@@ -437,6 +451,95 @@ test('assistant jobs belong to their owner and one runs at a time per user', asy
   assert.equal(finished.turnId, job.id);
   assert.equal(turnLog.entries.length, 1);
   service.onModuleDestroy();
+});
+
+test('an answered turn is saved to its conversation before the job completes; a foreign conversation is refused', async () => {
+  const prisma = { realEstateObject: { findFirst: async () => null } };
+  const owner = { id: 'owner', permissions: ['objects:read'] };
+  const conversationId = '55555555-5555-4555-8555-555555555555';
+  const foreignId = '66666666-6666-4666-8666-666666666666';
+  const conversations = fakeConversations({ foreignIds: [foreignId] });
+  const service = new AssistantService(prisma, scriptedLlm([{ toolCalls: [call('give_answer', { text: 'Нашёл 3 лота.' })] }]), fakeCatalog(), fakeWeb(), fakeTurnLog(), conversations);
+
+  await assert.rejects(
+    service.startJob(owner, { messages: [{ role: 'user', content: 'однушка' }], conversationId: foreignId }),
+    /ASSISTANT_CONVERSATION_NOT_FOUND/,
+  );
+  const job = await service.startJob(owner, {
+    messages: [{ role: 'user', content: 'двушка у парка' }, { role: 'assistant', content: 'Уточните бюджет' }, { role: 'user', content: 'до 30 млн' }],
+    conversationId,
+  });
+  for (let attempt = 0; attempt < 50 && service.getJob(owner, job.id).status === 'RUNNING'; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.equal(service.getJob(owner, job.id).status, 'COMPLETED');
+  assert.equal(conversations.turns.length, 1);
+  assert.deepEqual(
+    { ...conversations.turns[0], answer: conversations.turns[0].answer.text },
+    { ownerId: 'owner', conversationId, question: 'до 30 млн', answerId: job.id, answer: 'Нашёл 3 лота.' },
+  );
+  assert.equal(conversations.turns[0].answer.turnId, job.id);
+  service.onModuleDestroy();
+});
+
+test('conversation history: titles, appends, owner-only reads with ratings, deletes', async () => {
+  const { AssistantConversationsService, createTitle } = require('../dist/assistant/assistant-conversations.service.js');
+  const rows = new Map();
+  const prisma = {
+    assistantConversation: {
+      async findUnique({ where }) { return rows.get(where.id) ?? null; },
+      async findFirst({ where }) {
+        const row = rows.get(where.id);
+        return row && row.userId === where.userId ? row : null;
+      },
+      async findMany({ where }) {
+        return [...rows.values()].filter((row) => row.userId === where.userId).sort((left, right) => right.updatedAt - left.updatedAt);
+      },
+      async upsert({ where, create, update }) {
+        const row = rows.get(where.id);
+        rows.set(where.id, row ? { ...row, ...update } : { ...create });
+      },
+      async deleteMany({ where }) {
+        const row = rows.get(where.id);
+        if (!row || row.userId !== where.userId) return { count: 0 };
+        rows.delete(where.id);
+        return { count: 1 };
+      },
+    },
+    assistantTurn: {
+      async findMany({ where }) {
+        return where.userId === 'owner' && where.id.in.includes('t2') ? [{ id: 't2', rating: 'DOWN', ratingComment: 'не тот ЖК' }] : [];
+      },
+    },
+  };
+  const service = new AssistantConversationsService(prisma);
+  const owner = { id: 'owner', permissions: ['objects:read'] };
+  const stranger = { id: 'stranger', permissions: ['objects:read'] };
+  const id = '77777777-7777-4777-8777-777777777777';
+  const answer = (text, turnId) => ({ text, lots: [], sources: [], historyNote: text, turnId });
+
+  assert.equal(createTitle('  Трёшка   внутри ТТК  '), 'Трёшка внутри ТТК');
+  assert.equal(createTitle('Подберите двушку '.repeat(10)).endsWith('…'), true);
+  assert.ok(createTitle('Подберите двушку '.repeat(10)).length <= 81);
+
+  await service.appendTurn({ ownerId: 'owner', conversationId: id, question: 'Трёшка внутри ТТК', answerId: 'j1', answer: answer('Нашёл 6', 't1'), now: new Date('2026-10-02T10:00:00Z') });
+  await service.appendTurn({ ownerId: 'owner', conversationId: id, question: 'А с отделкой?', answerId: 'j2', answer: answer('Две с отделкой', 't2'), now: new Date('2026-10-02T10:05:00Z') });
+  await service.appendTurn({ ownerId: 'stranger', conversationId: id, question: 'чужое', answerId: 'j3', answer: answer('нет', null) });
+  await assert.rejects(service.assertWritable('stranger', id), /ASSISTANT_CONVERSATION_NOT_FOUND/);
+  await service.assertWritable('owner', id);
+
+  assert.deepEqual((await service.list(owner)).items, [{ id, title: 'Трёшка внутри ТТК', createdAt: '2026-10-02T10:00:00.000Z', updatedAt: '2026-10-02T10:05:00.000Z' }]);
+  assert.deepEqual((await service.list(stranger)).items, []);
+  const { conversation } = await service.get(owner, id);
+  assert.deepEqual(conversation.messages.map((message) => [message.role, message.content]), [
+    ['user', 'Трёшка внутри ТТК'], ['assistant', 'Нашёл 6'], ['user', 'А с отделкой?'], ['assistant', 'Две с отделкой'],
+  ]);
+  assert.deepEqual(conversation.messages.filter((message) => message.role === 'assistant').map((message) => [message.rating, message.ratingCommented]), [[null, false], ['DOWN', true]]);
+  await assert.rejects(service.get(stranger, id), /ASSISTANT_CONVERSATION_NOT_FOUND/);
+  await assert.rejects(service.remove(stranger, id), /ASSISTANT_CONVERSATION_NOT_FOUND/);
+  await service.remove(owner, id);
+  assert.deepEqual((await service.list(owner)).items, []);
 });
 
 test('eval checks compare tool arguments, projects and answer words', () => {
@@ -561,6 +664,52 @@ test('search_lots tells how many lots were dropped for a missing metro walking t
   assert.match(toolResult.note, /Ещё 7 лотов .* не посчитано время пешком до метро/);
 });
 
+test('search_lots takes several areas, folds in the old district argument and names unknown places', async () => {
+  const llm = scriptedLlm([
+    { toolCalls: [call('search_lots', { rooms: [3], areas: ['Внутри ТТК', 'Хамовнеки'], district: 'У воды' })] },
+    { toolCalls: [call('give_answer', { text: 'Ничего нет.' })] },
+  ]);
+  const catalog = fakeCatalog({ searches: [{ total: 0, lots: [], unknownAreas: ['Хамовнеки'] }] });
+
+  await runAssistantAgent({ llm, catalog, web: fakeWeb() }, context('трёшка внутри ТТК'));
+
+  assert.deepEqual(catalog.calls.searchLots[0].areas, ['Внутри ТТК', 'Хамовнеки', 'У воды']);
+  assert.match(JSON.parse(llm.requests[1].messages.at(-1).content).note, /Место «Хамовнеки» не распознано/);
+  const searchTool = llm.requests[0].tools.find((tool) => tool.name === 'search_lots');
+  assert.ok(searchTool.parameters.properties.areas);
+  assert.equal(searchTool.parameters.properties.district, undefined);
+});
+
+test('Moscow rings, okrugs and districts are matched by real outlines, not by card tags', () => {
+  const { describeAssistantLocation, resolveAssistantArea } = require('../dist/assistant/assistant-moscow-areas.js');
+  const kremlin = [37.6175, 55.752];
+  const novodevichy = [37.556, 55.7265];
+  const zilart = [37.645, 55.699];
+  const mytishchi = [37.7307, 55.9116];
+  const inside = (name, [longitude, latitude]) => resolveAssistantArea(name).contains(longitude, latitude);
+
+  assert.equal(inside('Внутри ТТК', kremlin), true);
+  assert.equal(inside('Внутри Садового Кольца', kremlin), true);
+  assert.equal(inside('Внутри Садового Кольца', novodevichy), false);
+  assert.equal(inside('между Садовым и ТТК', novodevichy), true);
+  assert.equal(inside('За ТТК', zilart), true);
+  assert.equal(inside('За ТТК', mytishchi), false);
+  assert.equal(inside('За МКАД', mytishchi), true);
+  assert.equal(inside('Подмосковье', mytishchi), true);
+  assert.equal(inside('Центр', kremlin), true);
+  assert.equal(inside('ЮАО', zilart), true);
+  assert.equal(inside('в Хамовниках', novodevichy), true);
+  assert.equal(inside('Хамовники', kremlin), false);
+  assert.equal(resolveAssistantArea('Пресня').label, 'Пресненский район');
+  assert.match(resolveAssistantArea('Бутово').label, /Северное Бутово/);
+  assert.match(resolveAssistantArea('Бутово').label, /Южное Бутово/);
+  assert.equal(resolveAssistantArea('У воды'), null);
+
+  assert.deepEqual(describeAssistantLocation(55.7265, 37.556), ['между Садовым кольцом и ТТК (внутри ТТК)', 'ЦАО', 'район Хамовники']);
+  assert.deepEqual(describeAssistantLocation(55.9116, 37.7307), ['за пределами Москвы']);
+  assert.deepEqual(describeAssistantLocation(null, null), []);
+});
+
 test('search_lots with only unknown classes asks the model to pick a real class instead of searching everything', async () => {
   const llm = scriptedLlm([
     { toolCalls: [call('search_lots', { propertyClasses: ['эконом'] })] },
@@ -591,6 +740,9 @@ test('get_project_facts returns the project card and unknown projects come back 
   const [factsResult, missingResult] = llm.requests[1].messages.slice(-2).map((message) => JSON.parse(message.content));
   assert.equal(factsResult.propertyClass, 'Бизнес-класс');
   assert.deepEqual(factsResult.nearestMetroWalk, { station: 'Озёрная', minutes: 9 });
+  // Without coordinates the location falls back to the card's tag.
+  assert.deepEqual(factsResult.location, ['Очаково-Матвеевское']);
+  assert.equal(factsResult.district, undefined);
   assert.equal(factsResult.href, undefined);
   assert.match(missingResult.error, /не найден/);
   assert.ok(steps.includes('Читаю карточку ЖК в Platforma'));
@@ -687,7 +839,8 @@ test('a finished and a failed job are both logged; a failed log write only turns
   const conversationId = '44444444-4444-4444-8444-444444444444';
 
   const turnLog = fakeTurnLog();
-  const failing = new AssistantService(prisma, { isConfigured: () => true, complete: async () => { throw new Error('boom'); } }, fakeCatalog(), fakeWeb(), turnLog);
+  const conversations = fakeConversations();
+  const failing = new AssistantService(prisma, { isConfigured: () => true, complete: async () => { throw new Error('boom'); } }, fakeCatalog(), fakeWeb(), turnLog, conversations);
   const failedJob = await failing.startJob(owner, { messages: [{ role: 'user', content: 'Мой телефон +7 916 123-45-67' }], conversationId });
   const failed = await waitFor(failing, failedJob.id);
   assert.equal(failed.status, 'FAILED');
@@ -696,8 +849,10 @@ test('a finished and a failed job are both logged; a failed log write only turns
   assert.equal(turnLog.entries[0].errorCode, 'boom');
   assert.equal(turnLog.entries[0].conversationId, conversationId);
   assert.equal(turnLog.entries[0].question, 'Мой телефон +7 916 123-45-67');
+  // A failed turn does not go to the history.
+  assert.equal(conversations.turns.length, 0);
 
-  const answering = new AssistantService(prisma, scriptedLlm([{ toolCalls: [call('give_answer', { text: 'ok' })] }]), fakeCatalog(), fakeWeb(), fakeTurnLog({ fail: true }));
+  const answering = new AssistantService(prisma, scriptedLlm([{ toolCalls: [call('give_answer', { text: 'ok' })] }]), fakeCatalog(), fakeWeb(), fakeTurnLog({ fail: true }), fakeConversations({ fail: true }));
   const job = await answering.startJob(owner, { messages: [{ role: 'user', content: 'привет' }], conversationId: 'not-a-uuid' });
   const done = await waitFor(answering, job.id);
   assert.equal(done.status, 'COMPLETED');
@@ -757,6 +912,7 @@ test('assistant admin endpoints answer only admin:access; feedback needs the ass
   const { PrismaService } = require('../dist/prisma/prisma.service.js');
   const { AssistantAdminController, AssistantController, AssistantFeatureGuard } = require('../dist/assistant/assistant.controller.js');
   const { AssistantTurnLogService } = require('../dist/assistant/assistant-turn-log.service.js');
+  const { AssistantConversationsService } = require('../dist/assistant/assistant-conversations.service.js');
 
   const previous = { secret: process.env.JWT_ACCESS_SECRET, enabled: process.env.ASSISTANT_MODULE_ENABLED };
   process.env.JWT_ACCESS_SECRET = 'assistant-http-secret';
@@ -782,6 +938,13 @@ test('assistant admin endpoints answer only admin:access; feedback needs the ass
       findMany: async () => [],
       updateMany: async ({ where }) => ({ count: where.userId === 'admin' ? 1 : 0 }),
     },
+    assistantConversation: {
+      findMany: async ({ where }) => (where.userId === 'admin'
+        ? [{ id: turnId, title: 'Трёшка внутри ТТК', createdAt: new Date('2026-10-02T10:00:00Z'), updatedAt: new Date('2026-10-02T10:05:00Z') }]
+        : []),
+      findFirst: async () => null,
+      deleteMany: async () => ({ count: 0 }),
+    },
   };
 
   class AssistantHttpTestModule {}
@@ -793,6 +956,7 @@ test('assistant admin endpoints answer only admin:access; feedback needs the ass
       PermissionsGuard,
       AssistantFeatureGuard,
       AssistantTurnLogService,
+      AssistantConversationsService,
       { provide: PrismaService, useValue: prisma },
       { provide: AssistantService, useValue: {} },
     ],
@@ -816,6 +980,14 @@ test('assistant admin endpoints answer only admin:access; feedback needs the ass
     assert.equal(await send(`/assistant/admin/turns/${turnId}`, 'broker'), 403);
     assert.equal(await send('/assistant/admin/turns?rating=DOWN', 'admin'), 200);
     assert.equal(await send('/assistant/admin/turns?rating=BAD', 'admin'), 400);
+
+    // History: the owner's list; someone else's or a missing conversation is a 404; ids are UUIDs.
+    assert.equal(await send('/assistant/conversations', null), 401);
+    assert.equal(await send('/assistant/conversations', 'broker'), 503);
+    assert.equal(await send('/assistant/conversations', 'admin'), 200);
+    assert.equal(await send(`/assistant/conversations/${turnId}`, 'admin'), 404);
+    assert.equal(await send('/assistant/conversations/not-a-uuid', 'admin'), 400);
+    assert.equal(await send(`/assistant/conversations/${turnId}`, 'admin', { method: 'DELETE' }), 404);
 
     const feedback = (userId) => send(`/assistant/turns/${turnId}/feedback`, userId, { method: 'POST', body: JSON.stringify({ rating: 'UP' }) });
     assert.equal(await feedback('admin'), 204);

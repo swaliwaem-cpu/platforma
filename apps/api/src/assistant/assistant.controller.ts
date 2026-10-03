@@ -2,6 +2,7 @@ import {
   Body,
   CanActivate,
   Controller,
+  Delete,
   ExecutionContext,
   Get,
   HttpCode,
@@ -18,6 +19,8 @@ import type {
   AssistantAdminTurnResponse,
   AssistantAdminTurnsResponse,
   AssistantAskInput,
+  AssistantConversationResponse,
+  AssistantConversationsResponse,
   AssistantJobResponse,
   AssistantTurnFeedbackInput,
   AssistantUsageResponse,
@@ -28,6 +31,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
+import { AssistantConversationsService } from './assistant-conversations.service';
 import { type AssistantTurnListQuery, AssistantTurnLogService } from './assistant-turn-log.service';
 import { AssistantService, isAssistantEnabledForActor } from './assistant.service';
 
@@ -47,6 +51,7 @@ export class AssistantController {
   constructor(
     private readonly assistant: AssistantService,
     private readonly turnLog: AssistantTurnLogService,
+    private readonly conversations: AssistantConversationsService,
   ) {}
 
   @Get('config')
@@ -71,6 +76,31 @@ export class AssistantController {
     @Param('jobId', new ParseUUIDPipe()) jobId: string,
   ): AssistantJobResponse {
     return { job: this.assistant.getJob(actor, jobId) };
+  }
+
+  @Get('conversations')
+  @UseGuards(AssistantFeatureGuard)
+  listConversations(@CurrentUser() actor: AuthenticatedUser): Promise<AssistantConversationsResponse> {
+    return this.conversations.list(actor);
+  }
+
+  @Get('conversations/:conversationId')
+  @UseGuards(AssistantFeatureGuard)
+  getConversation(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('conversationId', new ParseUUIDPipe()) conversationId: string,
+  ): Promise<AssistantConversationResponse> {
+    return this.conversations.get(actor, conversationId);
+  }
+
+  @Delete('conversations/:conversationId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(AssistantFeatureGuard)
+  async deleteConversation(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('conversationId', new ParseUUIDPipe()) conversationId: string,
+  ): Promise<void> {
+    await this.conversations.remove(actor, conversationId);
   }
 
   @Post('turns/:turnId/feedback')

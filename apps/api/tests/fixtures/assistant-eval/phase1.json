@@ -7,7 +7,7 @@
       "group": "classes",
       "question": "Элитка в Хамовниках",
       "expect": {
-        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "district": "Хамовник" } }]
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "areas": ["Хамовник"] } }]
       }
     },
     {
@@ -73,7 +73,7 @@
       "group": "filters",
       "question": "Элитка в ЦАО до 300 млн с отделкой, до 10 минут пешком от метро",
       "expect": {
-        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "finishing": ["с отделкой"], "budgetMaxRub": 300000000, "metroWalkMinutesMax": 10, "district": "Центр" } }]
+        "tools": [{ "name": "search_lots", "args": { "propertyClasses": ["Делюкс"], "finishing": ["с отделкой"], "budgetMaxRub": 300000000, "metroWalkMinutesMax": 10, "areas": ["ЦАО"] } }]
       }
     },
     {
