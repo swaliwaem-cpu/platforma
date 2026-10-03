@@ -6,6 +6,7 @@ import type {
   AssistantJob,
   AssistantLot,
   AssistantPlatformLot,
+  AssistantProject,
   AssistantTurnRating,
   AssistantWebLot,
 } from '@platforma/shared';
@@ -533,8 +534,9 @@ function AssistantMessageView({
     );
   }
   const answer = message.answer;
-  // Answers saved in the session before sources existed have none.
+  // Answers saved in the session before sources or projects existed have none.
   const sources = answer?.sources ?? [];
+  const projects = answer?.projects ?? [];
   const hasMapProjects = answer ? groupLotsByProject(answer.lots).length > 0 : false;
   return (
     <div className="assistant-message assistant-message--results">
@@ -553,6 +555,16 @@ function AssistantMessageView({
               Показать на карте
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {projects.length > 0 ? (
+        <div className="assistant-results">
+          <div>
+            <h3>{answer && answer.lots.length > 0 ? 'Ещё ЖК под запрос' : 'ЖК под запрос'}</h3>
+            <div className="assistant-result-list">
+              {projects.map((project) => <ProjectCard key={project.projectId} project={project} />)}
+            </div>
+          </div>
         </div>
       ) : null}
       {answer && isMapOpen ? <AssistantResultsMap lots={answer.lots} onClose={() => setIsMapOpen(false)} /> : null}
@@ -795,6 +807,39 @@ function WebLotCard({ lot }: { lot: AssistantWebLot }) {
       <div className="assistant-result-status">
         <span className="assistant-result-source">С сайта {lot.siteName}</span>
         <span className="assistant-result-freshness">данные не из Platforma, проверьте у застройщика</span>
+      </div>
+    </section>
+  );
+}
+
+// A project without lots in the answer: what the assistant learned and where it checked it.
+function ProjectCard({ project }: { project: AssistantProject }) {
+  const facts = [project.propertyClass, project.location, project.metro, project.developer].filter(Boolean);
+  const check = project.siteCheck;
+  return (
+    <section className="assistant-result-card" aria-label={project.title}>
+      <a className="assistant-result-title" href={project.href}>{shortProjectTitle(project.title)}</a>
+      {facts.length > 0 ? <p className="assistant-result-subtitle">{facts.join(' · ')}</p> : null}
+      {check?.priceFromRub ? <strong className="assistant-result-price">от {formatRub(check.priceFromRub)}</strong> : null}
+      <p className="assistant-project-note">{project.note}</p>
+      <div className="assistant-result-status">
+        <span className="assistant-project-lots">
+          {project.availableLots > 0 ? `В Platforma ${formatLotsCount(project.availableLots)}, но не под запрос` : 'В Platforma лотов нет'}
+        </span>
+        {check ? (
+          <a
+            className={`assistant-project-site${check.official ? '' : ' assistant-project-site--unconfirmed'}`}
+            href={check.url}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            {check.official ? `Проверено на сайте застройщика ${check.siteName}` : `Сайт ${check.siteName} найден поиском, не подтверждён`}
+            {' · '}
+            {formatShortDate(check.checkedAt)}
+          </a>
+        ) : (
+          <span className="assistant-result-freshness">проверить на сайте застройщика не удалось</span>
+        )}
       </div>
     </section>
   );

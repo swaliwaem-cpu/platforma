@@ -4,8 +4,9 @@ const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const test = require('node:test');
 
-const { runAssistantAgent, pageMentionsPrice } = require('../dist/assistant/assistant-agent.js');
+const { excerptSitePage, runAssistantAgent, pageMentionsPrice } = require('../dist/assistant/assistant-agent.js');
 const { stripProjectPrefix } = require('../dist/assistant/assistant-catalog.tools.js');
+const { checkProjectSite, findDeveloperSites, findProjectDomain, pickProjectPage } = require('../dist/assistant/assistant-developer-sites.js');
 const {
   AssistantWebTools,
   extractLotRecords,
@@ -106,8 +107,8 @@ function call(name, args, id = name) {
   return { id, name, arguments: JSON.stringify(args) };
 }
 
-function fakeCatalog({ projects = [], searches = [], facts = {} } = {}) {
-  const calls = { findProjects: [], searchLots: [], getProjectFacts: [] };
+function fakeCatalog({ projects = [], searches = [], facts = {}, projectSearches = [] } = {}) {
+  const calls = { findProjects: [], searchLots: [], searchProjects: [], getProjectFacts: [] };
   return {
     calls,
     async findProjects(query) {
@@ -121,6 +122,10 @@ function fakeCatalog({ projects = [], searches = [], facts = {} } = {}) {
     async searchLots(input) {
       calls.searchLots.push(input);
       return searches[calls.searchLots.length - 1] ?? { total: 0, lots: [] };
+    },
+    async searchProjects(input) {
+      calls.searchProjects.push(input);
+      return projectSearches[calls.searchProjects.length - 1] ?? { total: 0, withoutMatchingLots: 0, projects: [] };
     },
   };
 }
@@ -138,6 +143,9 @@ function fakeWeb({ searchConfigured = false, pages = {} } = {}) {
       const page = pages[url];
       if (!page) throw new Error('unexpected page');
       return page;
+    },
+    async withSession(_signal, work) {
+      return work(this);
     },
   };
 }
@@ -294,6 +302,250 @@ test('tool failures are reported to the model instead of failing the turn', asyn
   assert.deepEqual(JSON.parse(llm.requests[1].messages.at(-1).content), { error: 'PAGE_UNREACHABLE' });
   assert.equal(result.answer.text, 'Сайт недоступен.');
   assert.deepEqual(result.answer.sources, []);
+});
+
+function candidate(overrides) {
+  return {
+    projectId: 'p-symbol',
+    title: 'ЖК Символ',
+    slug: 'zhk-simvol',
+    developer: 'Донстрой',
+    district: null,
+    location: ['Между Садовым кольцом и ТТК', 'ЦАО', 'Лефортово'],
+    metro: ['Римская'],
+    address: null,
+    propertyClass: 'Бизнес-класс',
+    nearestMetroWalk: { station: 'Римская', minutes: 8 },
+    completion: '4 кв. 2026',
+    availableLots: 0,
+    priceFromRub: null,
+    cardPriceFromRub: 35_000_000,
+    roomsAvailable: [],
+    matchingLots: 0,
+    ...overrides,
+  };
+}
+
+// Search results by query and pages by url; records what was asked.
+function siteWeb({ results = {}, pages = {} } = {}) {
+  const searched = [];
+  const opened = [];
+  const sessions = [];
+  return {
+    searched,
+    opened,
+    sessions,
+    isSearchConfigured: () => true,
+    async search(query) {
+      searched.push(query);
+      return results[query] ?? [];
+    },
+    async openPage(url) {
+      opened.push(url);
+      if (!pages[url]) throw new Error('unexpected page');
+      return pages[url];
+    },
+    async withSession(_signal, work) {
+      sessions.push(work);
+      return work(this);
+    },
+  };
+}
+
+test('projects without matching lots come with a site check the code made, never with invented ones', async () => {
+  const symbolUrl = 'https://donstroy.moscow/objects/simvol/';
+  const otherUrl = 'https://zhk-novyy.example/';
+  const symbol = candidate();
+  const other = candidate({
+    projectId: 'p-other',
+    title: 'Жилой комплекс Новый',
+    slug: 'novyy',
+    developer: 'Неизвестный девелопер',
+    location: [],
+    district: 'У парка',
+    nearestMetroWalk: null,
+    availableLots: 12,
+  });
+  const veer = candidate({ projectId: 'p-veer', title: 'Жилой комплекс Веер 2', slug: 'veer-2', developer: 'MR Group', matchingLots: 1 });
+  const unchecked = candidate({ projectId: 'p-unchecked', title: 'ЖК Без проверки', slug: 'bez-proverki' });
+  const web = siteWeb({
+    results: {
+      'ЖК Символ site:donstroy.moscow': [
+        { title: 'Донстрой — главная', url: 'https://donstroy.moscow/', snippet: '' },
+        { title: 'Символ — квартиры', url: symbolUrl, snippet: '' },
+      ],
+      'ЖК Новый Неизвестный девелопер официальный сайт': [
+        { title: 'ЖК Новый на ЦИАН', url: 'https://www.cian.ru/zhk-novyy/', snippet: '' },
+        { title: 'ЖК Новый — официальный сайт', url: otherUrl, snippet: '' },
+      ],
+    },
+    pages: {
+      [symbolUrl]: { url: symbolUrl, title: 'Символ', text: 'Двухкомнатные от 38,9 млн ₽. Сдача 2026.', links: [], data: [] },
+      [otherUrl]: { url: otherUrl, title: 'Новый', text: 'Квартиры от 20 млн', links: [], data: [] },
+    },
+  });
+  const filters = { areas: ['ЦАО'], rooms: [2], budgetMaxRub: 40_000_000 };
+  const llm = scriptedLlm([
+    { toolCalls: [call('search_lots', filters, 'lots'), call('search_projects', filters, 'projects')] },
+    { toolCalls: [call('check_project_sites', { projectIds: ['p-symbol', 'p-other'] })] },
+    {
+      toolCalls: [call('give_answer', {
+        text: 'Есть лот в Веер 2 и ещё два ЖК без лотов.',
+        platformLotIds: [veerLot.unitId],
+        projects: [
+          { projectId: 'p-symbol', note: 'На сайте застройщика двушки от 38,9 млн, сдача в 2026.', priceFromRub: 38_900_000 },
+          { projectId: 'p-other', note: 'Сайт найден поиском.', priceFromRub: 99_000_000 },
+          { projectId: 'p-veer', note: 'Уже есть лоты.' },
+          { projectId: 'p-unchecked', note: 'По карточке.' },
+          { projectId: 'p-invented', note: 'Выдумка.' },
+          { projectId: 'p-symbol', note: 'Повтор.' },
+        ],
+      })],
+    },
+  ]);
+  const catalog = fakeCatalog({
+    searches: [{ total: 1, lots: [veerLot] }],
+    projectSearches: [{ total: 4, withoutMatchingLots: 3, projects: [symbol, other, unchecked, veer] }],
+  });
+  const steps = [];
+
+  const result = await runAssistantAgent({ llm, catalog, web }, context('двушка в ЦАО до 40 млн', { onStep: (step) => steps.push(step) }));
+
+  assert.deepEqual(catalog.calls.searchProjects[0].areas, ['ЦАО']);
+  assert.deepEqual(catalog.calls.searchProjects[0].rooms, [2]);
+  // Both calls of the first response were answered, in the order the model made them.
+  assert.deepEqual(llm.requests[1].messages.slice(-2).map((message) => message.toolCallId), ['lots', 'projects']);
+  const projectsResult = JSON.parse(llm.requests[1].messages.at(-1).content);
+  assert.equal(projectsResult.withoutMatchingLots, 3);
+  assert.equal(projectsResult.projects[0].matchingLotsInPlatforma, 0);
+  assert.equal(projectsResult.projects[0].developerSiteKnown, true);
+  assert.equal(projectsResult.projects[1].developerSiteKnown, false);
+
+  assert.deepEqual(web.searched, ['ЖК Символ site:donstroy.moscow', 'ЖК Новый Неизвестный девелопер официальный сайт']);
+  assert.deepEqual(web.opened.sort(), [otherUrl, symbolUrl].sort());
+  // Both checks ran in one browser session.
+  assert.equal(web.sessions.length, 1);
+  const checks = JSON.parse(llm.requests[2].messages.at(-1).content).checks;
+  assert.deepEqual(checks.map((check) => [check.projectId, check.official]), [['p-symbol', true], ['p-other', false]]);
+  assert.ok(steps.includes('Ищу ЖК под запрос в Platforma'));
+  assert.ok(steps.includes('Проверяю 2 ЖК на сайтах застройщиков'));
+
+  assert.deepEqual(result.answer.lots.map((lot) => lot.unitId), [veerLot.unitId]);
+  assert.deepEqual(result.answer.projects.map((project) => project.projectId), ['p-symbol', 'p-other']);
+  const [checked, unconfirmed] = result.answer.projects;
+  assert.equal(checked.href, '/objects/zhk-simvol');
+  assert.equal(checked.location, 'Лефортово, ЦАО');
+  assert.equal(checked.metro, 'Римская, 8 мин пешком');
+  assert.deepEqual({ ...checked.siteCheck, checkedAt: undefined }, {
+    url: symbolUrl, siteName: 'donstroy.moscow', official: true, checkedAt: undefined, priceFromRub: 38_900_000,
+  });
+  assert.equal(unconfirmed.location, 'У парка');
+  assert.equal(unconfirmed.availableLots, 12);
+  assert.equal(unconfirmed.siteCheck.official, false);
+  // 99 млн is nowhere on the page.
+  assert.equal(unconfirmed.siteCheck.priceFromRub, null);
+  assert.match(result.answer.historyNote, /ЖК без лотов в ответе:\n- ЖК Символ: На сайте застройщика/);
+  assert.deepEqual(result.answer.sources.filter((source) => source.kind === 'WEB').map((source) => source.url).sort(), [otherUrl, symbolUrl].sort());
+});
+
+test('a project search over the whole catalog is refused, site checks stop at ten and only checked projects are listed', async () => {
+  const keys = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k'];
+  const projects = keys.map((key) => candidate({ projectId: `p-${key}`, title: `ЖК ${key}`, slug: key, developer: 'Без сайта' }));
+  const llm = scriptedLlm([
+    { toolCalls: [call('search_projects', { rooms: [1], budgetMaxRub: 20_000_000 })] },
+    { toolCalls: [call('search_projects', { propertyClasses: ['бизнес'] })] },
+    { toolCalls: [call('check_project_sites', { projectIds: projects.map((project) => project.projectId) })] },
+    { toolCalls: [call('check_project_sites', { projectIds: ['p-k'] })] },
+    {
+      toolCalls: [call('give_answer', {
+        text: 'ok',
+        projects: [{ projectId: 'p-a', note: 'Страницу ЖК на сайте не нашёл; в карточке от 35 млн.' }, { projectId: 'p-k', note: 'Не проверен.' }],
+      })],
+    },
+  ]);
+  const catalog = fakeCatalog({ projectSearches: [{ total: 11, withoutMatchingLots: 11, projects }] });
+  const web = siteWeb();
+  const steps = [];
+
+  const result = await runAssistantAgent({ llm, catalog, web }, context('однушки до 20 млн', { onStep: (step) => steps.push(step) }));
+
+  assert.match(JSON.parse(llm.requests[1].messages.at(-1).content).error, /Нужен хотя бы один фильтр/);
+  assert.equal(catalog.calls.searchProjects.length, 1);
+  assert.deepEqual(catalog.calls.searchProjects[0].propertyClasses, ['Бизнес-класс']);
+  const firstCheck = JSON.parse(llm.requests[3].messages.at(-1).content);
+  assert.equal(firstCheck.checks.length, 10);
+  assert.ok(firstCheck.checks.every((check) => check.error === 'PROJECT_SITE_NOT_FOUND'));
+  assert.match(firstCheck.note, /Проверено только 10/);
+  assert.ok(steps.includes('Проверяю 10 ЖК на сайтах застройщиков'));
+  assert.match(JSON.parse(llm.requests[4].messages.at(-1).content).error, /Лимит проверок/);
+  assert.equal(web.searched.length, 10);
+  // A failed check is still a check; the eleventh project was never checked and is left out.
+  assert.deepEqual(result.answer.projects.map((project) => [project.projectId, project.siteCheck]), [['p-a', null]]);
+});
+
+test('a long checked page keeps its top and the lines about prices, flats and completion', () => {
+  const text = [
+    'Level Донской — квартал у Донского монастыря.',
+    'x'.repeat(900),
+    'Меню Контакты О компании',
+    'Двухкомнатные квартиры от 38,9 млн ₽',
+    'Наши партнёры',
+    'Сдача II очереди — 4 кв. 2027',
+    'Подписаться на новости',
+  ].join('\n');
+
+  const excerpt = excerptSitePage(text, 1_000);
+
+  assert.ok(excerpt.startsWith('Level Донской'));
+  assert.match(excerpt, /Двухкомнатные квартиры от 38,9 млн ₽/);
+  assert.match(excerpt, /Сдача II очереди/);
+  assert.doesNotMatch(excerpt, /Наши партнёры|Подписаться/);
+  assert.ok(excerpt.length <= 1_000);
+  assert.equal(excerptSitePage('коротко', 1_000), 'коротко');
+});
+
+test('the project page is picked on the developer domain by its own name, not the developer\'s', () => {
+  const level = { title: 'Жилой комплекс Level Донской', slug: 'zhiloj-kompleks-level-donskoj', developer: 'Level Group' };
+  const domains = ['level.ru'];
+  const results = [
+    { title: 'Level Мичуринский', url: 'https://level.ru/projects/michurinsky/', snippet: '' },
+    { title: 'Квартиры в Level Донской на ЦИАН', url: 'https://www.cian.ru/level-donskoj/', snippet: '' },
+    { title: 'Квартиры', url: 'https://level.ru/projects/donskoj/', snippet: '' },
+  ];
+  assert.equal(pickProjectPage(results, level, domains).result.url, 'https://level.ru/projects/donskoj/');
+  // A page of the developer's site that does not name the project is still a candidate, with no score.
+  assert.deepEqual(pickProjectPage(results.slice(0, 1), level, domains), { result: results[0], score: 0 });
+  // Without known domains only a non-aggregator page that names the project will do.
+  assert.equal(pickProjectPage(results.slice(0, 2), level, []), null);
+  assert.equal(pickProjectPage([{ title: 'ЖК Level Донской', url: 'https://level-donskoj.example/', snippet: '' }], level, []).score, 2);
+});
+
+test('a developer domain named after the project is opened without a search; look-alike names are not', async () => {
+  const lumin = { title: 'ЖК Lumin House', slug: 'zhiloj-kompleks-lumin-house', developer: 'Hutton Development' };
+  assert.equal(findProjectDomain(lumin, findDeveloperSites('Hutton Development')), 'luminhouse.ru');
+  // «Парк» is in many names: afi-park.ru is not the site of every AFI park.
+  const lilac = { title: 'Жилой квартал Сиреневый Парк', slug: 'sirenevyj-park', developer: 'AFI Development' };
+  assert.equal(findProjectDomain(lilac, findDeveloperSites('AFI Development')), null);
+
+  const page = { url: 'https://luminhouse.ru/', title: 'Lumin House', text: 'Квартиры от 90 млн', links: [], data: [] };
+  const web = siteWeb({ pages: { 'https://luminhouse.ru/': page } });
+  const result = await checkProjectSite(web, lumin);
+  assert.deepEqual([result.official, result.searches, web.searched.length], [true, 0, 0]);
+});
+
+test('without a known domain a search result must be about housing', () => {
+  const project = { title: 'Клубный дом LA BELLE MAISON', slug: 'la-belle-maison', developer: 'GBK Group' };
+  const hotel = { title: 'Club Wyndham La Belle Maison', url: 'https://www.hotelsone.com/club-wyndham-la-belle-maison.html', snippet: 'Отель в Новом Орлеане' };
+  const house = { title: 'Клубный дом La Belle Maison на Остоженке', url: 'https://labellemaison.example/', snippet: '' };
+  assert.equal(pickProjectPage([hotel], project, []), null);
+  assert.equal(pickProjectPage([hotel, house], project, []).result.url, house.url);
+});
+
+test('developer sites are found by the catalog name regardless of case and quotes', () => {
+  assert.deepEqual(findDeveloperSites('Донстрой'), ['donstroy.moscow']);
+  assert.deepEqual(findDeveloperSites('донстрой'), ['donstroy.moscow']);
+  assert.deepEqual(findDeveloperSites('Неизвестный девелопер'), []);
+  assert.deepEqual(findDeveloperSites(null), []);
 });
 
 test('page price check accepts whole rubles and «млн» notation', () => {

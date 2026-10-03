@@ -629,6 +629,38 @@
   line-height: 1.3;
 }
 
+.assistant-project-note {
+  margin: 0;
+  color: var(--color-text, #251d19);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.assistant-project-lots {
+  color: var(--color-muted-foreground, #756a64);
+}
+
+.assistant-project-site {
+  color: #326447;
+  text-decoration: underline;
+  text-decoration-color: rgb(50 100 71 / 35%);
+  text-underline-offset: 2px;
+}
+
+.assistant-project-site:hover {
+  text-decoration-color: currentColor;
+}
+
+.assistant-project-site:focus-visible {
+  outline: 2px solid #e85a18;
+  outline-offset: 2px;
+}
+
+.assistant-project-site--unconfirmed {
+  color: #8a4d13;
+  text-decoration-color: rgb(138 77 19 / 35%);
+}
+
 .assistant-map-button {
   display: inline-flex;
   min-height: 34px;
@@ -1221,6 +1253,16 @@ html[data-app-theme="dark-premium"] .assistant-chat :is(.assistant-result-deviat
 
 html[data-app-theme="dark-premium"] :is(.assistant-chat, .assistant-map-dialog) :is(.assistant-result-status) {
   color: var(--fw-success, #58d6a0);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-project-site {
+  color: var(--fw-success, #58d6a0);
+  text-decoration-color: rgb(88 214 160 / 40%);
+}
+
+html[data-app-theme="dark-premium"] .assistant-chat .assistant-project-site--unconfirmed {
+  color: var(--assistant-dark-accent-ink);
+  text-decoration-color: var(--assistant-dark-accent-line);
 }
 
 html[data-app-theme="dark-premium"] .assistant-chat :is(.assistant-error) {

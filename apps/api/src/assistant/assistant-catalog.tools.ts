@@ -13,6 +13,7 @@ import { describeAssistantLocation, resolveAssistantArea } from './assistant-mos
 // Platforma catalog as seen by the assistant: projects by name, their facts and available lots.
 
 const maxProjects = 8;
+const maxProjectCandidates = 15;
 const maxLotsPerCall = 15;
 const defaultLotsPerCall = 10;
 const maxDescriptionChars = 1_500;
@@ -35,9 +36,26 @@ export type AssistantProjectMatch = {
   address: string | null;
   propertyClass: string | null;
   nearestMetroWalk: AssistantMetroWalk | null;
+  completion: string | null;
   availableLots: number;
+  /** Cheapest available lot; null without lots. */
   priceFromRub: number | null;
+  /** «Price from» of the card as editors or the last feed left it; may be stale when there are no lots. */
+  cardPriceFromRub: number | null;
   roomsAvailable: number[];
+};
+
+export type AssistantProjectCandidate = AssistantProjectMatch & {
+  /** Available lots that pass the lot filters of the search (rooms, budget, area…). */
+  matchingLots: number;
+};
+
+export type AssistantProjectSearchResult = {
+  total: number;
+  /** Of total: projects without a single available lot that passes the lot filters. */
+  withoutMatchingLots: number;
+  projects: AssistantProjectCandidate[];
+  unknownAreas?: string[];
 };
 
 export type AssistantLotSearchInput = {
@@ -134,6 +152,73 @@ export class AssistantCatalogTools {
     }
     if (ids.length === 0) return { projects: [], partialMatch: false };
 
+    const normalizedReference = normalizeTitle(reference);
+    const projects = (await this.loadProjects(ids, 60)).map((project) => {
+      const title = normalizeTitle(project.title);
+      return { ...project, rank: title === normalizedReference ? 0 : title.includes(normalizedReference) ? 1 : 2 };
+    });
+    projects.sort((left, right) => left.rank - right.rank || right.availableLots - left.availableLots);
+    return {
+      projects: projects.slice(0, maxProjects).map(({ rank: _rank, ...project }) => project),
+      partialMatch,
+    };
+  }
+
+  // Projects by place, metro, developer, class or completion — with or without lots. Each one
+  // says how many of its lots pass the lot filters, so the ones without a match can be named too.
+  async searchProjects(input: AssistantLotSearchInput, now = new Date()): Promise<AssistantProjectSearchResult> {
+    const area = await this.createAreaCondition(input.areas);
+    const type = input.commercial ? 'commercial' : 'residential';
+    const conditions = [
+      ...createProjectConditions(input, area?.condition ?? null),
+      Prisma.sql`o.type = ${type}::real_estate_object_type`,
+      ...createCompletionConditions(projectCompletionYear, projectCompletionQuarter, input, now),
+    ];
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT o.id::text AS id
+      FROM real_estate_objects o
+      LEFT JOIN developers d ON d.id = o.developer_id
+      WHERE ${Prisma.join(conditions, ' AND ')}
+    `);
+    const unknownAreas = area?.unknown.length ? { unknownAreas: area.unknown } : {};
+    if (rows.length === 0) return { total: 0, withoutMatchingLots: 0, projects: [], ...unknownAreas };
+
+    const ids = rows.map((row) => row.id);
+    const [projects, matchingRows] = await Promise.all([
+      this.loadProjects(ids),
+      this.prisma.$queryRaw<Array<{ objectId: string; count: bigint }>>(Prisma.sql`
+        SELECT o.id::text AS "objectId", COUNT(*)::bigint AS count
+        ${lotSearchFrom([
+          ...createLotConditions({ ...input, projectIds: undefined }, now, area?.condition ?? null),
+          Prisma.sql`o.id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})`,
+        ])}
+        GROUP BY o.id
+      `),
+    ]);
+    const matchingByObjectId = new Map(matchingRows.map((row) => [row.objectId, Number(row.count)]));
+    const candidates = projects.map((project): AssistantProjectCandidate => ({
+      ...project,
+      matchingLots: matchingByObjectId.get(project.projectId) ?? 0,
+    }));
+    // Projects without a matching lot first: the lot search already shows the others. Then the
+    // ones whose price from fits the budget, then the closest to the metro.
+    const overBudget = (project: AssistantProjectCandidate) => {
+      const priceFrom = project.priceFromRub ?? project.cardPriceFromRub;
+      return isNumber(input.budgetMaxRub) && priceFrom !== null && priceFrom > input.budgetMaxRub;
+    };
+    candidates.sort((left, right) => Number(left.matchingLots > 0) - Number(right.matchingLots > 0)
+      || Number(overBudget(left)) - Number(overBudget(right))
+      || (left.nearestMetroWalk?.minutes ?? Infinity) - (right.nearestMetroWalk?.minutes ?? Infinity)
+      || left.title.localeCompare(right.title, 'ru'));
+    return {
+      total: candidates.length,
+      withoutMatchingLots: candidates.filter((project) => project.matchingLots === 0).length,
+      projects: candidates.slice(0, maxProjectCandidates),
+      ...unknownAreas,
+    };
+  }
+
+  private async loadProjects(ids: string[], take?: number): Promise<AssistantProjectMatch[]> {
     const objects = await this.prisma.realEstateObject.findMany({
       where: { id: { in: ids }, status: ObjectStatus.PUBLISHED, deletedAt: null },
       select: {
@@ -144,6 +229,12 @@ export class AssistantCatalogTools {
         propertyClass: true,
         latitude: true,
         longitude: true,
+        priceFrom: true,
+        feedPriceFrom: true,
+        completionYear: true,
+        completionQuarter: true,
+        feedCompletionYear: true,
+        feedCompletionQuarter: true,
         developer: { select: { name: true } },
         primaryLocation: { select: { name: true } },
         metroStations: {
@@ -153,9 +244,9 @@ export class AssistantCatalogTools {
         },
         assistantMetroRouteFact: metroWalkSelect,
       },
-      take: 60,
+      ...(take ? { take } : {}),
     });
-    if (objects.length === 0) return { projects: [], partialMatch: false };
+    if (objects.length === 0) return [];
 
     const stats = await this.prisma.$queryRaw<Array<{
       objectId: string;
@@ -175,11 +266,9 @@ export class AssistantCatalogTools {
       GROUP BY fu.object_id
     `);
     const statsByObjectId = new Map(stats.map((row) => [row.objectId, row]));
-    const normalizedReference = normalizeTitle(reference);
 
-    const projects = objects.map((object): AssistantProjectMatch & { rank: number } => {
+    return objects.map((object): AssistantProjectMatch => {
       const stat = statsByObjectId.get(object.id);
-      const title = normalizeTitle(object.title);
       return {
         projectId: object.id,
         title: object.title,
@@ -191,17 +280,16 @@ export class AssistantCatalogTools {
         address: object.address,
         propertyClass: object.propertyClass,
         nearestMetroWalk: toMetroWalk(object.assistantMetroRouteFact),
+        completion: formatCompletion(
+          object.feedCompletionYear ?? object.completionYear,
+          object.feedCompletionYear ? object.feedCompletionQuarter : object.completionQuarter,
+        ),
         availableLots: Number(stat?.count ?? 0),
         priceFromRub: stat?.priceFrom ? Number(stat.priceFrom) : null,
+        cardPriceFromRub: toNumber(object.feedPriceFrom ?? object.priceFrom),
         roomsAvailable: [...(stat?.rooms ?? [])].sort((left, right) => left - right),
-        rank: title === normalizedReference ? 0 : title.includes(normalizedReference) ? 1 : 2,
       };
     });
-    projects.sort((left, right) => left.rank - right.rank || right.availableLots - left.availableLots);
-    return {
-      projects: projects.slice(0, maxProjects).map(({ rank: _rank, ...project }) => project),
-      partialMatch,
-    };
   }
 
   async getProjectFacts(projectId: string): Promise<AssistantProjectFacts | null> {
@@ -449,6 +537,9 @@ const lotPrice = Prisma.sql`COALESCE(fu.effective_price, fu.discount_price, fu.p
 const lotPricePerMeter = Prisma.sql`COALESCE(fu.effective_price_per_meter, fu.discount_price_per_meter, fu.price_per_meter)`;
 const lotCompletionYear = Prisma.sql`COALESCE(fu.completion_year, o.feed_completion_year, o.completion_year)`;
 const lotCompletionQuarter = Prisma.sql`COALESCE(fu.completion_quarter, o.feed_completion_quarter, o.completion_quarter)`;
+// The card's completion, as getProjectFacts reports it: the feed's when it has a year.
+const projectCompletionYear = Prisma.sql`COALESCE(o.feed_completion_year, o.completion_year)`;
+const projectCompletionQuarter = Prisma.sql`(CASE WHEN o.feed_completion_year IS NOT NULL THEN o.feed_completion_quarter ELSE o.completion_quarter END)`;
 const lotCeilingHeight = Prisma.sql`CASE
   WHEN rd.details_json->>'ceilingHeight' ~ '^[0-9]+([.,][0-9]+)?$'
   THEN replace(rd.details_json->>'ceilingHeight', ',', '.')::numeric
@@ -511,8 +602,7 @@ function createLotConditions(input: AssistantLotSearchInput, now: Date, area: Pr
   const type = input.commercial ? 'commercial' : 'residential';
   const conditions = [
     ...availableLotConditions,
-    Prisma.sql`o.status = 'published'::object_status`,
-    Prisma.sql`o.deleted_at IS NULL`,
+    ...createProjectConditions(input, area),
     Prisma.sql`fu.type = ${type}::feed_unit_type`,
   ];
   const projectIds = (input.projectIds ?? []).filter((id) => uuidPattern.test(id)).slice(0, 20);
@@ -529,33 +619,27 @@ function createLotConditions(input: AssistantLotSearchInput, now: Date, area: Pr
   if (isNumber(input.areaMax)) conditions.push(Prisma.sql`fu.area <= ${input.areaMax}`);
   if (isNumber(input.floorMin)) conditions.push(Prisma.sql`fu.floor >= ${Math.trunc(input.floorMin)}`);
   if (isNumber(input.floorMax)) conditions.push(Prisma.sql`fu.floor <= ${Math.trunc(input.floorMax)}`);
-  if (isNumber(input.completionYearMin)) {
-    conditions.push(Prisma.sql`${lotCompletionYear} >= ${Math.trunc(input.completionYearMin)}`);
-  }
-  if (isNumber(input.completionYearMax)) {
-    conditions.push(Prisma.sql`${lotCompletionYear} <= ${Math.trunc(input.completionYearMax)}`);
-  }
-  if (typeof input.completed === 'boolean') {
-    // A quarter counts as over once the next one has started in Moscow (UTC+3, no DST);
-    // a year without a quarter ends in Q4.
-    const moscow = new Date(now.getTime() + 3 * 60 * 60_000);
-    const currentQuarter = moscow.getUTCFullYear() * 10 + Math.floor(moscow.getUTCMonth() / 3) + 1;
-    const lotQuarter = Prisma.sql`(${lotCompletionYear} * 10 + COALESCE(${lotCompletionQuarter}, 4))`;
-    conditions.push(input.completed
-      ? Prisma.sql`${lotQuarter} < ${currentQuarter}`
-      : Prisma.sql`${lotQuarter} >= ${currentQuarter}`);
-  }
+  conditions.push(...createCompletionConditions(lotCompletionYear, lotCompletionQuarter, input, now));
   if (isNumber(input.pricePerM2Min)) conditions.push(Prisma.sql`${lotPricePerMeter} >= ${input.pricePerM2Min}`);
   if (isNumber(input.pricePerM2Max)) conditions.push(Prisma.sql`${lotPricePerMeter} <= ${input.pricePerM2Max}`);
-  if (input.propertyClasses?.length) {
-    const classes = normalizePropertyClasses(input.propertyClasses);
-    conditions.push(classes.length ? Prisma.sql`o.property_class IN (${Prisma.join(classes)})` : Prisma.sql`FALSE`);
-  }
   if (input.finishing?.length) {
     const finishing = [...new Set(input.finishing.filter((value) => assistantFinishings.includes(value)))];
     // A furnished lot is finished too.
     if (finishing.includes('с отделкой') && !finishing.includes('с мебелью')) finishing.push('с мебелью');
     conditions.push(finishing.length ? Prisma.sql`${lotFinishing} IN (${Prisma.join(finishing)})` : Prisma.sql`FALSE`);
+  }
+  return conditions;
+}
+
+// Conditions on the project itself (needs `o` and `d`), shared by the lot and the project search.
+function createProjectConditions(input: AssistantLotSearchInput, area: Prisma.Sql | null) {
+  const conditions = [
+    Prisma.sql`o.status = 'published'::object_status`,
+    Prisma.sql`o.deleted_at IS NULL`,
+  ];
+  if (input.propertyClasses?.length) {
+    const classes = normalizePropertyClasses(input.propertyClasses);
+    conditions.push(classes.length ? Prisma.sql`o.property_class IN (${Prisma.join(classes)})` : Prisma.sql`FALSE`);
   }
   if (isNumber(input.metroWalkMinutesMax)) {
     conditions.push(Prisma.sql`EXISTS (
@@ -574,6 +658,24 @@ function createLotConditions(input: AssistantLotSearchInput, now: Date, area: Pr
   }
   const developer = cleanText(input.developer);
   if (developer) conditions.push(normalizedContains(Prisma.sql`d.name`, developer));
+  return conditions;
+}
+
+// Lots complete with their own quarter, projects with the card's one.
+function createCompletionConditions(year: Prisma.Sql, quarter: Prisma.Sql, input: AssistantLotSearchInput, now: Date) {
+  const conditions: Prisma.Sql[] = [];
+  if (isNumber(input.completionYearMin)) conditions.push(Prisma.sql`${year} >= ${Math.trunc(input.completionYearMin)}`);
+  if (isNumber(input.completionYearMax)) conditions.push(Prisma.sql`${year} <= ${Math.trunc(input.completionYearMax)}`);
+  if (typeof input.completed === 'boolean') {
+    // A quarter counts as over once the next one has started in Moscow (UTC+3, no DST);
+    // a year without a quarter ends in Q4.
+    const moscow = new Date(now.getTime() + 3 * 60 * 60_000);
+    const currentQuarter = moscow.getUTCFullYear() * 10 + Math.floor(moscow.getUTCMonth() / 3) + 1;
+    const completionQuarter = Prisma.sql`(${year} * 10 + COALESCE(${quarter}, 4))`;
+    conditions.push(input.completed
+      ? Prisma.sql`${completionQuarter} < ${currentQuarter}`
+      : Prisma.sql`${completionQuarter} >= ${currentQuarter}`);
+  }
   return conditions;
 }
 

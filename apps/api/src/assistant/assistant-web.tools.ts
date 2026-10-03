@@ -23,6 +23,10 @@ const maxJsonResponses = 4;
 const maxJsonBytes = 400_000;
 const maxJsonCharsPerResponse = 16_000;
 const maxConcurrentBrowsers = 2;
+// One browser serves all project site checks of a turn: tabs are cheaper than browsers, and
+// search engines get no more than two queries at a time from it.
+const maxSessionPages = 4;
+const maxSessionSearches = 2;
 
 export type AssistantSearchResult = {
   title: string;
@@ -44,10 +48,14 @@ export class AssistantWebToolError extends Error {
   }
 }
 
+export type AssistantWebSession = Pick<AssistantWeb, 'search' | 'openPage'>;
+
 export interface AssistantWeb {
   isSearchConfigured(): boolean;
   search(query: string, signal?: AbortSignal): Promise<AssistantSearchResult[]>;
   openPage(url: string, signal?: AbortSignal): Promise<AssistantOpenedPage>;
+  /** Several searches and pages at once in one browser; it closes when `work` settles. */
+  withSession<T>(signal: AbortSignal | undefined, work: (session: AssistantWebSession) => Promise<T>): Promise<T>;
 }
 
 @Injectable()
@@ -113,6 +121,24 @@ export class AssistantWebTools implements AssistantWeb {
     return this.withBrowser(signal, (browser) => readPage(browser, url));
   }
 
+  withSession<T>(signal: AbortSignal | undefined, work: (session: AssistantWebSession) => Promise<T>): Promise<T> {
+    return this.withBrowser(signal, (browser) => {
+      const pages = createLimiter(maxSessionPages);
+      const searches = createLimiter(maxSessionSearches);
+      return work({
+        search: async (query, querySignal) => {
+          if (isYandexSearchConfigured()) return this.searchYandex(query, querySignal);
+          if (process.env.ASSISTANT_BROWSER_SEARCH_ENABLED === 'false') throw new AssistantWebToolError('WEB_SEARCH_NOT_CONFIGURED');
+          return searches(() => searchWithBrowser(browser, query));
+        },
+        openPage: async (requestedUrl) => {
+          const url = await validatePublicUrl(requestedUrl);
+          return pages(() => readPage(browser, url));
+        },
+      });
+    });
+  }
+
   private async withBrowser<T>(signal: AbortSignal | undefined, work: (browser: Browser) => Promise<T>) {
     await this.acquireBrowserSlot();
     let browser: Browser | undefined;
@@ -153,6 +179,23 @@ export class AssistantWebTools implements AssistantWeb {
     if (next) next();
     else this.activeBrowsers -= 1;
   }
+}
+
+// Runs at most `size` tasks at a time, the rest wait in order.
+function createLimiter(size: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (active >= size) await new Promise<void>((resolve) => queue.push(resolve));
+    else active += 1;
+    try {
+      return await task();
+    } finally {
+      const next = queue.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
 }
 
 function isYandexSearchConfigured() {

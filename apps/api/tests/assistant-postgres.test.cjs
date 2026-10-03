@@ -52,7 +52,19 @@ if (!databaseUrl) {
         completionYear: 2029,
       },
     });
-    Object.assign(ids, { developerId: developer.id, sourceId: source.id, deluxeId: deluxe.id, businessId: business.id });
+    // No lots at all: only the card says something about it.
+    const empty = await prisma.realEstateObject.create({
+      data: {
+        title: `Тест Пустой ${suffix}`,
+        slug: `test-empty-${suffix}`,
+        status: 'PUBLISHED',
+        propertyClass: 'Бизнес-класс',
+        developerId: developer.id,
+        completionYear: 2027,
+        priceFrom: 50_000_000,
+      },
+    });
+    Object.assign(ids, { developerId: developer.id, sourceId: source.id, deluxeId: deluxe.id, businessId: business.id, emptyId: empty.id });
 
     const unit = async (key, objectId, data, details) => {
       const created = await prisma.feedUnit.create({
@@ -111,7 +123,7 @@ if (!databaseUrl) {
     if (ids.roleId) await prisma.role.deleteMany({ where: { id: ids.roleId } });
     await prisma.assistantObjectMetroRouteFact.deleteMany({ where: { objectId: ids.deluxeId } });
     if (ids.accessPointId) await prisma.$executeRaw`DELETE FROM assistant_metro_access_points WHERE id = ${ids.accessPointId}::uuid`;
-    await prisma.realEstateObject.deleteMany({ where: { id: { in: [ids.deluxeId, ids.businessId].filter(Boolean) } } });
+    await prisma.realEstateObject.deleteMany({ where: { id: { in: [ids.deluxeId, ids.businessId, ids.emptyId].filter(Boolean) } } });
     if (ids.sourceId) await prisma.feedSource.deleteMany({ where: { id: ids.sourceId } });
     if (ids.developerId) await prisma.developer.deleteMany({ where: { id: ids.developerId } });
     await prisma.$disconnect();
@@ -156,6 +168,33 @@ if (!databaseUrl) {
     assert.deepEqual(lotIds(whiteBox), ['b1', 'b3']);
     assert.equal(whiteBox.lots[0].coordinates, null);
     assert.deepEqual(lotIds(await catalog.searchLots(scoped({ finishing: ['без отделки', 'с отделкой'] }), now)), ['a1', 'a2']);
+  });
+
+  test('project search puts projects without matching lots first and filters by the card', { concurrency: false }, async () => {
+    const developer = `Assistant test developer ${suffix}`;
+    const titles = (result) => result.projects.map((project) => project.title.replace(` ${suffix}`, '')).sort();
+
+    // Only the business project has a one-room lot in budget; the other two are named all the same.
+    const result = await catalog.searchProjects({ developer, rooms: [1], budgetMaxRub: 30_000_000 }, now);
+    assert.equal(result.total, 3);
+    assert.equal(result.withoutMatchingLots, 2);
+    assert.deepEqual(result.projects.map((project) => [project.title.replace(` ${suffix}`, ''), project.matchingLots, project.availableLots]), [
+      ['Тест Делюкс', 0, 3],
+      ['Тест Пустой', 0, 0],
+      ['Тест Бизнес', 1, 2],
+    ]);
+    assert.equal(result.projects[0].priceFromRub, 250_000_000);
+    assert.equal(result.projects[1].priceFromRub, null);
+    assert.equal(result.projects[1].cardPriceFromRub, 50_000_000);
+    assert.equal(result.projects[1].completion, '2027');
+    assert.deepEqual(result.projects[0].nearestMetroWalk, { station: 'Кропоткинская', minutes: 8 });
+
+    assert.deepEqual(titles(await catalog.searchProjects({ developer, completed: true }, now)), ['Тест Делюкс']);
+    assert.deepEqual(titles(await catalog.searchProjects({ developer, completionYearMin: 2027 }, now)), ['Тест Бизнес', 'Тест Пустой']);
+    assert.deepEqual(titles(await catalog.searchProjects({ developer, areas: ['Внутри Садового кольца'] }, now)), ['Тест Делюкс']);
+    assert.deepEqual(titles(await catalog.searchProjects({ developer, propertyClasses: ['бизнес'] }, now)), ['Тест Бизнес', 'Тест Пустой']);
+    assert.equal((await catalog.searchProjects({ developer, commercial: true }, now)).total, 0);
+    assert.deepEqual((await catalog.searchProjects({ developer, areas: ['Атлантида'] }, now)).unknownAreas, ['Атлантида']);
   });
 
   test('project facts come from the card and the available lots', { concurrency: false }, async () => {

@@ -30,7 +30,8 @@ import { AssistantWebTools } from './assistant-web.tools';
 // Assistant turns run in the background inside the api process; the browser polls them.
 // Jobs live in memory only: a restart drops unfinished turns and the chat shows an error.
 
-const jobDeadlineMs = 150_000;
+// Site checks of up to ten projects without lots add a minute or two to a turn.
+const jobDeadlineMs = 240_000;
 const finishedJobTtlMs = 15 * 60_000;
 const maxMessages = 30;
 const maxMessageChars = 4_000;

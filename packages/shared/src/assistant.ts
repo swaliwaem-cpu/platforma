@@ -64,6 +64,38 @@ export type AssistantWebLot = {
 
 export type AssistantLot = AssistantPlatformLot | AssistantWebLot;
 
+/** The page of a developer's site a project was checked on during the turn. */
+export type AssistantProjectSiteCheck = {
+  url: string;
+  siteName: string;
+  /** True when the page is on a domain known to be the developer's own; false when the site was found by search. */
+  official: boolean;
+  /** ISO time the page was opened. */
+  checkedAt: string;
+  /** Price from as seen on the page; null when the page does not confirm one. */
+  priceFromRub: number | null;
+};
+
+/** A catalog project that fits the request but has no lots in the answer. */
+export type AssistantProject = {
+  projectId: string;
+  title: string;
+  /** App path of the project card. */
+  href: string;
+  developer: string | null;
+  propertyClass: string | null;
+  /** District and okrug by the coordinates, or the card's location tag. */
+  location: string | null;
+  /** Nearest metro with walking minutes, or the card's first station. */
+  metro: string | null;
+  /** All available lots of the project in Platforma, not only the matching ones. */
+  availableLots: number;
+  /** What the assistant says about it: from the developer's site when checked, otherwise from the card. */
+  note: string;
+  /** Null when the project was not checked on a site in this turn. */
+  siteCheck: AssistantProjectSiteCheck | null;
+};
+
 /** Where an answer's data came from: a project in Platforma or a site opened in this turn. */
 export type AssistantSource = {
   kind: 'PLATFORMA_PROJECT' | 'WEB';
@@ -77,6 +109,8 @@ export type AssistantSource = {
 export type AssistantAnswer = {
   text: string;
   lots: AssistantLot[];
+  /** Projects that fit the request without lots in the answer; answers saved before this existed have none. */
+  projects?: AssistantProject[];
   sources: AssistantSource[];
   /** Compact summary the browser sends back as this turn's content in later requests. */
   historyNote: string;
